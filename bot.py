@@ -243,7 +243,7 @@ _Odpowiedzi od {len([r for r in checkin_responses.values() if r])} osób_"""
         print(f"Błąd podczas tworzenia podsumowania check-in: {e}")
 
 # Dodaj do schedulera
-scheduler.add_job(weekly_checkin, 'cron', hour=22, minute=17)
+scheduler.add_job(weekly_checkin, 'cron', hour=22, minute=21)
 # scheduler.add_job(checkin_summary, 'cron', day_of_week='mon', hour=9, minute=0)
 print(f"✅ Scheduler załadowany! Jobs: {len(scheduler.get_jobs())}")
 print("✅ Scheduler wystartował!")
