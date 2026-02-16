@@ -243,8 +243,11 @@ _Odpowiedzi od {len([r for r in checkin_responses.values() if r])} osób_"""
         print(f"Błąd podczas tworzenia podsumowania check-in: {e}")
 
 # Dodaj do schedulera
-scheduler.add_job(weekly_checkin, 'cron', hour=21, minute=49)
+scheduler.add_job(weekly_checkin, 'cron', hour=21, minute=53)
 # scheduler.add_job(checkin_summary, 'cron', day_of_week='mon', hour=9, minute=0)
+print(f"✅ Scheduler załadowany! Jobs: {len(scheduler.get_jobs())}")
+scheduler.start()
+print("✅ Scheduler wystartował!")
 # Uruchom bota
 handler = SocketModeHandler(app, os.environ.get("SLACK_APP_TOKEN"))
 print("⚡️ Bot działa!")
