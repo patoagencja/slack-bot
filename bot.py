@@ -24,6 +24,7 @@ def handle_mention(event, say):
     # DODAJ TO ⬇️
     # Komenda testowa
     if "test checkin" in user_message.lower():
+        print("🎯 KOMENDA TEST CHECKIN WYKRYTA!") 
         weekly_checkin()
         say("✅ Wysłałem check-iny testowo!")
         return
