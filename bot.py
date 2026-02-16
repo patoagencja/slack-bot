@@ -45,7 +45,14 @@ def handle_mention(event, say):
 @app.event("message")
 def handle_message_events(body, say, logger):
     logger.info(body)
+    event = body["event"]
     
+    # Sprawdź czy to odpowiedź na check-in
+    if event.get("channel_type") == "im" and event.get("user") in checkin_responses:
+        user_message = event.get("text", "")
+        checkin_responses[event["user"]].append(user_message)
+        say("✅ Dziękuję za odpowiedź! Twój feedback jest dla nas ważny. 🙏")
+        return
     event = body["event"]
     
     # Ignoruj wiadomości od botów (żeby nie odpowiadać sam sobie)
@@ -132,7 +139,112 @@ def daily_summaries():
 scheduler = BackgroundScheduler(timezone=pytz.timezone('Europe/Warsaw'))
 scheduler.add_job(daily_summaries, 'cron', hour=16, minute=00)
 scheduler.start()
+# Przechowywanie odpowiedzi z check-inów
+checkin_responses = {}
 
+# Weekly check-in - piątek 16:00
+def weekly_checkin():
+    warsaw_tz = pytz.timezone('Europe/Warsaw')
+    
+    try:
+        # Pobierz listę wszystkich użytkowników
+        result = app.client.users_list()
+        users = result["members"]
+        
+        for user in users:
+            # Pomiń boty i deactivated users
+            if user.get("is_bot") or user.get("deleted"):
+                continue
+                
+            user_id = user["id"]
+            
+            # Wyślij DM z pytaniami
+            app.client.chat_postMessage(
+                channel=user_id,
+                text=f"""Cześć! 👋 Czas na weekly check-in!
+
+Odpowiedz na kilka pytań o ten tydzień:
+
+1️⃣ **Jak oceniasz swój tydzień w skali 1-10?**
+2️⃣ **Czy miałeś/aś dużo pracy?** (Za dużo / W sam raz / Za mało)
+3️⃣ **Jak się czujesz?** (Energetycznie / Normalnie / Zmęczony/a / Wypalony/a)
+4️⃣ **Czy czegoś Ci brakuje do lepszej pracy?**
+5️⃣ **Co poszło dobrze w tym tygodniu?** 🎉
+6️⃣ **Co mogłoby być lepsze?**
+7️⃣ **Czy masz jakieś blokery/problemy?**
+
+Napisz swoje odpowiedzi poniżej (możesz w jednej wiadomości lub osobno). Wszystko jest **poufne i anonimowe**! 🔒"""
+            )
+            
+            # Zainicjuj pustą listę odpowiedzi dla użytkownika
+            checkin_responses[user_id] = []
+            
+    except Exception as e:
+        print(f"Błąd podczas wysyłania check-inów: {e}")
+
+# Podsumowanie check-inów - poniedziałek 9:00
+def checkin_summary():
+    warsaw_tz = pytz.timezone('Europe/Warsaw')
+    
+    if not checkin_responses:
+        return
+    
+    try:
+        # Zbierz wszystkie odpowiedzi
+        all_responses = "\n\n---\n\n".join([
+            f"Osoba {i+1}:\n" + "\n".join(responses)
+            for i, responses in enumerate(checkin_responses.values())
+            if responses
+        ])
+        
+        if not all_responses:
+            return
+        
+        # Poproś Claude o analizę
+        analysis = anthropic.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1500,
+            messages=[{
+                "role": "user",
+                "content": f"""Przeanalizuj odpowiedzi z weekly check-inu zespołu i stwórz podsumowanie zawierające:
+
+1. ZESPÓŁ W LICZBACH (średnie oceny, nastroje, obciążenie)
+2. NAJCZĘSTSZE WYZWANIA (co przeszkadza, blokery)
+3. CO IDZIE DOBRZE (pozytywne rzeczy)
+4. REKOMENDACJE (co warto poprawić)
+
+Odpowiedzi zespołu:
+
+{all_responses}
+
+Zachowaj pełną anonimowość - nie używaj imion, nie cytuj dosłownie."""
+            }]
+        )
+        
+        summary_text = analysis.content[0].text
+        
+        # Wyślij podsumowanie do Ciebie
+        YOUR_USER_ID = "UTE1RN6SJ"  # <-- ZMIEŃ NA SWOJE USER ID!
+        
+        app.client.chat_postMessage(
+            channel=YOUR_USER_ID,
+            text=f"""📊 **WEEKLY CHECK-IN - PODSUMOWANIE ZESPOŁU**
+            
+{summary_text}
+
+---
+_Odpowiedzi od {len([r for r in checkin_responses.values() if r])} osób_"""
+        )
+        
+        # Wyczyść odpowiedzi na kolejny tydzień
+        checkin_responses.clear()
+        
+    except Exception as e:
+        print(f"Błąd podczas tworzenia podsumowania check-in: {e}")
+
+# Dodaj do schedulera
+scheduler.add_job(weekly_checkin, 'cron', day_of_week='fri', hour=16, minute=0)
+scheduler.add_job(checkin_summary, 'cron', day_of_week='mon', hour=9, minute=0)
 # Uruchom bota
 handler = SocketModeHandler(app, os.environ.get("SLACK_APP_TOKEN"))
 print("⚡️ Bot działa!")
