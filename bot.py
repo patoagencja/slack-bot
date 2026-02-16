@@ -155,9 +155,13 @@ def weekly_checkin():
     warsaw_tz = pytz.timezone('Europe/Warsaw')
     
     try:
+        print("🔥 ROZPOCZYNAM WEEKLY CHECK-IN!")  # <-- DODAJ TO
+        
         # Pobierz listę wszystkich użytkowników
         result = app.client.users_list()
         users = result["members"]
+        
+        print(f"📊 Znalazłem {len(users)} użytkowników")  # <-- I TO
         
         for user in users:
             # Pomiń boty i deactivated users
@@ -165,6 +169,7 @@ def weekly_checkin():
                 continue
                 
             user_id = user["id"]
+            print(f"✉️ Wysyłam do {user_id}")  # <-- I TO
             
             # Wyślij DM z pytaniami
             app.client.chat_postMessage(
