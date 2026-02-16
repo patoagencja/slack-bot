@@ -7,8 +7,11 @@ from anthropic import Anthropic
 app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 
 # Inicjalizacja Claude
-anthropic = Anthropic(api_key=os.environ.get("CLAUDE_API_KEY"))
-
+import httpx
+anthropic = Anthropic(
+    api_key=os.environ.get("CLAUDE_API_KEY"),
+    http_client=httpx.Client()
+)
 # Reaguj na wzmianki (@bot)
 @app.event("app_mention")
 def handle_mention(event, say):
