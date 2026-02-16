@@ -5,6 +5,9 @@ import pytz
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from anthropic import Anthropic
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 # Przechowywanie odpowiedzi z check-inów
 checkin_responses = {}
 # Inicjalizacja Slack App
@@ -156,13 +159,13 @@ def weekly_checkin():
     warsaw_tz = pytz.timezone('Europe/Warsaw')
     
     try:
-        print("🔥 ROZPOCZYNAM WEEKLY CHECK-IN!")  # <-- DODAJ TO
+        logger.info("🔥 ROZPOCZYNAM WEEKLY CHECK-IN!")  # <-- DODAJ TO
         
         # Pobierz listę wszystkich użytkowników
         result = app.client.users_list()
         users = result["members"]
         
-        print(f"📊 Znalazłem {len(users)} użytkowników")  # <-- I TO
+        logger.info(f"📊 Znalazłem {len(users)} użytkowników")  # <-- I TO
         
         for user in users:
             # Pomiń boty i deactivated users
@@ -170,7 +173,7 @@ def weekly_checkin():
                 continue
                 
             user_id = user["id"]
-            print(f"✉️ Wysyłam do {user_id}")  # <-- I TO
+            logger.info(f"✉️ Wysyłam do {user_id}")  # <-- I TO
             
             # Wyślij DM z pytaniami
             app.client.chat_postMessage(
@@ -194,7 +197,7 @@ Napisz swoje odpowiedzi poniżej (możesz w jednej wiadomości lub osobno). Wszy
             checkin_responses[user_id] = []
             
     except Exception as e:
-        print(f"Błąd podczas wysyłania check-inów: {e}")
+        logger.error(f"Błąd podczas wysyłania check-inów: {e}")
 
 # Podsumowanie check-inów - poniedziałek 9:00
 def checkin_summary():
