@@ -7,7 +7,6 @@ from anthropic import Anthropic
 app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 
 # Inicjalizacja Claude
-import httpx
 anthropic = Anthropic(
     api_key=os.environ.get("CLAUDE_API_KEY"),
     http_client=httpx.Client()
