@@ -20,6 +20,18 @@ def handle_mention(event, say):
     user_message = event['text']
     # Usuń <@BOTID> z początku
     user_message = ' '.join(user_message.split()[1:])
+
+    # DODAJ TO ⬇️
+    # Komenda testowa
+    if "test checkin" in user_message.lower():
+        weekly_checkin()
+        say("✅ Wysłałem check-iny testowo!")
+        return
+    # KONIEC ⬆️
+    
+    # Wyślij "pisze..." indicator
+    channel = event['channel']
+    ...
     
     # Wyślij "pisze..." indicator
     channel = event['channel']
