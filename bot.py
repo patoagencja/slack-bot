@@ -31,10 +31,6 @@ def handle_mention(event, say):
     
     # Wyślij "pisze..." indicator
     channel = event['channel']
-    ...
-    
-    # Wyślij "pisze..." indicator
-    channel = event['channel']
     thread_ts = event.get('thread_ts', event['ts'])
     
     try:
