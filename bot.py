@@ -130,7 +130,7 @@ def daily_summaries():
 
 # Scheduler - codziennie o 17:00
 scheduler = BackgroundScheduler(timezone=pytz.timezone('Europe/Warsaw'))
-scheduler.add_job(daily_summaries, 'cron', hour=17, minute=0)
+scheduler.add_job(daily_summaries, 'cron', hour=15, minute=38)
 scheduler.start()
 
 # Uruchom bota
