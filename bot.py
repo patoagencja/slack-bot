@@ -137,7 +137,7 @@ def daily_summaries():
 
 # Scheduler - codziennie o 17:00
 scheduler = BackgroundScheduler(timezone=pytz.timezone('Europe/Warsaw'))
-scheduler.add_job(daily_summaries, 'cron', hour=22, minute=07)
+scheduler.add_job(daily_summaries, 'cron', hour=22, minute=15)
 scheduler.start()
 # Przechowywanie odpowiedzi z check-inów
 checkin_responses = {}
