@@ -58,6 +58,7 @@ def handle_mention(event, say):
 
 # Reaguj na wiadomości w DM (bez oznaczania)
 @app.event("message")
+@app.event("message")
 def handle_message_events(body, say, logger):
     logger.info(body)
     event = body["event"]
@@ -68,17 +69,16 @@ def handle_message_events(body, say, logger):
         checkin_responses[event["user"]].append(user_message)
         say("✅ Dziękuję za odpowiedź! Twój feedback jest dla nas ważny. 🙏")
         return
-    event = body["event"]
     
-    # Ignoruj wiadomości od botów (żeby nie odpowiadać sam sobie)
+    # Ignoruj wiadomości od botów
     if event.get("bot_id"):
         return
     
-    # Ignoruj wiadomości które są wzmiankami (obsługiwane przez app_mention)
+    # Ignoruj wiadomości które są wzmiankami
     if event.get("subtype") == "bot_message":
         return
-        
-user_message = event.get("text", "")
+    
+    user_message = event.get("text", "")
     channel = event["channel"]
     user_id = event.get("user")
     
@@ -109,7 +109,7 @@ user_message = event.get("text", "")
         })
         
         say(text=response_text)
-            
+        
     except Exception as e:
         say(text=f"Przepraszam, wystąpił błąd: {str(e)}")
         
