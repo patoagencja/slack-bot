@@ -96,10 +96,7 @@ def handle_message_events(body, say, logger):
     user_message = event.get("text", "")
     channel = event["channel"]
     user_id = event.get("user")
-    
-      user_message = event.get("text", "")
-    channel = event["channel"]
-    user_id = event.get("user")
+
     
     try:
         # Pobierz historię
