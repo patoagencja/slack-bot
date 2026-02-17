@@ -118,28 +118,195 @@ def save_message_to_history(user_id, role, content):
     if len(history) > 100:
         conversation_history[user_id] = history[-100:]
 # Reaguj na wzmianki (@bot)
+# Narzędzie Meta Ads dla Claude
+def meta_ads_tool(date_from=None, date_to=None, campaign_name=None, metrics=None):
+    """
+    Pobiera dane z Meta Ads API.
+    
+    Args:
+        date_from: Data początkowa w formacie YYYY-MM-DD (opcjonalne, domyślnie wczoraj)
+        date_to: Data końcowa w formacie YYYY-MM-DD (opcjonalne, domyślnie dzisiaj)
+        campaign_name: Nazwa kampanii do filtrowania (opcjonalne)
+        metrics: Lista metryk do pobrania (opcjonalne)
+    
+    Returns:
+        JSON ze statystykami kampanii
+    """
+    if not meta_ad_account_id:
+        return {"error": "Meta Ads API nie jest skonfigurowane."}
+    
+    try:
+        from datetime import datetime, timedelta
+        
+        # Domyślne daty
+        if not date_to:
+            date_to = datetime.now().strftime('%Y-%m-%d')
+        if not date_from:
+            date_from = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        account = AdAccount(meta_ad_account_id)
+        
+        # Domyślne metryki
+        if not metrics:
+            metrics = [
+                'campaign_name',
+                'spend',
+                'impressions',
+                'clicks',
+                'ctr',
+                'cpc',
+                'cpp',
+                'reach',
+                'frequency'
+            ]
+        
+        # Pobierz insights
+        insights = account.get_insights(params={
+            'time_range': {'since': date_from, 'until': date_to},
+            'level': 'campaign',
+            'fields': metrics
+        })
+        
+        if not insights:
+            return {"message": f"Brak danych za okres {date_from} - {date_to}"}
+        
+        # Konwertuj do listy słowników
+        campaigns_data = []
+        for insight in insights:
+            campaign_data = {}
+            for metric in metrics:
+                value = insight.get(metric)
+                if value is not None:
+                    # Konwertuj do odpowiednich typów
+                    if metric in ['spend', 'cpc', 'cpp', 'ctr', 'frequency']:
+                        campaign_data[metric] = float(value)
+                    elif metric in ['impressions', 'clicks', 'reach']:
+                        campaign_data[metric] = int(value)
+                    else:
+                        campaign_data[metric] = str(value)
+            
+            # Filtruj po nazwie kampanii jeśli podano
+            if campaign_name:
+                if campaign_name.lower() in campaign_data.get('campaign_name', '').lower():
+                    campaigns_data.append(campaign_data)
+            else:
+                campaigns_data.append(campaign_data)
+        
+        return {
+            "date_from": date_from,
+            "date_to": date_to,
+            "campaigns": campaigns_data,
+            "total_campaigns": len(campaigns_data)
+        }
+        
+    except Exception as e:
+        logger.error(f"Błąd pobierania danych Meta Ads: {e}")
+        return {"error": str(e)}
+
+
+# Reaguj na wzmianki (@bot)
 @app.event("app_mention")
 def handle_mention(event, say):
-    # Pobierz tekst wiadomości (usuń wzmianke bota)
     user_message = event['text']
-    # Usuń <@BOTID> z początku
-    user_message = ' '.join(user_message.split()[1:])
+    user_message = ' '.join(user_message.split()[1:])  # Usuń wzmianke bota
     
-    # Komenda Meta Ads
-    if "meta ads" in user_message.lower() or "facebook ads" in user_message.lower():
-        stats = get_meta_ads_stats(days_back=1)
-        say(stats)
-        return
+    channel = event['channel']
+    thread_ts = event.get('thread_ts', event['ts'])
     
-    if "meta ads wczoraj" in user_message.lower():
-        stats = get_meta_ads_stats(days_back=1)
-        say(stats)
-        return
+    # Definicja narzędzia dla Claude
+    tools = [
+        {
+            "name": "get_meta_ads_data",
+            "description": "Pobiera statystyki kampanii reklamowych z Meta Ads (Facebook Ads). Użyj tego narzędzia gdy użytkownik pyta o kampanie reklamowe, wydatki, wyniki, CTR, CPC lub inne metryki z Facebook Ads.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "date_from": {
+                        "type": "string",
+                        "description": "Data początkowa w formacie YYYY-MM-DD. Np. 'wczoraj' = dzisiejsza data minus 1 dzień, 'ostatni tydzień' = 7 dni wstecz."
+                    },
+                    "date_to": {
+                        "type": "string",
+                        "description": "Data końcowa w formacie YYYY-MM-DD. Domyślnie dzisiaj."
+                    },
+                    "campaign_name": {
+                        "type": "string",
+                        "description": "Nazwa kampanii do wyszukania (opcjonalne). Może być częściowa nazwa."
+                    },
+                    "metrics": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Lista metryk do pobrania. Domyślnie: campaign_name, spend, impressions, clicks, ctr, cpc, cpp, reach, frequency"
+                    }
+                },
+                "required": []
+            }
+        }
+    ]
     
-    if "meta ads tydzień" in user_message.lower() or "meta ads 7 dni" in user_message.lower():
-        stats = get_meta_ads_stats(days_back=7)
-        say(stats)
-        return
+    try:
+        # Zapytaj Claude z narzędziami
+        messages = [{"role": "user", "content": user_message}]
+        
+        # Pętla dla tool use (Claude może wielokrotnie używać narzędzi)
+        while True:
+            response = anthropic.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=2000,
+                tools=tools,
+                messages=messages
+            )
+            
+            # Sprawdź czy Claude chce użyć narzędzia
+            if response.stop_reason == "tool_use":
+                # Claude wywołał narzędzie
+                tool_use_block = next(block for block in response.content if block.type == "tool_use")
+                tool_name = tool_use_block.name
+                tool_input = tool_use_block.input
+                
+                logger.info(f"Claude wywołał narzędzie: {tool_name} z parametrami: {tool_input}")
+                
+                # Wywołaj narzędzie
+                if tool_name == "get_meta_ads_data":
+                    tool_result = meta_ads_tool(
+                        date_from=tool_input.get('date_from'),
+                        date_to=tool_input.get('date_to'),
+                        campaign_name=tool_input.get('campaign_name'),
+                        metrics=tool_input.get('metrics')
+                    )
+                else:
+                    tool_result = {"error": "Nieznane narzędzie"}
+                
+                # Dodaj odpowiedź Claude'a do historii
+                messages.append({"role": "assistant", "content": response.content})
+                
+                # Dodaj wynik narzędzia
+                messages.append({
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_use_block.id,
+                            "content": str(tool_result)
+                        }
+                    ]
+                })
+                
+                # Kontynuuj pętlę - Claude przeanalizuje wynik
+                continue
+                
+            else:
+                # Claude skończył - wyślij ostatnią odpowiedź
+                response_text = next(
+                    (block.text for block in response.content if hasattr(block, "text")),
+                    "Przepraszam, nie mogłem wygenerować odpowiedzi."
+                )
+                say(text=response_text, thread_ts=thread_ts)
+                break
+        
+    except Exception as e:
+        logger.error(f"Błąd: {e}")
+        say(text=f"Przepraszam, wystąpił błąd: {str(e)}", thread_ts=thread_ts)
     
     # Wyślij "pisze..." indicator
     channel = event['channel']
