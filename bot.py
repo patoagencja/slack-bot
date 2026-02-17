@@ -10,6 +10,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 # Przechowywanie odpowiedzi z check-inów
 checkin_responses = {}
+# Historia konwersacji dla każdego użytkownika
+conversation_history = {}
 # Inicjalizacja Slack App
 app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 
@@ -76,21 +78,37 @@ def handle_message_events(body, say, logger):
     if event.get("subtype") == "bot_message":
         return
         
-    user_message = event.get("text", "")
-    channel = event["channel"]
+user_message = event.get("text", "")
+channel = event["channel"]
+user_id = event.get("user")
+
+try:
+    # Pobierz lub stwórz historię dla użytkownika
+    if user_id not in conversation_history:
+        conversation_history[user_id] = []
     
-    try:
-        # Zapytaj Claude
-        message = anthropic.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1000,
-            messages=[
-                {"role": "user", "content": user_message}
-            ]
-        )
-        
-        response_text = message.content[0].text
-        say(text=response_text)
+    # Dodaj nową wiadomość użytkownika do historii
+    conversation_history[user_id].append({
+        "role": "user",
+        "content": user_message
+    })
+    
+    # Zapytaj Claude z CAŁĄ historią
+    message = anthropic.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=1000,
+        messages=conversation_history[user_id]
+    )
+    
+    response_text = message.content[0].text
+    
+    # Zapisz odpowiedź bota do historii
+    conversation_history[user_id].append({
+        "role": "assistant",
+        "content": response_text
+    })
+    
+    say(text=response_text)
         
     except Exception as e:
         say(text=f"Przepraszam, wystąpił błąd: {str(e)}")
