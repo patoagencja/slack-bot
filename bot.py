@@ -59,6 +59,21 @@ def handle_mention(event, say):
 # Reaguj na wiadomości w DM (bez oznaczania)
 @app.event("message")
 @app.event("message")
+# Funkcje do zarządzania historią konwersacji
+def get_conversation_history(user_id):
+    """Pobierz historię z pamięci (lub pusta lista)"""
+    if user_id not in conversation_history:
+        conversation_history[user_id] = []
+    return conversation_history[user_id]
+
+def save_message_to_history(user_id, role, content):
+    """Zapisz wiadomość i ogranicz do ostatnich 100"""
+    history = get_conversation_history(user_id)
+    history.append({"role": role, "content": content})
+    
+    # Ogranicz do ostatnich 100 wiadomości (50 par user+assistant)
+    if len(history) > 100:
+        conversation_history[user_id] = history[-100:]
 def handle_message_events(body, say, logger):
     logger.info(body)
     event = body["event"]
@@ -83,30 +98,23 @@ def handle_message_events(body, say, logger):
     user_id = event.get("user")
     
     try:
-        # Pobierz lub stwórz historię dla użytkownika
-        if user_id not in conversation_history:
-            conversation_history[user_id] = []
-        
-        # Dodaj nową wiadomość użytkownika do historii
-        conversation_history[user_id].append({
-            "role": "user",
-            "content": user_message
-        })
-        
-        # Zapytaj Claude z CAŁĄ historią
-        message = anthropic.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1000,
-            messages=conversation_history[user_id]
-        )
-        
-        response_text = message.content[0].text
-        
-        # Zapisz odpowiedź bota do historii
-        conversation_history[user_id].append({
-            "role": "assistant",
-            "content": response_text
-        })
+    # Pobierz historię
+    history = get_conversation_history(user_id)
+    
+    # Dodaj nową wiadomość użytkownika
+    save_message_to_history(user_id, "user", user_message)
+    
+    # Zapytaj Claude z historią
+    message = anthropic.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=1000,
+        messages=get_conversation_history(user_id)
+    )
+    
+    response_text = message.content[0].text
+    
+    # Zapisz odpowiedź bota
+    save_message_to_history(user_id, "assistant", response_text)
         
         say(text=response_text)
         
