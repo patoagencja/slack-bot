@@ -79,40 +79,40 @@ def handle_message_events(body, say, logger):
         return
         
 user_message = event.get("text", "")
-channel = event["channel"]
-user_id = event.get("user")
-
-try:
-    # Pobierz lub stwórz historię dla użytkownika
-    if user_id not in conversation_history:
-        conversation_history[user_id] = []
+    channel = event["channel"]
+    user_id = event.get("user")
     
-    # Dodaj nową wiadomość użytkownika do historii
-    conversation_history[user_id].append({
-        "role": "user",
-        "content": user_message
-    })
-    
-    # Zapytaj Claude z CAŁĄ historią
-    message = anthropic.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=1000,
-        messages=conversation_history[user_id]
-    )
-    
-    response_text = message.content[0].text
-    
-    # Zapisz odpowiedź bota do historii
-    conversation_history[user_id].append({
-        "role": "assistant",
-        "content": response_text
-    })
-    
-    say(text=response_text)
+    try:
+        # Pobierz lub stwórz historię dla użytkownika
+        if user_id not in conversation_history:
+            conversation_history[user_id] = []
         
+        # Dodaj nową wiadomość użytkownika do historii
+        conversation_history[user_id].append({
+            "role": "user",
+            "content": user_message
+        })
+        
+        # Zapytaj Claude z CAŁĄ historią
+        message = anthropic.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1000,
+            messages=conversation_history[user_id]
+        )
+        
+        response_text = message.content[0].text
+        
+        # Zapisz odpowiedź bota do historii
+        conversation_history[user_id].append({
+            "role": "assistant",
+            "content": response_text
+        })
+        
+        say(text=response_text)
+            
     except Exception as e:
         say(text=f"Przepraszam, wystąpił błąd: {str(e)}")
-
+        
 # Funkcja do codziennych podsumowań
 def daily_summaries():
     warsaw_tz = pytz.timezone('Europe/Warsaw')
