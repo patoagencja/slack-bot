@@ -6,6 +6,9 @@ from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from anthropic import Anthropic
 import logging
+from facebook_business.api import FacebookAdsApi
+from facebook_business.adobjects.adaccount import AdAccount
+from datetime import datetime, timedelta
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 # Przechowywanie odpowiedzi z check-inów
@@ -17,6 +20,88 @@ app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 
 # Inicjalizacja Claude
 anthropic = Anthropic(api_key=os.environ.get("CLAUDE_API_KEY"))
+# Inicjalizacja Meta Ads API
+try:
+    FacebookAdsApi.init(access_token=os.environ.get("META_ACCESS_TOKEN"))
+    meta_ad_account_id = os.environ.get("META_AD_ACCOUNT_ID")
+except Exception as e:
+    logger.error(f"Błąd inicjalizacji Meta Ads API: {e}")
+    meta_ad_account_id = None
+# Funkcja do pobierania danych z Meta Ads
+def get_meta_ads_stats(days_back=1):
+    """Pobierz statystyki kampanii z ostatnich X dni"""
+    if not meta_ad_account_id:
+        return "Meta Ads API nie jest skonfigurowane."
+    
+    try:
+        account = AdAccount(meta_ad_account_id)
+        
+        # Oblicz daty
+        today = datetime.now()
+        since = (today - timedelta(days=days_back)).strftime('%Y-%m-%d')
+        until = today.strftime('%Y-%m-%d')
+        
+        # Pobierz kampanie
+        campaigns = account.get_campaigns(fields=[
+            'name',
+            'status',
+            'objective'
+        ])
+        
+        # Pobierz insights (statystyki)
+        insights = account.get_insights(params={
+            'time_range': {'since': since, 'until': until},
+            'level': 'campaign',
+            'fields': [
+                'campaign_name',
+                'spend',
+                'impressions',
+                'clicks',
+                'ctr',
+                'cpc',
+                'cpp'
+            ]
+        })
+        
+        if not insights:
+            return f"Brak danych za okres {since} - {until}"
+        
+        # Formatuj odpowiedź
+        result = f"📊 **Statystyki Meta Ads** ({since} - {until})\n\n"
+        
+        total_spend = 0
+        total_clicks = 0
+        total_impressions = 0
+        
+        for insight in insights:
+            campaign_name = insight.get('campaign_name', 'Nieznana kampania')
+            spend = float(insight.get('spend', 0))
+            clicks = int(insight.get('clicks', 0))
+            impressions = int(insight.get('impressions', 0))
+            ctr = float(insight.get('ctr', 0))
+            cpc = float(insight.get('cpc', 0))
+            
+            total_spend += spend
+            total_clicks += clicks
+            total_impressions += impressions
+            
+            result += f"**{campaign_name}**\n"
+            result += f"• Wydane: {spend:.2f} PLN\n"
+            result += f"• Kliknięcia: {clicks:,}\n"
+            result += f"• Wyświetlenia: {impressions:,}\n"
+            result += f"• CTR: {ctr:.2f}%\n"
+            result += f"• CPC: {cpc:.2f} PLN\n\n"
+        
+        result += f"**PODSUMOWANIE:**\n"
+        result += f"💰 Łączny wydatek: {total_spend:.2f} PLN\n"
+        result += f"👆 Łączne kliknięcia: {total_clicks:,}\n"
+        result += f"👁️ Łączne wyświetlenia: {total_impressions:,}\n"
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Błąd pobierania danych Meta Ads: {e}")
+        return f"Błąd: {str(e)}"
 # Funkcje do zarządzania historią konwersacji
 def get_conversation_history(user_id):
     """Pobierz historię z pamięci (lub pusta lista)"""
