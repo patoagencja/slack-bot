@@ -17,7 +17,21 @@ app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 
 # Inicjalizacja Claude
 anthropic = Anthropic(api_key=os.environ.get("CLAUDE_API_KEY"))
+# Funkcje do zarządzania historią konwersacji
+def get_conversation_history(user_id):
+    """Pobierz historię z pamięci (lub pusta lista)"""
+    if user_id not in conversation_history:
+        conversation_history[user_id] = []
+    return conversation_history[user_id]
 
+def save_message_to_history(user_id, role, content):
+    """Zapisz wiadomość i ogranicz do ostatnich 100"""
+    history = get_conversation_history(user_id)
+    history.append({"role": role, "content": content})
+    
+    # Ogranicz do ostatnich 100 wiadomości
+    if len(history) > 100:
+        conversation_history[user_id] = history[-100:]
 # Reaguj na wzmianki (@bot)
 @app.event("message")
 def handle_message_events(body, say, logger):
