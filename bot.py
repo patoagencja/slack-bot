@@ -19,93 +19,30 @@ app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 anthropic = Anthropic(api_key=os.environ.get("CLAUDE_API_KEY"))
 
 # Reaguj na wzmianki (@bot)
-@app.event("app_mention")
-def handle_mention(event, say):
-    # Pobierz tekst wiadomości (usuń wzmianke bota)
-    user_message = event['text']
-    # Usuń <@BOTID> z początku
-    user_message = ' '.join(user_message.split()[1:])
-
-    # DODAJ TO ⬇️
-    # Komenda testowa
-    if "test checkin" in user_message.lower():
-        print("🎯 KOMENDA TEST CHECKIN WYKRYTA!") 
-        weekly_checkin()
-        say("✅ Wysłałem check-iny testowo!")
-        return
-    # KONIEC ⬆️
-    
-    # Wyślij "pisze..." indicator
-    channel = event['channel']
-    thread_ts = event.get('thread_ts', event['ts'])
-    
-    try:
-        # Zapytaj Claude
-        message = anthropic.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1000,
-            messages=[
-                {"role": "user", "content": user_message}
-            ]
-        )
-        
-        # Wyślij odpowiedź w tym samym wątku
-        response_text = message.content[0].text
-        say(text=response_text, thread_ts=thread_ts)
-        
-    except Exception as e:
-        say(text=f"Przepraszam, wystąpił błąd: {str(e)}", thread_ts=thread_ts)
-
-# Reaguj na wiadomości w DM (bez oznaczania)
 @app.event("message")
-@app.event("message")
-# Funkcje do zarządzania historią konwersacji
-def get_conversation_history(user_id):
-    """Pobierz historię z pamięci (lub pusta lista)"""
-    if user_id not in conversation_history:
-        conversation_history[user_id] = []
-    return conversation_history[user_id]
-
-def save_message_to_history(user_id, role, content):
-    """Zapisz wiadomość i ogranicz do ostatnich 100"""
-    history = get_conversation_history(user_id)
-    history.append({"role": role, "content": content})
-    
-    # Ogranicz do ostatnich 100 wiadomości (50 par user+assistant)
-    if len(history) > 100:
-        conversation_history[user_id] = history[-100:]
 def handle_message_events(body, say, logger):
     logger.info(body)
     event = body["event"]
     
-    # Sprawdź czy to odpowiedź na check-in
     if event.get("channel_type") == "im" and event.get("user") in checkin_responses:
         user_message = event.get("text", "")
         checkin_responses[event["user"]].append(user_message)
         say("✅ Dziękuję za odpowiedź! Twój feedback jest dla nas ważny. 🙏")
         return
     
-    # Ignoruj wiadomości od botów
     if event.get("bot_id"):
         return
     
-    # Ignoruj wiadomości które są wzmiankami
     if event.get("subtype") == "bot_message":
         return
     
     user_message = event.get("text", "")
-    channel = event["channel"]
     user_id = event.get("user")
-
     
     try:
-        # Pobierz historię
         history = get_conversation_history(user_id)
-        
-        # Dodaj nową wiadomość użytkownika
         save_message_to_history(user_id, "user", user_message)
         
-        # Zapytaj Claude z historią
         message = anthropic.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=1000,
@@ -113,10 +50,7 @@ def handle_message_events(body, say, logger):
         )
         
         response_text = message.content[0].text
-        
-        # Zapisz odpowiedź bota
         save_message_to_history(user_id, "assistant", response_text)
-        
         say(text=response_text)
         
     except Exception as e:
