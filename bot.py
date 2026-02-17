@@ -118,6 +118,50 @@ def save_message_to_history(user_id, role, content):
     if len(history) > 100:
         conversation_history[user_id] = history[-100:]
 # Reaguj na wzmianki (@bot)
+@app.event("app_mention")
+def handle_mention(event, say):
+    # Pobierz tekst wiadomości (usuń wzmianke bota)
+    user_message = event['text']
+    # Usuń <@BOTID> z początku
+    user_message = ' '.join(user_message.split()[1:])
+    
+    # Komenda Meta Ads
+    if "meta ads" in user_message.lower() or "facebook ads" in user_message.lower():
+        stats = get_meta_ads_stats(days_back=1)
+        say(stats)
+        return
+    
+    if "meta ads wczoraj" in user_message.lower():
+        stats = get_meta_ads_stats(days_back=1)
+        say(stats)
+        return
+    
+    if "meta ads tydzień" in user_message.lower() or "meta ads 7 dni" in user_message.lower():
+        stats = get_meta_ads_stats(days_back=7)
+        say(stats)
+        return
+    
+    # Wyślij "pisze..." indicator
+    channel = event['channel']
+    thread_ts = event.get('thread_ts', event['ts'])
+    
+    try:
+        # Zapytaj Claude
+        message = anthropic.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1000,
+            messages=[
+                {"role": "user", "content": user_message}
+            ]
+        )
+        
+        # Wyślij odpowiedź w tym samym wątku
+        response_text = message.content[0].text
+        say(text=response_text, thread_ts=thread_ts)
+        
+    except Exception as e:
+        say(text=f"Przepraszam, wystąpił błąd: {str(e)}", thread_ts=thread_ts)        
+# Reaguj na wzmianki (@bot)
 @app.event("message")
 def handle_message_events(body, say, logger):
     logger.info(body)
