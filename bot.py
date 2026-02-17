@@ -97,24 +97,28 @@ def handle_message_events(body, say, logger):
     channel = event["channel"]
     user_id = event.get("user")
     
+      user_message = event.get("text", "")
+    channel = event["channel"]
+    user_id = event.get("user")
+    
     try:
-    # Pobierz historię
-    history = get_conversation_history(user_id)
-    
-    # Dodaj nową wiadomość użytkownika
-    save_message_to_history(user_id, "user", user_message)
-    
-    # Zapytaj Claude z historią
-    message = anthropic.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=1000,
-        messages=get_conversation_history(user_id)
-    )
-    
-    response_text = message.content[0].text
-    
-    # Zapisz odpowiedź bota
-    save_message_to_history(user_id, "assistant", response_text)
+        # Pobierz historię
+        history = get_conversation_history(user_id)
+        
+        # Dodaj nową wiadomość użytkownika
+        save_message_to_history(user_id, "user", user_message)
+        
+        # Zapytaj Claude z historią
+        message = anthropic.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1000,
+            messages=get_conversation_history(user_id)
+        )
+        
+        response_text = message.content[0].text
+        
+        # Zapisz odpowiedź bota
+        save_message_to_history(user_id, "assistant", response_text)
         
         say(text=response_text)
         
