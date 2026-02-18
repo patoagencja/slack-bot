@@ -9,6 +9,14 @@ import logging
 from facebook_business.api import FacebookAdsApi
 from facebook_business.adobjects.adaccount import AdAccount
 from datetime import datetime, timedelta
+import json  # ← DODAJ TO
+from imapclient import IMAPClient  # ← DODAJ TO
+import email  # ← DODAJ TO
+from email.header import decode_header  # ← DODAJ TO
+import smtplib  # ← DODAJ TO
+from email.mime.text import MIMEText  # ← DODAJ TO
+from email.mime.multipart import MIMEMultipart  # ← DODAJ TO
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 # Przechowywanie odpowiedzi z check-inów
@@ -365,34 +373,69 @@ def handle_mention(event, say):
     
     # Definicja narzędzia dla Claude
     tools = [
-        {
-            "name": "get_meta_ads_data",
-            "description": "Pobiera statystyki kampanii reklamowych z Meta Ads (Facebook Ads). Użyj tego narzędzia gdy użytkownik pyta o kampanie reklamowe, wydatki, wyniki, CTR, CPC lub inne metryki z Facebook Ads.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "date_from": {
-                        "type": "string",
-                        "description": "Data początkowa w formacie YYYY-MM-DD. Np. 'wczoraj' = dzisiejsza data minus 1 dzień, 'ostatni tydzień' = 7 dni wstecz."
-                    },
-                    "date_to": {
-                        "type": "string",
-                        "description": "Data końcowa w formacie YYYY-MM-DD. Domyślnie dzisiaj."
-                    },
-                    "campaign_name": {
-                        "type": "string",
-                        "description": "Nazwa kampanii do wyszukania (opcjonalne). Może być częściowa nazwa."
-                    },
-                    "metrics": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Lista metryk do pobrania. Domyślnie: campaign_name, spend, impressions, clicks, ctr, cpc, cpp, reach, frequency"
-                    }
+    {
+        "name": "get_meta_ads_data",
+        "description": "Pobiera statystyki kampanii reklamowych z Meta Ads (Facebook Ads). Użyj tego narzędzia gdy użytkownik pyta o kampanie reklamowe, wydatki, wyniki, CTR, CPC lub inne metryki z Facebook Ads.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "date_from": {
+                    "type": "string",
+                    "description": "Data początkowa w formacie YYYY-MM-DD. Np. 'wczoraj' = dzisiejsza data minus 1 dzień, 'ostatni tydzień' = 7 dni wstecz."
                 },
-                "required": []
-            }
+                "date_to": {
+                    "type": "string",
+                    "description": "Data końcowa w formacie YYYY-MM-DD. Domyślnie dzisiaj."
+                },
+                "campaign_name": {
+                    "type": "string",
+                    "description": "Nazwa kampanii do wyszukania (opcjonalne). Może być częściowa nazwa."
+                },
+                "metrics": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Lista metryk do pobrania. Domyślnie: campaign_name, spend, impressions, clicks, ctr, cpc, cpp, reach, frequency"
+                }
+            },
+            "required": []
         }
-    ]
+    },
+    {
+        "name": "manage_email",
+        "description": "Zarządza emailami użytkownika - czyta, wysyła i wyszukuje wiadomości. Użyj gdy użytkownik pyta o emaile, chce wysłać wiadomość lub szuka czegoś w skrzynce.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["read", "send", "search"],
+                    "description": "Akcja: 'read' = odczytaj najnowsze emaile, 'send' = wyślij email, 'search' = szukaj emaili po frazie"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Ile emaili pobrać/przeszukać (domyślnie 10)"
+                },
+                "to": {
+                    "type": "string",
+                    "description": "Adres odbiorcy (tylko dla action='send')"
+                },
+                "subject": {
+                    "type": "string",
+                    "description": "Temat emaila (tylko dla action='send')"
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Treść emaila (tylko dla action='send')"
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Fraza do wyszukania (tylko dla action='search')"
+                }
+            },
+            "required": ["action"]
+        }
+    }
+]
     
     try:
         # Zapytaj Claude z narzędziami
@@ -418,14 +461,26 @@ def handle_mention(event, say):
                 
                 # Wywołaj narzędzie
                 if tool_name == "get_meta_ads_data":
-                    tool_result = meta_ads_tool(
-                        date_from=tool_input.get('date_from'),
-                        date_to=tool_input.get('date_to'),
-                        campaign_name=tool_input.get('campaign_name'),
-                        metrics=tool_input.get('metrics')
-                    )
-                else:
-                    tool_result = {"error": "Nieznane narzędzie"}
+    tool_result = meta_ads_tool(
+        date_from=tool_input.get('date_from'),
+        date_to=tool_input.get('date_to'),
+        campaign_name=tool_input.get('campaign_name'),
+        metrics=tool_input.get('metrics')
+    )
+elif tool_name == "manage_email":
+    # Pobierz user_id z eventu
+    user_id = event.get('user')
+    tool_result = email_tool(
+        user_id=user_id,
+        action=tool_input.get('action'),
+        limit=tool_input.get('limit', 10),
+        to=tool_input.get('to'),
+        subject=tool_input.get('subject'),
+        body=tool_input.get('body'),
+        query=tool_input.get('query')
+    )
+else:
+    tool_result = {"error": "Nieznane narzędzie"}
                 
                 # Dodaj odpowiedź Claude'a do historii
                 messages.append({"role": "assistant", "content": response.content})
