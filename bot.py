@@ -438,11 +438,20 @@ def handle_mention(event, say):
 ]
     
     try:
-        # Zapytaj Claude z narzędziami
-        messages = [{"role": "user", "content": user_message}]
-        
-        # Pętla dla tool use (Claude może wielokrotnie używać narzędzi)
-        while True:
+         # Pobierz User ID
+    user_id = event.get('user')
+    
+    # Pobierz historię konwersacji użytkownika
+    history = get_conversation_history(user_id)
+    
+    # Dodaj nową wiadomość użytkownika do historii
+    save_message_to_history(user_id, "user", user_message)
+    
+    # Użyj pełnej historii jako messages
+    messages = get_conversation_history(user_id)
+    
+    # Pętla dla tool use (Claude może wielokrotnie używać narzędzi)
+    while True:
             response = anthropic.messages.create(
                 model="claude-sonnet-4-20250514",
                 max_tokens=2000,
@@ -509,6 +518,10 @@ def handle_mention(event, say):
                     (block.text for block in response.content if hasattr(block, "text")),
                     "Przepraszam, nie mogłem wygenerować odpowiedzi."
                 )
+                
+                # Zapisz odpowiedź bota do historii
+                save_message_to_history(user_id, "assistant", response_text)
+                
                 say(text=response_text, thread_ts=thread_ts)
                 break
         
