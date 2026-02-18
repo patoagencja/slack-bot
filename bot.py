@@ -299,17 +299,18 @@ def read_emails(config, limit=10, folder='INBOX'):
                 "count": len(emails_data),
                 "emails": emails_data
             }
+    }
     except Exception as e:
         return {"error": f"Błąd odczytu emaili: {str(e)}"}
 
 def send_email(config, to, subject, body):
-     """Wyślij email"""
+    """Wyślij email"""
     try:
         # Dodaj stopkę jeśli istnieje
         signature = os.environ.get("EMAIL_SIGNATURE", "")
         if signature:
             body = f"{body}\n\n{signature}"
-       
+        
         msg = MIMEMultipart()
         msg['From'] = config['email']
         msg['To'] = to
