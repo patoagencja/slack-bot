@@ -391,7 +391,7 @@ def daily_summaries():
                 messages = messages_result.get("messages", [])
                 
                 # Tylko jeśli jest 10+ wiadomości
-                if len(messages) >= 10:
+                if len(messages) >= 3:
                     # Przygotuj tekst do podsumowania
                     messages_text = "\n".join([
                         f"{msg.get('user', 'Unknown')}: {msg.get('text', '')}" 
