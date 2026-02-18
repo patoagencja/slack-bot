@@ -439,16 +439,16 @@ def handle_mention(event, say):
     
     try:
          # Pobierz User ID
-    user_id = event.get('user')
+            user_id = event.get('user')
     
     # Pobierz historię konwersacji użytkownika
-    history = get_conversation_history(user_id)
+            history = get_conversation_history(user_id)
     
     # Dodaj nową wiadomość użytkownika do historii
-    save_message_to_history(user_id, "user", user_message)
+            save_message_to_history(user_id, "user", user_message)
     
     # Użyj pełnej historii jako messages
-    messages = get_conversation_history(user_id)
+            messages = get_conversation_history(user_id)
     
     # Pętla dla tool use (Claude może wielokrotnie używać narzędzi)
     while True:
