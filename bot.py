@@ -8,26 +8,28 @@ from anthropic import Anthropic
 import logging
 from facebook_business.api import FacebookAdsApi
 from facebook_business.adobjects.adaccount import AdAccount
-from datetime import datetime, timedelta
-import json  # ← DODAJ TO
-from imapclient import IMAPClient  # ← DODAJ TO
-import email  # ← DODAJ TO
-from email.header import decode_header  # ← DODAJ TO
-import smtplib  # ← DODAJ TO
-from email.mime.text import MIMEText  # ← DODAJ TO
-from email.mime.multipart import MIMEMultipart  # ← DODAJ TO
+import json
+from imapclient import IMAPClient
+import email
+from email.header import decode_header
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 # Przechowywanie odpowiedzi z check-inów
 checkin_responses = {}
 # Historia konwersacji dla każdego użytkownika
 conversation_history = {}
+
 # Inicjalizacja Slack App
 app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 
 # Inicjalizacja Claude
 anthropic = Anthropic(api_key=os.environ.get("CLAUDE_API_KEY"))
+
 # Inicjalizacja Meta Ads API
 try:
     FacebookAdsApi.init(access_token=os.environ.get("META_ACCESS_TOKEN"))
@@ -35,6 +37,7 @@ try:
 except Exception as e:
     logger.error(f"Błąd inicjalizacji Meta Ads API: {e}")
     meta_ad_account_id = None
+
 # Funkcja do pobierania danych z Meta Ads
 def get_meta_ads_stats(days_back=1):
     """Pobierz statystyki kampanii z ostatnich X dni"""
@@ -110,6 +113,7 @@ def get_meta_ads_stats(days_back=1):
     except Exception as e:
         logger.error(f"Błąd pobierania danych Meta Ads: {e}")
         return f"Błąd: {str(e)}"
+
 # Funkcje do zarządzania historią konwersacji
 def get_conversation_history(user_id):
     """Pobierz historię z pamięci (lub pusta lista)"""
@@ -125,7 +129,7 @@ def save_message_to_history(user_id, role, content):
     # Ogranicz do ostatnich 100 wiadomości
     if len(history) > 100:
         conversation_history[user_id] = history[-100:]
-# Reaguj na wzmianki (@bot)
+
 # Narzędzie Meta Ads dla Claude
 def meta_ads_tool(date_from=None, date_to=None, campaign_name=None, metrics=None):
     """
@@ -144,8 +148,6 @@ def meta_ads_tool(date_from=None, date_to=None, campaign_name=None, metrics=None
         return {"error": "Meta Ads API nie jest skonfigurowane."}
     
     try:
-        from datetime import datetime, timedelta
-        
         # Domyślne daty
         if not date_to:
             date_to = datetime.now().strftime('%Y-%m-%d')
@@ -210,13 +212,6 @@ def meta_ads_tool(date_from=None, date_to=None, campaign_name=None, metrics=None
     except Exception as e:
         logger.error(f"Błąd pobierania danych Meta Ads: {e}")
         return {"error": str(e)}
-import json
-from imapclient import IMAPClient
-import email
-from email.header import decode_header
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 
 # Funkcja pomocnicza do pobierania danych email użytkownika
 def get_user_email_config(user_id):
@@ -373,85 +368,85 @@ def handle_mention(event, say):
     
     # Definicja narzędzia dla Claude
     tools = [
-    {
-        "name": "get_meta_ads_data",
-        "description": "Pobiera statystyki kampanii reklamowych z Meta Ads (Facebook Ads). Użyj tego narzędzia gdy użytkownik pyta o kampanie reklamowe, wydatki, wyniki, CTR, CPC lub inne metryki z Facebook Ads.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "date_from": {
-                    "type": "string",
-                    "description": "Data początkowa w formacie YYYY-MM-DD. Np. 'wczoraj' = dzisiejsza data minus 1 dzień, 'ostatni tydzień' = 7 dni wstecz."
+        {
+            "name": "get_meta_ads_data",
+            "description": "Pobiera statystyki kampanii reklamowych z Meta Ads (Facebook Ads). Użyj tego narzędzia gdy użytkownik pyta o kampanie reklamowe, wydatki, wyniki, CTR, CPC lub inne metryki z Facebook Ads.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "date_from": {
+                        "type": "string",
+                        "description": "Data początkowa w formacie YYYY-MM-DD. Np. 'wczoraj' = dzisiejsza data minus 1 dzień, 'ostatni tydzień' = 7 dni wstecz."
+                    },
+                    "date_to": {
+                        "type": "string",
+                        "description": "Data końcowa w formacie YYYY-MM-DD. Domyślnie dzisiaj."
+                    },
+                    "campaign_name": {
+                        "type": "string",
+                        "description": "Nazwa kampanii do wyszukania (opcjonalne). Może być częściowa nazwa."
+                    },
+                    "metrics": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Lista metryk do pobrania. Domyślnie: campaign_name, spend, impressions, clicks, ctr, cpc, cpp, reach, frequency"
+                    }
                 },
-                "date_to": {
-                    "type": "string",
-                    "description": "Data końcowa w formacie YYYY-MM-DD. Domyślnie dzisiaj."
+                "required": []
+            }
+        },
+        {
+            "name": "manage_email",
+            "description": "Zarządza emailami użytkownika - czyta, wysyła i wyszukuje wiadomości. Użyj gdy użytkownik pyta o emaile, chce wysłać wiadomość lub szuka czegoś w skrzynce.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["read", "send", "search"],
+                        "description": "Akcja: 'read' = odczytaj najnowsze emaile, 'send' = wyślij email, 'search' = szukaj emaili po frazie"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Ile emaili pobrać/przeszukać (domyślnie 10)"
+                    },
+                    "to": {
+                        "type": "string",
+                        "description": "Adres odbiorcy (tylko dla action='send')"
+                    },
+                    "subject": {
+                        "type": "string",
+                        "description": "Temat emaila (tylko dla action='send')"
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Treść emaila (tylko dla action='send')"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Fraza do wyszukania (tylko dla action='search')"
+                    }
                 },
-                "campaign_name": {
-                    "type": "string",
-                    "description": "Nazwa kampanii do wyszukania (opcjonalne). Może być częściowa nazwa."
-                },
-                "metrics": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Lista metryk do pobrania. Domyślnie: campaign_name, spend, impressions, clicks, ctr, cpc, cpp, reach, frequency"
-                }
-            },
-            "required": []
+                "required": ["action"]
+            }
         }
-    },
-    {
-        "name": "manage_email",
-        "description": "Zarządza emailami użytkownika - czyta, wysyła i wyszukuje wiadomości. Użyj gdy użytkownik pyta o emaile, chce wysłać wiadomość lub szuka czegoś w skrzynce.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["read", "send", "search"],
-                    "description": "Akcja: 'read' = odczytaj najnowsze emaile, 'send' = wyślij email, 'search' = szukaj emaili po frazie"
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Ile emaili pobrać/przeszukać (domyślnie 10)"
-                },
-                "to": {
-                    "type": "string",
-                    "description": "Adres odbiorcy (tylko dla action='send')"
-                },
-                "subject": {
-                    "type": "string",
-                    "description": "Temat emaila (tylko dla action='send')"
-                },
-                "body": {
-                    "type": "string",
-                    "description": "Treść emaila (tylko dla action='send')"
-                },
-                "query": {
-                    "type": "string",
-                    "description": "Fraza do wyszukania (tylko dla action='search')"
-                }
-            },
-            "required": ["action"]
-        }
-    }
-]
+    ]
     
     try:
-         # Pobierz User ID
-            user_id = event.get('user')
-    
-    # Pobierz historię konwersacji użytkownika
-            history = get_conversation_history(user_id)
-    
-    # Dodaj nową wiadomość użytkownika do historii
-            save_message_to_history(user_id, "user", user_message)
-    
-    # Użyj pełnej historii jako messages
-            messages = get_conversation_history(user_id)
-    
-    # Pętla dla tool use (Claude może wielokrotnie używać narzędzi)
-    while True:
+        # Pobierz User ID
+        user_id = event.get('user')
+        
+        # Pobierz historię konwersacji użytkownika
+        history = get_conversation_history(user_id)
+        
+        # Dodaj nową wiadomość użytkownika do historii
+        save_message_to_history(user_id, "user", user_message)
+        
+        # Użyj pełnej historii jako messages
+        messages = get_conversation_history(user_id)
+        
+        # Pętla dla tool use (Claude może wielokrotnie używać narzędzi)
+        while True:
             response = anthropic.messages.create(
                 model="claude-sonnet-4-20250514",
                 max_tokens=2000,
@@ -466,9 +461,6 @@ def handle_mention(event, say):
                 tool_name = tool_use_block.name
                 tool_input = tool_use_block.input
                 
-                logger.info(f"Claude wywołał narzędzie: {tool_name} z parametrami: {tool_input}")
-                
-                # Wywołaj narzędzie
                 logger.info(f"Claude wywołał narzędzie: {tool_name} z parametrami: {tool_input}")
                 
                 # Wywołaj narzędzie
@@ -528,8 +520,8 @@ def handle_mention(event, say):
     except Exception as e:
         logger.error(f"Błąd: {e}")
         say(text=f"Przepraszam, wystąpił błąd: {str(e)}", thread_ts=thread_ts)
-        
-# Reaguj na wzmianki (@bot)
+
+# Reaguj na wiadomości DM
 @app.event("message")
 def handle_message_events(body, say, logger):
     logger.info(body)
@@ -566,7 +558,7 @@ def handle_message_events(body, say, logger):
         
     except Exception as e:
         say(text=f"Przepraszam, wystąpił błąd: {str(e)}")
-        
+
 # Funkcja do codziennych podsumowań
 def daily_summaries():
     warsaw_tz = pytz.timezone('Europe/Warsaw')
@@ -591,7 +583,7 @@ def daily_summaries():
                 
                 messages = messages_result.get("messages", [])
                 
-                # Tylko jeśli jest 10+ wiadomości
+                # Tylko jeśli jest 3+ wiadomości
                 if len(messages) >= 3:
                     # Przygotuj tekst do podsumowania
                     messages_text = "\n".join([
@@ -620,24 +612,18 @@ def daily_summaries():
     except Exception as e:
         print(f"Błąd podczas tworzenia podsumowań: {e}")
 
-# Scheduler - codziennie o 17:00
-scheduler = BackgroundScheduler(timezone=pytz.timezone('Europe/Warsaw'))
-scheduler.add_job(daily_summaries, 'cron', hour=16, minute=0)
-scheduler.start()
-
-
-# Weekly check-in - piątek 16:00
+# Weekly check-in - piątek 14:00
 def weekly_checkin():
     warsaw_tz = pytz.timezone('Europe/Warsaw')
     
     try:
-        logger.info("🔥 ROZPOCZYNAM WEEKLY CHECK-IN!")  # <-- DODAJ TO
+        logger.info("🔥 ROZPOCZYNAM WEEKLY CHECK-IN!")
         
         # Pobierz listę wszystkich użytkowników
         result = app.client.users_list()
         users = result["members"]
         
-        logger.info(f"📊 Znalazłem {len(users)} użytkowników")  # <-- I TO
+        logger.info(f"📊 Znalazłem {len(users)} użytkowników")
         
         for user in users:
             # Pomiń boty i deactivated users
@@ -645,7 +631,7 @@ def weekly_checkin():
                 continue
                 
             user_id = user["id"]
-            logger.info(f"✉️ Wysyłam do {user_id}")  # <-- I TO
+            logger.info(f"✉️ Wysyłam do {user_id}")
             
             # Wyślij DM z pytaniami
             app.client.chat_postMessage(
@@ -713,7 +699,7 @@ Zachowaj pełną anonimowość - nie używaj imion, nie cytuj dosłownie."""
         summary_text = analysis.content[0].text
         
         # Wyślij podsumowanie do Ciebie
-        YOUR_USER_ID = "UTE1RN6SJ"  # <-- ZMIEŃ NA SWOJE USER ID!
+        YOUR_USER_ID = "UTE1RN6SJ"
         
         app.client.chat_postMessage(
             channel=YOUR_USER_ID,
@@ -731,11 +717,16 @@ _Odpowiedzi od {len([r for r in checkin_responses.values() if r])} osób_"""
     except Exception as e:
         print(f"Błąd podczas tworzenia podsumowania check-in: {e}")
 
-# Dodaj do schedulera
+# Scheduler - codziennie o 16:00
+scheduler = BackgroundScheduler(timezone=pytz.timezone('Europe/Warsaw'))
+scheduler.add_job(daily_summaries, 'cron', hour=16, minute=0)
 scheduler.add_job(weekly_checkin, 'cron', day_of_week='fri', hour=14, minute=0)
 scheduler.add_job(checkin_summary, 'cron', day_of_week='mon', hour=9, minute=0)
+scheduler.start()
+
 print(f"✅ Scheduler załadowany! Jobs: {len(scheduler.get_jobs())}")
 print("✅ Scheduler wystartował!")
+
 # Uruchom bota
 handler = SocketModeHandler(app, os.environ.get("SLACK_APP_TOKEN"))
 print("⚡️ Bot działa!")
