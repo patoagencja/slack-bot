@@ -460,27 +460,30 @@ def handle_mention(event, say):
                 logger.info(f"Claude wywołał narzędzie: {tool_name} z parametrami: {tool_input}")
                 
                 # Wywołaj narzędzie
+                logger.info(f"Claude wywołał narzędzie: {tool_name} z parametrami: {tool_input}")
+                
+                # Wywołaj narzędzie
                 if tool_name == "get_meta_ads_data":
-    tool_result = meta_ads_tool(
-        date_from=tool_input.get('date_from'),
-        date_to=tool_input.get('date_to'),
-        campaign_name=tool_input.get('campaign_name'),
-        metrics=tool_input.get('metrics')
-    )
-elif tool_name == "manage_email":
-    # Pobierz user_id z eventu
-    user_id = event.get('user')
-    tool_result = email_tool(
-        user_id=user_id,
-        action=tool_input.get('action'),
-        limit=tool_input.get('limit', 10),
-        to=tool_input.get('to'),
-        subject=tool_input.get('subject'),
-        body=tool_input.get('body'),
-        query=tool_input.get('query')
-    )
-else:
-    tool_result = {"error": "Nieznane narzędzie"}
+                    tool_result = meta_ads_tool(
+                        date_from=tool_input.get('date_from'),
+                        date_to=tool_input.get('date_to'),
+                        campaign_name=tool_input.get('campaign_name'),
+                        metrics=tool_input.get('metrics')
+                    )
+                elif tool_name == "manage_email":
+                    # Pobierz user_id z eventu
+                    user_id = event.get('user')
+                    tool_result = email_tool(
+                        user_id=user_id,
+                        action=tool_input.get('action'),
+                        limit=tool_input.get('limit', 10),
+                        to=tool_input.get('to'),
+                        subject=tool_input.get('subject'),
+                        body=tool_input.get('body'),
+                        query=tool_input.get('query')
+                    )
+                else:
+                    tool_result = {"error": "Nieznane narzędzie"}
                 
                 # Dodaj odpowiedź Claude'a do historii
                 messages.append({"role": "assistant", "content": response.content})
