@@ -299,7 +299,7 @@ def read_emails(config, limit=10, folder='INBOX'):
                 "count": len(emails_data),
                 "emails": emails_data
             }
-    }
+    
     except Exception as e:
         return {"error": f"Błąd odczytu emaili: {str(e)}"}
 
