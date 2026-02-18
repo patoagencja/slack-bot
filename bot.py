@@ -307,27 +307,7 @@ def handle_mention(event, say):
     except Exception as e:
         logger.error(f"Błąd: {e}")
         say(text=f"Przepraszam, wystąpił błąd: {str(e)}", thread_ts=thread_ts)
-    
-    # Wyślij "pisze..." indicator
-    channel = event['channel']
-    thread_ts = event.get('thread_ts', event['ts'])
-    
-    try:
-        # Zapytaj Claude
-        message = anthropic.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1000,
-            messages=[
-                {"role": "user", "content": user_message}
-            ]
-        )
         
-        # Wyślij odpowiedź w tym samym wątku
-        response_text = message.content[0].text
-        say(text=response_text, thread_ts=thread_ts)
-        
-    except Exception as e:
-        say(text=f"Przepraszam, wystąpił błąd: {str(e)}", thread_ts=thread_ts)        
 # Reaguj na wzmianki (@bot)
 @app.event("message")
 def handle_message_events(body, say, logger):
