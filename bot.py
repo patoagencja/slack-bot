@@ -202,7 +202,157 @@ def meta_ads_tool(date_from=None, date_to=None, campaign_name=None, metrics=None
     except Exception as e:
         logger.error(f"Błąd pobierania danych Meta Ads: {e}")
         return {"error": str(e)}
+import json
+from imapclient import IMAPClient
+import email
+from email.header import decode_header
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
+# Funkcja pomocnicza do pobierania danych email użytkownika
+def get_user_email_config(user_id):
+    """Pobierz konfigurację email dla danego użytkownika"""
+    email_accounts_json = os.environ.get("EMAIL_ACCOUNTS", "{}")
+    try:
+        email_accounts = json.loads(email_accounts_json)
+        return email_accounts.get(user_id)
+    except json.JSONDecodeError:
+        logger.error("Błąd parsowania EMAIL_ACCOUNTS")
+        return None
+
+# Narzędzie Email dla Claude
+def email_tool(user_id, action, **kwargs):
+    """
+    Zarządza emailami użytkownika.
+    
+    Args:
+        user_id: ID użytkownika Slack
+        action: 'read' | 'send' | 'search'
+        **kwargs: Parametry zależne od akcji
+    
+    Returns:
+        JSON z wynikami
+    """
+    # Pobierz dane email użytkownika
+    email_config = get_user_email_config(user_id)
+    
+    if not email_config:
+        return {"error": "Nie masz skonfigurowanego konta email. Skontaktuj się z administratorem."}
+    
+    try:
+        if action == "read":
+            return read_emails(email_config, kwargs.get('limit', 10), kwargs.get('folder', 'INBOX'))
+        elif action == "send":
+            return send_email(email_config, kwargs.get('to'), kwargs.get('subject'), kwargs.get('body'))
+        elif action == "search":
+            return search_emails(email_config, kwargs.get('query'), kwargs.get('limit', 10))
+        else:
+            return {"error": f"Nieznana akcja: {action}"}
+    except Exception as e:
+        logger.error(f"Błąd email tool: {e}")
+        return {"error": str(e)}
+
+def read_emails(config, limit=10, folder='INBOX'):
+    """Odczytaj najnowsze emaile"""
+    try:
+        with IMAPClient(config['imap_server'], ssl=True, port=993) as client:
+            client.login(config['email'], config['password'])
+            client.select_folder(folder)
+            
+            # Pobierz najnowsze emaile
+            messages = client.search(['ALL'])
+            messages = messages[-limit:] if len(messages) > limit else messages
+            
+            emails_data = []
+            for uid in reversed(messages):
+                raw_message = client.fetch([uid], ['RFC822'])[uid][b'RFC822']
+                msg = email.message_from_bytes(raw_message)
+                
+                # Dekoduj subject
+                subject = decode_header(msg['Subject'])[0][0]
+                if isinstance(subject, bytes):
+                    subject = subject.decode()
+                
+                # Pobierz treść
+                body = ""
+                if msg.is_multipart():
+                    for part in msg.walk():
+                        if part.get_content_type() == "text/plain":
+                            body = part.get_payload(decode=True).decode()
+                            break
+                else:
+                    body = msg.get_payload(decode=True).decode()
+                
+                emails_data.append({
+                    "from": msg['From'],
+                    "subject": subject,
+                    "date": msg['Date'],
+                    "body_preview": body[:200] + "..." if len(body) > 200 else body
+                })
+            
+            return {
+                "folder": folder,
+                "count": len(emails_data),
+                "emails": emails_data
+            }
+    except Exception as e:
+        return {"error": f"Błąd odczytu emaili: {str(e)}"}
+
+def send_email(config, to, subject, body):
+    """Wyślij email"""
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = config['email']
+        msg['To'] = to
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain', 'utf-8'))
+        
+        with smtplib.SMTP_SSL(config['smtp_server'], 465) as server:
+            server.login(config['email'], config['password'])
+            server.send_message(msg)
+        
+        return {
+            "success": True,
+            "message": f"Email wysłany do {to}",
+            "subject": subject
+        }
+    except Exception as e:
+        return {"error": f"Błąd wysyłania emaila: {str(e)}"}
+
+def search_emails(config, query, limit=10):
+    """Szukaj emaili po frazie"""
+    try:
+        with IMAPClient(config['imap_server'], ssl=True, port=993) as client:
+            client.login(config['email'], config['password'])
+            client.select_folder('INBOX')
+            
+            # Szukaj w subject i body
+            messages = client.search(['OR', 'SUBJECT', query, 'BODY', query])
+            messages = messages[-limit:] if len(messages) > limit else messages
+            
+            emails_data = []
+            for uid in reversed(messages):
+                raw_message = client.fetch([uid], ['RFC822'])[uid][b'RFC822']
+                msg = email.message_from_bytes(raw_message)
+                
+                subject = decode_header(msg['Subject'])[0][0]
+                if isinstance(subject, bytes):
+                    subject = subject.decode()
+                
+                emails_data.append({
+                    "from": msg['From'],
+                    "subject": subject,
+                    "date": msg['Date']
+                })
+            
+            return {
+                "query": query,
+                "count": len(emails_data),
+                "emails": emails_data
+            }
+    except Exception as e:
+        return {"error": f"Błąd wyszukiwania: {str(e)}"}
 
 # Reaguj na wzmianki (@bot)
 @app.event("app_mention")
