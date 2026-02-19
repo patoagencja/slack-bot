@@ -130,19 +130,24 @@ def save_message_to_history(user_id, role, content):
     if len(history) > 100:
         conversation_history[user_id] = history[-100:]
 
-# Narzędzie Meta Ads dla Claude
-def meta_ads_tool(date_from=None, date_to=None, campaign_name=None, metrics=None):
+# Narzędzie Meta Ads dla Claude - ROZSZERZONE
+def meta_ads_tool(date_from=None, date_to=None, level="campaign", campaign_name=None, adset_name=None, ad_name=None, metrics=None, breakdown=None, limit=None):
     """
-    Pobiera dane z Meta Ads API.
+    Pobiera dane z Meta Ads API na różnych poziomach.
     
     Args:
-        date_from: Data początkowa w formacie YYYY-MM-DD (opcjonalne, domyślnie wczoraj)
-        date_to: Data końcowa w formacie YYYY-MM-DD (opcjonalne, domyślnie dzisiaj)
-        campaign_name: Nazwa kampanii do filtrowania (opcjonalne)
+        date_from: Data początkowa YYYY-MM-DD (domyślnie wczoraj)
+        date_to: Data końcowa YYYY-MM-DD (domyślnie dzisiaj)
+        level: Poziom danych - "campaign", "adset", "ad" (domyślnie "campaign")
+        campaign_name: Filtr po nazwie kampanii (opcjonalne)
+        adset_name: Filtr po nazwie ad setu (opcjonalne)
+        ad_name: Filtr po nazwie reklamy (opcjonalne)
         metrics: Lista metryk do pobrania (opcjonalne)
+        breakdown: Breakdown dla insights - "age", "gender", "country", "placement", "device_platform" (opcjonalne)
+        limit: Limit wyników (opcjonalne)
     
     Returns:
-        JSON ze statystykami kampanii
+        JSON ze statystykami
     """
     if not meta_ad_account_id:
         return {"error": "Meta Ads API nie jest skonfigurowane."}
@@ -156,63 +161,99 @@ def meta_ads_tool(date_from=None, date_to=None, campaign_name=None, metrics=None
         
         account = AdAccount(meta_ad_account_id)
         
-        # Domyślne metryki
+        # Wszystkie dostępne metryki
+        available_metrics = {
+            'campaign': ['campaign_name', 'spend', 'impressions', 'clicks', 'ctr', 'cpc', 'cpm', 'reach', 'frequency', 
+                        'conversions', 'cost_per_conversion', 'purchase_roas', 'actions', 'action_values'],
+            'adset': ['campaign_name', 'adset_name', 'spend', 'impressions', 'clicks', 'ctr', 'cpc', 'cpm', 'reach',
+                     'conversions', 'cost_per_conversion', 'budget_remaining', 'budget_rebalance_flag'],
+            'ad': ['campaign_name', 'adset_name', 'ad_name', 'spend', 'impressions', 'clicks', 'ctr', 'cpc', 'cpm',
+                  'reach', 'conversions', 'inline_link_clicks', 'inline_link_click_ctr']
+        }
+        
+        # Użyj podanych metryk lub domyślnych
         if not metrics:
-            metrics = [
-                'campaign_name',
-                'spend',
-                'impressions',
-                'clicks',
-                'ctr',
-                'cpc',
-                'cpp',
-                'reach',
-                'frequency'
-            ]
+            metrics = available_metrics.get(level, available_metrics['campaign'])
+        
+        # Parametry insights
+        params = {
+            'time_range': {'since': date_from, 'until': date_to},
+            'level': level,
+            'fields': metrics
+        }
+        
+        # Dodaj breakdown jeśli podano
+        if breakdown:
+            params['breakdowns'] = [breakdown] if isinstance(breakdown, str) else breakdown
+        
+        # Dodaj limit jeśli podano
+        if limit:
+            params['limit'] = limit
         
         # Pobierz insights
-        insights = account.get_insights(params={
-            'time_range': {'since': date_from, 'until': date_to},
-            'level': 'campaign',
-            'fields': metrics
-        })
+        insights = account.get_insights(params=params)
         
         if not insights:
-            return {"message": f"Brak danych za okres {date_from} - {date_to}"}
+            return {"message": f"Brak danych za okres {date_from} - {date_to} na poziomie {level}"}
         
         # Konwertuj do listy słowników
-        campaigns_data = []
+        data = []
         for insight in insights:
-            campaign_data = {}
+            item = {}
+            
+            # Podstawowe pola
             for metric in metrics:
                 value = insight.get(metric)
                 if value is not None:
-                    # Konwertuj do odpowiednich typów
-                    if metric in ['spend', 'cpc', 'cpp', 'ctr', 'frequency']:
-                        campaign_data[metric] = float(value)
-                    elif metric in ['impressions', 'clicks', 'reach']:
-                        campaign_data[metric] = int(value)
+                    # Konwersja typów
+                    if metric in ['spend', 'cpc', 'cpm', 'ctr', 'frequency', 'cost_per_conversion', 'purchase_roas', 
+                                 'budget_remaining', 'inline_link_click_ctr']:
+                        item[metric] = float(value)
+                    elif metric in ['impressions', 'clicks', 'reach', 'conversions', 'inline_link_clicks']:
+                        item[metric] = int(value)
+                    elif metric in ['actions', 'action_values']:
+                        # Te są jako listy obiektów - zostaw jako są
+                        item[metric] = value
                     else:
-                        campaign_data[metric] = str(value)
+                        item[metric] = str(value)
             
-            # Filtruj po nazwie kampanii jeśli podano
-            if campaign_name:
-                if campaign_name.lower() in campaign_data.get('campaign_name', '').lower():
-                    campaigns_data.append(campaign_data)
-            else:
-                campaigns_data.append(campaign_data)
+            # Breakdown fields (age, gender, placement, etc.)
+            if breakdown:
+                breakdown_list = [breakdown] if isinstance(breakdown, str) else breakdown
+                for b in breakdown_list:
+                    if b in insight:
+                        item[b] = insight[b]
+            
+            # Filtrowanie
+            should_include = True
+            
+            if campaign_name and 'campaign_name' in item:
+                if campaign_name.lower() not in item['campaign_name'].lower():
+                    should_include = False
+            
+            if adset_name and 'adset_name' in item:
+                if adset_name.lower() not in item['adset_name'].lower():
+                    should_include = False
+            
+            if ad_name and 'ad_name' in item:
+                if ad_name.lower() not in item['ad_name'].lower():
+                    should_include = False
+            
+            if should_include:
+                data.append(item)
         
         return {
             "date_from": date_from,
             "date_to": date_to,
-            "campaigns": campaigns_data,
-            "total_campaigns": len(campaigns_data)
+            "level": level,
+            "breakdown": breakdown,
+            "total_items": len(data),
+            "data": data
         }
         
     except Exception as e:
         logger.error(f"Błąd pobierania danych Meta Ads: {e}")
         return {"error": str(e)}
-
 # Funkcja pomocnicza do pobierania danych email użytkownika
 def get_user_email_config(user_id):
     """Pobierz konfigurację email dla danego użytkownika"""
@@ -375,32 +416,53 @@ def handle_mention(event, say):
     # Definicja narzędzia dla Claude
     tools = [
         {
-            "name": "get_meta_ads_data",
-            "description": "Pobiera statystyki kampanii reklamowych z Meta Ads (Facebook Ads). Użyj tego narzędzia gdy użytkownik pyta o kampanie reklamowe, wydatki, wyniki, CTR, CPC lub inne metryki z Facebook Ads.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "date_from": {
-                        "type": "string",
-                        "description": "Data początkowa w formacie YYYY-MM-DD. Np. 'wczoraj' = dzisiejsza data minus 1 dzień, 'ostatni tydzień' = 7 dni wstecz."
-                    },
-                    "date_to": {
-                        "type": "string",
-                        "description": "Data końcowa w formacie YYYY-MM-DD. Domyślnie dzisiaj."
-                    },
-                    "campaign_name": {
-                        "type": "string",
-                        "description": "Nazwa kampanii do wyszukania (opcjonalne). Może być częściowa nazwa."
-                    },
-                    "metrics": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Lista metryk do pobrania. Domyślnie: campaign_name, spend, impressions, clicks, ctr, cpc, cpp, reach, frequency"
-                    }
-                },
-                "required": []
+    "name": "get_meta_ads_data",
+    "description": "Pobiera szczegółowe statystyki z Meta Ads (Facebook Ads) na poziomie kampanii, ad setów lub pojedynczych reklam. Obsługuje breakdowny demograficzne i placement. Użyj gdy użytkownik pyta o kampanie, ad sety, reklamy, wydatki, wyniki, konwersje, ROAS, demografię (wiek/płeć/kraj) lub placement (Instagram/Facebook/Stories).",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "date_from": {
+                "type": "string",
+                "description": "Data początkowa YYYY-MM-DD. 'wczoraj' = -1 dzień, 'ostatni tydzień' = -7 dni, 'ostatni miesiąc' = -30 dni."
+            },
+            "date_to": {
+                "type": "string",
+                "description": "Data końcowa YYYY-MM-DD. Domyślnie dzisiaj."
+            },
+            "level": {
+                "type": "string",
+                "enum": ["campaign", "adset", "ad"],
+                "description": "Poziom danych: 'campaign' (kampanie), 'adset' (zestawy reklam), 'ad' (pojedyncze reklamy). Domyślnie 'campaign'."
+            },
+            "campaign_name": {
+                "type": "string",
+                "description": "Filtr po nazwie kampanii (częściowa nazwa działa)."
+            },
+            "adset_name": {
+                "type": "string",
+                "description": "Filtr po nazwie ad setu (częściowa nazwa działa)."
+            },
+            "ad_name": {
+                "type": "string",
+                "description": "Filtr po nazwie reklamy (częściowa nazwa działa)."
+            },
+            "metrics": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Lista metryk: campaign_name, adset_name, ad_name, spend, impressions, clicks, ctr, cpc, cpm, reach, frequency, conversions, cost_per_conversion, purchase_roas, actions, action_values, budget_remaining, inline_link_clicks, inline_link_click_ctr"
+            },
+            "breakdown": {
+                "type": "string",
+                "description": "Breakdown dla demografii/placement: 'age' (wiek), 'gender' (płeć), 'country' (kraj), 'placement' (miejsce wyświetlenia), 'device_platform' (urządzenie). Może być też lista np. ['age', 'gender']"
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Limit wyników (max liczba kampanii/adsetów/reklam do zwrócenia)."
             }
         },
+        "required": []
+    }
+},
         {
             "name": "manage_email",
             "description": "Zarządza emailami użytkownika - czyta, wysyła i wyszukuje wiadomości. Użyj gdy użytkownik pyta o emaile, chce wysłać wiadomość lub szuka czegoś w skrzynce.",
@@ -474,8 +536,13 @@ def handle_mention(event, say):
                     tool_result = meta_ads_tool(
                         date_from=tool_input.get('date_from'),
                         date_to=tool_input.get('date_to'),
+                        level=tool_input.get('level', 'campaign'),
                         campaign_name=tool_input.get('campaign_name'),
-                        metrics=tool_input.get('metrics')
+                        adset_name=tool_input.get('adset_name'),
+                        ad_name=tool_input.get('ad_name'),
+                        metrics=tool_input.get('metrics'),
+                        breakdown=tool_input.get('breakdown'),
+                        limit=tool_input.get('limit')
                     )
                 elif tool_name == "manage_email":
                     # Pobierz user_id z eventu
