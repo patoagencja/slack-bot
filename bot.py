@@ -905,8 +905,7 @@ def handle_mention(event, say):
                 },
                 "required": ["action"]
             }
-        }
-        ,
+        },
         {
             "name": "get_google_ads_data",
             "description": "Pobiera szczegółowe statystyki z Google Ads na poziomie kampanii, ad groups lub pojedynczych reklam. Użyj gdy użytkownik pyta o kampanie Google, wydatki w Google Ads, wyniki wyszukiwania, kampanie displayowe.",
@@ -954,8 +953,7 @@ def handle_mention(event, say):
                 },
                 "required": []
             }
-        }
-        ,
+        },
         {
             "name": "slack_read_channel",
             "description": "Czyta historię wiadomości z kanału Slack. Użyj gdy użytkownik pyta o przeszłe wiadomości, chce podsumowanie rozmów, lub analizę konwersacji na kanale.",
@@ -1147,6 +1145,7 @@ def handle_mention(event, say):
     except Exception as e:
         logger.error(f"Błąd: {e}")
         say(text=f"Przepraszam, wystąpił błąd: {str(e)}", thread_ts=thread_ts)
+
 
 # Reaguj na wiadomości DM
 @app.event("message")
