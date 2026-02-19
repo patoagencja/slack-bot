@@ -130,10 +130,9 @@ def save_message_to_history(user_id, role, content):
     if len(history) > 100:
         conversation_history[user_id] = history[-100:]
 
-# Narzędzie Meta Ads dla Claude - ROZSZERZONE
-def meta_ads_tool(date_from=None, date_to=None, level="campaign", campaign_name=None, adset_name=None, ad_name=None, metrics=None, breakdown=None, limit=None):
+def meta_ads_tool(date_from=None, date_to=None, level="campaign", campaign_name=None, adset_name=None, ad_name=None, metrics=None, breakdown=None, limit=None, client_name=None):
     """
-    Pobiera dane z Meta Ads API na różnych poziomach.
+    Pobiera dane z Meta Ads API na różnych poziomach dla różnych klientów.
     
     Args:
         date_from: Data początkowa YYYY-MM-DD (domyślnie wczoraj)
@@ -143,14 +142,44 @@ def meta_ads_tool(date_from=None, date_to=None, level="campaign", campaign_name=
         adset_name: Filtr po nazwie ad setu (opcjonalne)
         ad_name: Filtr po nazwie reklamy (opcjonalne)
         metrics: Lista metryk do pobrania (opcjonalne)
-        breakdown: Breakdown dla insights - "age", "gender", "country", "placement", "device_platform" (opcjonalne)
+        breakdown: Breakdown dla insights (opcjonalne)
         limit: Limit wyników (opcjonalne)
+        client_name: Nazwa klienta/biznesu (opcjonalne - jeśli nie podano, zwraca listę)
     
     Returns:
         JSON ze statystykami
     """
-    if not meta_ad_account_id:
-        return {"error": "Meta Ads API nie jest skonfigurowane."}
+    # Wczytaj mapowanie kont reklamowych
+    accounts_json = os.environ.get("META_AD_ACCOUNTS", "{}")
+    try:
+        accounts_map = json.loads(accounts_json)
+    except json.JSONDecodeError:
+        accounts_map = {}
+    
+    # Jeśli nie podano klienta - zwróć listę dostępnych
+    if not client_name:
+        available_clients = list(set(accounts_map.keys()))
+        return {
+            "message": "Nie podano nazwy klienta. Dostępne klienty:",
+            "available_clients": available_clients,
+            "hint": "Podaj nazwę klienta w zapytaniu, np. 'jak wypadły kampanie dla instax?'"
+        }
+    
+    # Znajdź Account ID dla klienta (case-insensitive)
+    client_name_lower = client_name.lower()
+    ad_account_id = None
+    
+    for key, value in accounts_map.items():
+        if key.lower() == client_name_lower or client_name_lower in key.lower():
+            ad_account_id = value
+            break
+    
+    if not ad_account_id:
+        return {
+            "error": f"Nie znaleziono konta dla klienta '{client_name}'",
+            "available_clients": list(set(accounts_map.keys())),
+            "hint": "Sprawdź pisownię lub wybierz z dostępnych klientów"
+        }
     
     try:
         # Domyślne daty
@@ -159,7 +188,7 @@ def meta_ads_tool(date_from=None, date_to=None, level="campaign", campaign_name=
         if not date_from:
             date_from = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
         
-        account = AdAccount(meta_ad_account_id)
+        account = AdAccount(ad_account_id)
         
         # Wszystkie dostępne metryki
         available_metrics = {
@@ -421,6 +450,10 @@ def handle_mention(event, say):
     "input_schema": {
         "type": "object",
         "properties": {
+            "client_name": {
+                "type": "string",
+                "description": "Nazwa klienta/biznesu. WYMAGANE. Dostępne: 'instax', 'fuji', 'instax/fuji', 'zbiorcze', 'kampanie zbiorcze', 'pato'. Wyciągnij z pytania użytkownika (np. 'jak kampanie dla instax?' → client_name='instax'). Jeśli użytkownik nie poda - zapytaj."
+            },
             "date_from": {
                 "type": "string",
                 "description": "Data początkowa YYYY-MM-DD. 'wczoraj' = -1 dzień, 'ostatni tydzień' = -7 dni, 'ostatni miesiąc' = -30 dni."
@@ -543,6 +576,7 @@ def handle_mention(event, say):
                         metrics=tool_input.get('metrics'),
                         breakdown=tool_input.get('breakdown'),
                         limit=tool_input.get('limit')
+                        client_name=tool_input.get('client_name')
                     )
                 elif tool_name == "manage_email":
                     # Pobierz user_id z eventu
