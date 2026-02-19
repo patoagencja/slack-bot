@@ -526,6 +526,138 @@ def google_ads_tool(date_from=None, date_to=None, level="campaign", campaign_nam
     except Exception as e:
         logger.error(f"Błąd pobierania danych Google Ads: {e}")
         return {"error": str(e)}
+
+# Narzędzia Slack dla Claude
+def slack_read_channel_tool(channel_id, limit=50, oldest=None, latest=None):
+    """Czyta historię wiadomości z kanału"""
+    try:
+        # Konwertuj daty na timestampy jeśli podano
+        params = {
+            'channel': channel_id,
+            'limit': min(limit, 100)
+        }
+        
+        if oldest:
+            # Jeśli to data YYYY-MM-DD, konwertuj na timestamp
+            if len(oldest) == 10:
+                dt = datetime.strptime(oldest, '%Y-%m-%d')
+                params['oldest'] = str(int(dt.timestamp()))
+            else:
+                params['oldest'] = oldest
+        
+        if latest:
+            if len(latest) == 10:
+                dt = datetime.strptime(latest, '%Y-%m-%d')
+                params['latest'] = str(int(dt.timestamp()))
+            else:
+                params['latest'] = latest
+        
+        result = app.client.conversations_history(**params)
+        messages = result.get('messages', [])
+        
+        # Formatuj wiadomości
+        formatted = []
+        for msg in messages:
+            user_id = msg.get('user', 'Unknown')
+            text = msg.get('text', '')
+            ts = msg.get('ts', '')
+            
+            # Konwertuj timestamp na czytelną datę
+            if ts:
+                dt = datetime.fromtimestamp(float(ts))
+                date_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+            else:
+                date_str = 'Unknown'
+            
+            formatted.append({
+                'user': user_id,
+                'text': text,
+                'timestamp': ts,
+                'date': date_str,
+                'has_thread': msg.get('reply_count', 0) > 0,
+                'thread_ts': msg.get('thread_ts')
+            })
+        
+        return {
+            'channel_id': channel_id,
+            'message_count': len(formatted),
+            'messages': formatted
+        }
+        
+    except Exception as e:
+        logger.error(f"Błąd czytania kanału: {e}")
+        return {"error": str(e)}
+
+def slack_search_tool(query, sort='timestamp', limit=20):
+    """Wyszukuje wiadomości na Slacku"""
+    try:
+        result = app.client.search_messages(
+            query=query,
+            sort=sort,
+            count=min(limit, 100)
+        )
+        
+        matches = result.get('messages', {}).get('matches', [])
+        
+        formatted = []
+        for match in matches:
+            formatted.append({
+                'user': match.get('username', 'Unknown'),
+                'text': match.get('text', ''),
+                'channel': match.get('channel', {}).get('name', 'Unknown'),
+                'timestamp': match.get('ts', ''),
+                'permalink': match.get('permalink', '')
+            })
+        
+        return {
+            'query': query,
+            'result_count': len(formatted),
+            'results': formatted
+        }
+        
+    except Exception as e:
+        logger.error(f"Błąd wyszukiwania: {e}")
+        return {"error": str(e)}
+
+def slack_read_thread_tool(channel_id, thread_ts):
+    """Czyta wątek (thread) z kanału"""
+    try:
+        result = app.client.conversations_replies(
+            channel=channel_id,
+            ts=thread_ts
+        )
+        
+        messages = result.get('messages', [])
+        
+        formatted = []
+        for msg in messages:
+            user_id = msg.get('user', 'Unknown')
+            text = msg.get('text', '')
+            ts = msg.get('ts', '')
+            
+            if ts:
+                dt = datetime.fromtimestamp(float(ts))
+                date_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+            else:
+                date_str = 'Unknown'
+            
+            formatted.append({
+                'user': user_id,
+                'text': text,
+                'timestamp': ts,
+                'date': date_str
+            })
+        
+        return {
+            'channel_id': channel_id,
+            'thread_ts': thread_ts,
+            'reply_count': len(formatted) - 1,  # -1 bo pierwsza to parent message
+            'messages': formatted
+        }
+        
+    except Exception as e:
+        logger.error(f"Błąd czytania wątku: {e}")
+        return {"error": str(e)}
 # Funkcja pomocnicza do pobierania danych email użytkownika
 def get_user_email_config(user_id):
     """Pobierz konfigurację email dla danego użytkownika"""
@@ -823,6 +955,74 @@ def handle_mention(event, say):
                 "required": []
             }
         }
+        ,
+        {
+            "name": "slack_read_channel",
+            "description": "Czyta historię wiadomości z kanału Slack. Użyj gdy użytkownik pyta o przeszłe wiadomości, chce podsumowanie rozmów, lub analizę konwersacji na kanale.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "channel_id": {
+                        "type": "string",
+                        "description": "ID kanału Slack (np. C1234567890). Użyj ID kanału gdzie jest obecna rozmowa."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Ile wiadomości pobrać (domyślnie 50, max 100)"
+                    },
+                    "oldest": {
+                        "type": "string",
+                        "description": "Data/timestamp od której czytać (format: YYYY-MM-DD lub Unix timestamp)"
+                    },
+                    "latest": {
+                        "type": "string",
+                        "description": "Data/timestamp do której czytać (format: YYYY-MM-DD lub Unix timestamp)"
+                    }
+                },
+                "required": ["channel_id"]
+            }
+        },
+        {
+            "name": "slack_search",
+            "description": "Wyszukuje wiadomości na całym Slacku. Użyj gdy użytkownik szuka konkretnych wiadomości, tematów, lub informacji z przeszłości.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Fraza do wyszukania"
+                    },
+                    "sort": {
+                        "type": "string",
+                        "enum": ["timestamp", "score"],
+                        "description": "Sortowanie: 'timestamp' (chronologicznie) lub 'score' (trafność)"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Ile wyników zwrócić (max 100)"
+                    }
+                },
+                "required": ["query"]
+            }
+        },
+        {
+            "name": "slack_read_thread",
+            "description": "Czyta wątek (thread) z kanału. Użyj gdy użytkownik pyta o odpowiedzi w wątku lub kontynuację rozmowy.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "channel_id": {
+                        "type": "string",
+                        "description": "ID kanału"
+                    },
+                    "thread_ts": {
+                        "type": "string",
+                        "description": "Timestamp wiadomości która rozpoczyna wątek"
+                    }
+                },
+                "required": ["channel_id", "thread_ts"]
+            }
+        }
     ]
     
     try:
@@ -890,6 +1090,26 @@ def handle_mention(event, say):
                         metrics=tool_input.get('metrics'),
                         limit=tool_input.get('limit'),
                         client_name=tool_input.get('client_name')
+                    )
+                   elif tool_name == "slack_read_channel":
+                    # Pobierz channel z eventu jeśli nie podano
+                    channel_id = tool_input.get('channel_id') or event.get('channel')
+                    tool_result = slack_read_channel_tool(
+                        channel_id=channel_id,
+                        limit=tool_input.get('limit', 50),
+                        oldest=tool_input.get('oldest'),
+                        latest=tool_input.get('latest')
+                    )
+                elif tool_name == "slack_search":
+                    tool_result = slack_search_tool(
+                        query=tool_input.get('query'),
+                        sort=tool_input.get('sort', 'timestamp'),
+                        limit=tool_input.get('limit', 20)
+                    )
+                elif tool_name == "slack_read_thread":
+                    tool_result = slack_read_thread_tool(
+                        channel_id=tool_input.get('channel_id'),
+                        thread_ts=tool_input.get('thread_ts')
                     )
                 else:
                     tool_result = {"error": "Nieznane narzędzie"}
