@@ -129,6 +129,7 @@ def save_message_to_history(user_id, role, content):
     # Ogranicz do ostatnich 100 wiadomości
     if len(history) > 100:
         conversation_history[user_id] = history[-100:]
+
 def parse_relative_date(date_string):
     """Konwertuj względne daty na YYYY-MM-DD"""
     from datetime import datetime, timedelta
@@ -163,6 +164,8 @@ def parse_relative_date(date_string):
     
     # Jeśli nic nie pasuje, zwróć oryginalny string
     return date_string
+
+# Narzędzie Meta Ads dla Claude - ROZSZERZONE Z MULTI-ACCOUNT
 def meta_ads_tool(date_from=None, date_to=None, level="campaign", campaign_name=None, adset_name=None, ad_name=None, metrics=None, breakdown=None, limit=None, client_name=None):
     """
     Pobiera dane z Meta Ads API na różnych poziomach dla różnych klientów.
@@ -214,7 +217,7 @@ def meta_ads_tool(date_from=None, date_to=None, level="campaign", campaign_name=
             "hint": "Sprawdź pisownię lub wybierz z dostępnych klientów"
         }
     
-try:
+    try:
         # Konwertuj względne daty
         if date_from:
             date_from = parse_relative_date(date_from)
@@ -322,6 +325,7 @@ try:
     except Exception as e:
         logger.error(f"Błąd pobierania danych Meta Ads: {e}")
         return {"error": str(e)}
+
 # Funkcja pomocnicza do pobierania danych email użytkownika
 def get_user_email_config(user_id):
     """Pobierz konfigurację email dla danego użytkownika"""
@@ -484,57 +488,57 @@ def handle_mention(event, say):
     # Definicja narzędzia dla Claude
     tools = [
         {
-    "name": "get_meta_ads_data",
-    "description": "Pobiera szczegółowe statystyki z Meta Ads (Facebook Ads) na poziomie kampanii, ad setów lub pojedynczych reklam. Obsługuje breakdowny demograficzne i placement. Użyj gdy użytkownik pyta o kampanie, ad sety, reklamy, wydatki, wyniki, konwersje, ROAS, demografię (wiek/płeć/kraj) lub placement (Instagram/Facebook/Stories).",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "client_name": {
-                "type": "string",
-                "description": "Nazwa klienta/biznesu. WYMAGANE. Dostępne: 'instax', 'fuji', 'instax/fuji', 'zbiorcze', 'kampanie zbiorcze', 'drzwi dre'. Wyciągnij z pytania użytkownika (np. 'jak kampanie dla instax?' → client_name='instax'). Jeśli użytkownik nie poda - zapytaj."
-            },
-            "date_from": {
-                "type": "string",
-                "description": "Data początkowa. Format: YYYY-MM-DD lub względnie ('wczoraj', 'ostatni tydzień', 'ostatni miesiąc', '7 dni temu')."
-            },
-            "date_to": {
-                "type": "string",
-                "description": "Data końcowa. Format: YYYY-MM-DD lub 'dzisiaj'. Domyślnie dzisiaj."
-            },
-            "level": {
-                "type": "string",
-                "enum": ["campaign", "adset", "ad"],
-                "description": "Poziom danych: 'campaign' (kampanie), 'adset' (zestawy reklam), 'ad' (pojedyncze reklamy). Domyślnie 'campaign'."
-            },
-            "campaign_name": {
-                "type": "string",
-                "description": "Filtr po nazwie kampanii (częściowa nazwa działa)."
-            },
-            "adset_name": {
-                "type": "string",
-                "description": "Filtr po nazwie ad setu (częściowa nazwa działa)."
-            },
-            "ad_name": {
-                "type": "string",
-                "description": "Filtr po nazwie reklamy (częściowa nazwa działa)."
-            },
-            "metrics": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Lista metryk: campaign_name, adset_name, ad_name, spend, impressions, clicks, ctr, cpc, cpm, reach, frequency, conversions, cost_per_conversion, purchase_roas, actions, action_values, budget_remaining, inline_link_clicks, inline_link_click_ctr"
-            },
-            "breakdown": {
-                "type": "string",
-                "description": "Breakdown dla demografii/placement: 'age' (wiek), 'gender' (płeć), 'country' (kraj), 'placement' (miejsce wyświetlenia), 'device_platform' (urządzenie). Może być też lista np. ['age', 'gender']"
-            },
-            "limit": {
-                "type": "integer",
-                "description": "Limit wyników (max liczba kampanii/adsetów/reklam do zwrócenia)."
+            "name": "get_meta_ads_data",
+            "description": "Pobiera szczegółowe statystyki z Meta Ads (Facebook Ads) na poziomie kampanii, ad setów lub pojedynczych reklam. Obsługuje breakdowny demograficzne i placement. Użyj gdy użytkownik pyta o kampanie, ad sety, reklamy, wydatki, wyniki, konwersje, ROAS, demografię (wiek/płeć/kraj) lub placement (Instagram/Facebook/Stories).",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "client_name": {
+                        "type": "string",
+                        "description": "Nazwa klienta/biznesu. WYMAGANE. Dostępne: 'instax', 'fuji', 'instax/fuji', 'zbiorcze', 'kampanie zbiorcze', 'drzwi dre'. Wyciągnij z pytania użytkownika (np. 'jak kampanie dla instax?' → client_name='instax'). Jeśli użytkownik nie poda - zapytaj."
+                    },
+                    "date_from": {
+                        "type": "string",
+                        "description": "Data początkowa. Format: YYYY-MM-DD lub względnie ('wczoraj', 'ostatni tydzień', 'ostatni miesiąc', '7 dni temu')."
+                    },
+                    "date_to": {
+                        "type": "string",
+                        "description": "Data końcowa. Format: YYYY-MM-DD lub 'dzisiaj'. Domyślnie dzisiaj."
+                    },
+                    "level": {
+                        "type": "string",
+                        "enum": ["campaign", "adset", "ad"],
+                        "description": "Poziom danych: 'campaign' (kampanie), 'adset' (zestawy reklam), 'ad' (pojedyncze reklamy). Domyślnie 'campaign'."
+                    },
+                    "campaign_name": {
+                        "type": "string",
+                        "description": "Filtr po nazwie kampanii (częściowa nazwa działa)."
+                    },
+                    "adset_name": {
+                        "type": "string",
+                        "description": "Filtr po nazwie ad setu (częściowa nazwa działa)."
+                    },
+                    "ad_name": {
+                        "type": "string",
+                        "description": "Filtr po nazwie reklamy (częściowa nazwa działa)."
+                    },
+                    "metrics": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Lista metryk: campaign_name, adset_name, ad_name, spend, impressions, clicks, ctr, cpc, cpm, reach, frequency, conversions, cost_per_conversion, purchase_roas, actions, action_values, budget_remaining, inline_link_clicks, inline_link_click_ctr"
+                    },
+                    "breakdown": {
+                        "type": "string",
+                        "description": "Breakdown dla demografii/placement: 'age' (wiek), 'gender' (płeć), 'country' (kraj), 'placement' (miejsce wyświetlenia), 'device_platform' (urządzenie). Może być też lista np. ['age', 'gender']"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Limit wyników (max liczba kampanii/adsetów/reklam do zwrócenia)."
+                    }
+                },
+                "required": []
             }
         },
-        "required": []
-    }
-},
         {
             "name": "manage_email",
             "description": "Zarządza emailami użytkownika - czyta, wysyła i wyszukuje wiadomości. Użyj gdy użytkownik pyta o emaile, chce wysłać wiadomość lub szuka czegoś w skrzynce.",
