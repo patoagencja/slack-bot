@@ -129,7 +129,40 @@ def save_message_to_history(user_id, role, content):
     # Ogranicz do ostatnich 100 wiadomości
     if len(history) > 100:
         conversation_history[user_id] = history[-100:]
-
+def parse_relative_date(date_string):
+    """Konwertuj względne daty na YYYY-MM-DD"""
+    from datetime import datetime, timedelta
+    
+    if not date_string:
+        return None
+    
+    # Już jest w formacie YYYY-MM-DD
+    if len(date_string) == 10 and date_string[4] == '-' and date_string[7] == '-':
+        return date_string
+    
+    today = datetime.now()
+    
+    # Parsuj względne daty
+    date_lower = date_string.lower()
+    
+    if 'wczoraj' in date_lower or 'yesterday' in date_lower:
+        return (today - timedelta(days=1)).strftime('%Y-%m-%d')
+    elif 'tydzień' in date_lower or 'week' in date_lower:
+        days = 7
+        if 'ostatni' in date_lower or 'last' in date_lower:
+            return (today - timedelta(days=days)).strftime('%Y-%m-%d')
+    elif 'miesiąc' in date_lower or 'month' in date_lower:
+        return (today - timedelta(days=30)).strftime('%Y-%m-%d')
+    
+    # Spróbuj wyciągnąć liczbę dni
+    import re
+    match = re.search(r'(\d+)\s*(dzień|dni|day|days)', date_lower)
+    if match:
+        days = int(match.group(1))
+        return (today - timedelta(days=days)).strftime('%Y-%m-%d')
+    
+    # Jeśli nic nie pasuje, zwróć oryginalny string
+    return date_string
 def meta_ads_tool(date_from=None, date_to=None, level="campaign", campaign_name=None, adset_name=None, ad_name=None, metrics=None, breakdown=None, limit=None, client_name=None):
     """
     Pobiera dane z Meta Ads API na różnych poziomach dla różnych klientów.
@@ -182,6 +215,14 @@ def meta_ads_tool(date_from=None, date_to=None, level="campaign", campaign_name=
         }
     
     try:
+        # Domyślne daty
+        try:
+        # Konwertuj względne daty
+        if date_from:
+            date_from = parse_relative_date(date_from)
+        if date_to:
+            date_to = parse_relative_date(date_to)
+        
         # Domyślne daty
         if not date_to:
             date_to = datetime.now().strftime('%Y-%m-%d')
@@ -456,11 +497,11 @@ def handle_mention(event, say):
             },
             "date_from": {
                 "type": "string",
-                "description": "Data początkowa YYYY-MM-DD. 'wczoraj' = -1 dzień, 'ostatni tydzień' = -7 dni, 'ostatni miesiąc' = -30 dni."
+                "description": "Data początkowa. Format: YYYY-MM-DD lub względnie ('wczoraj', 'ostatni tydzień', 'ostatni miesiąc', '7 dni temu')."
             },
             "date_to": {
                 "type": "string",
-                "description": "Data końcowa YYYY-MM-DD. Domyślnie dzisiaj."
+                "description": "Data końcowa. Format: YYYY-MM-DD lub 'dzisiaj'. Domyślnie dzisiaj."
             },
             "level": {
                 "type": "string",
