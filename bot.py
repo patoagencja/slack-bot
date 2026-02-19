@@ -146,6 +146,10 @@ def parse_relative_date(date_string):
     # Parsuj względne daty
     date_lower = date_string.lower()
     
+    # Dzisiaj
+    if 'dzisiaj' in date_lower or 'today' in date_lower:
+        return today.strftime('%Y-%m-%d')
+    
     if 'wczoraj' in date_lower or 'yesterday' in date_lower:
         return (today - timedelta(days=1)).strftime('%Y-%m-%d')
     elif 'tydzień' in date_lower or 'week' in date_lower:
@@ -223,6 +227,17 @@ def meta_ads_tool(date_from=None, date_to=None, level="campaign", campaign_name=
             date_from = parse_relative_date(date_from)
         if date_to:
             date_to = parse_relative_date(date_to)
+        
+        # Walidacja roku - napraw daty z przeszłości
+        if date_from and len(date_from) >= 4:
+            year = int(date_from[:4])
+            if year < 2026:
+                date_from = '2026' + date_from[4:]
+        
+        if date_to and len(date_to) >= 4:
+            year = int(date_to[:4])
+            if year < 2026:
+                date_to = '2026' + date_to[4:]
         
         # Domyślne daty
         if not date_to:
