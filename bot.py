@@ -962,7 +962,7 @@ def handle_mention(event, say):
                 "properties": {
                     "channel_id": {
                         "type": "string",
-                        "description": "ID kanału Slack (np. C1234567890). Użyj ID kanału gdzie jest obecna rozmowa."
+                        "description": "ID kanału Slack. Jeśli użytkownik mówi 'ten kanał' lub 'tutaj', zostaw PUSTE - bot użyje obecnego kanału automatycznie."
                     },
                     "limit": {
                         "type": "integer",
@@ -977,7 +977,7 @@ def handle_mention(event, say):
                         "description": "Data/timestamp do której czytać (format: YYYY-MM-DD lub Unix timestamp)"
                     }
                 },
-                "required": ["channel_id"]
+                "required": []
             }
         },
         
