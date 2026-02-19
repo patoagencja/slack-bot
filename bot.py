@@ -980,26 +980,7 @@ def handle_mention(event, say):
                 "required": ["channel_id"]
             }
         },
-        {
-            "name": "slack_search",
-            "description": "Wyszukuje wiadomości na całym Slacku. Użyj gdy użytkownik szuka konkretnych wiadomości, tematów, lub informacji z przeszłości.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Fraza do wyszukania"
-                    },
-                    "sort": {
-                        "type": "string",
-                        "enum": ["timestamp", "score"],
-                        "description": "Sortowanie: 'timestamp' (chronologicznie) lub 'score' (trafność)"
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Ile wyników zwrócić (max 100)"
-                    }
-                },
+        
                 "required": ["query"]
             }
         },
@@ -1096,12 +1077,7 @@ def handle_mention(event, say):
                         oldest=tool_input.get('oldest'),
                         latest=tool_input.get('latest')
                     )
-                elif tool_name == "slack_search":
-                    tool_result = slack_search_tool(
-                        query=tool_input.get('query'),
-                        sort=tool_input.get('sort', 'timestamp'),
-                        limit=tool_input.get('limit', 20)
-                    )
+          
                 elif tool_name == "slack_read_thread":
                     tool_result = slack_read_thread_tool(
                         channel_id=tool_input.get('channel_id'),
