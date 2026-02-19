@@ -537,14 +537,11 @@ def handle_mention(event, say):
         # Pobierz User ID
         user_id = event.get('user')
         
-        # Pobierz historię konwersacji użytkownika
+        # Pobierz historię konwersacji użytkownika (bez zapisywania jeszcze)
         history = get_conversation_history(user_id)
-        
-        # Dodaj nową wiadomość użytkownika do historii
-        save_message_to_history(user_id, "user", user_message)
-        
-        # Użyj pełnej historii jako messages
-        messages = get_conversation_history(user_id)
+
+        # Stwórz messages dla tego zapytania (bez modyfikowania globalnej historii)
+        messages = history + [{"role": "user", "content": user_message}]
         
         # Pętla dla tool use (Claude może wielokrotnie używać narzędzi)
         while True:
@@ -618,7 +615,8 @@ def handle_mention(event, say):
                     "Przepraszam, nie mogłem wygenerować odpowiedzi."
                 )
                 
-                # Zapisz odpowiedź bota do historii
+                # Zapisz całą konwersację do historii (user + assistant)
+                save_message_to_history(user_id, "user", user_message)
                 save_message_to_history(user_id, "assistant", response_text)
                 
                 say(text=response_text, thread_ts=thread_ts)
