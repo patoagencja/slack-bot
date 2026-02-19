@@ -215,8 +215,6 @@ def meta_ads_tool(date_from=None, date_to=None, level="campaign", campaign_name=
         }
     
     try:
-        # Domyślne daty
-        try:
         # Konwertuj względne daty
         if date_from:
             date_from = parse_relative_date(date_from)
