@@ -216,16 +216,16 @@ def meta_ads_tool(date_from=None, date_to=None, level="campaign", campaign_name=
     
     try:
         # Konwertuj względne daty
-        if date_from:
-            date_from = parse_relative_date(date_from)
-        if date_to:
-            date_to = parse_relative_date(date_to)
+    if date_from:
+        date_from = parse_relative_date(date_from)
+    if date_to:
+        date_to = parse_relative_date(date_to)
         
-        # Domyślne daty
-        if not date_to:
-            date_to = datetime.now().strftime('%Y-%m-%d')
-        if not date_from:
-            date_from = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    # Domyślne daty
+    if not date_to:
+        date_to = datetime.now().strftime('%Y-%m-%d')
+    if not date_from:
+        date_from = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
         
         account = AdAccount(ad_account_id)
         
