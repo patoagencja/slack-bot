@@ -45,6 +45,7 @@ try:
         'client_id': os.environ.get("GOOGLE_ADS_CLIENT_ID"),
         'client_secret': os.environ.get("GOOGLE_ADS_CLIENT_SECRET"),
         'refresh_token': os.environ.get("GOOGLE_ADS_REFRESH_TOKEN"),
+        'login_customer_id': '6878731454',
         'use_proto_plus': True
     }
     google_ads_client = GoogleAdsClient.load_from_dict(google_ads_config)
