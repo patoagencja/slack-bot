@@ -15,6 +15,7 @@ from email.header import decode_header
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from google.ads.googleads.client import GoogleAdsClient
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -37,7 +38,20 @@ try:
 except Exception as e:
     logger.error(f"Błąd inicjalizacji Meta Ads API: {e}")
     meta_ad_account_id = None
-
+# Inicjalizacja Google Ads API
+try:
+    google_ads_config = {
+        'developer_token': os.environ.get("GOOGLE_ADS_DEVELOPER_TOKEN"),
+        'client_id': os.environ.get("GOOGLE_ADS_CLIENT_ID"),
+        'client_secret': os.environ.get("GOOGLE_ADS_CLIENT_SECRET"),
+        'refresh_token': os.environ.get("GOOGLE_ADS_REFRESH_TOKEN"),
+        'use_proto_plus': True
+    }
+    google_ads_client = GoogleAdsClient.load_from_dict(google_ads_config)
+    logger.info("✅ Google Ads API zainicjalizowane")
+except Exception as e:
+    logger.error(f"Błąd inicjalizacji Google Ads API: {e}")
+    google_ads_client = None
 # Funkcja do pobierania danych z Meta Ads
 def get_meta_ads_stats(days_back=1):
     """Pobierz statystyki kampanii z ostatnich X dni"""
@@ -340,7 +354,178 @@ def meta_ads_tool(date_from=None, date_to=None, level="campaign", campaign_name=
     except Exception as e:
         logger.error(f"Błąd pobierania danych Meta Ads: {e}")
         return {"error": str(e)}
-
+# Narzędzie Google Ads dla Claude - MULTI-ACCOUNT
+def google_ads_tool(date_from=None, date_to=None, level="campaign", campaign_name=None, adgroup_name=None, ad_name=None, metrics=None, limit=None, client_name=None):
+    """
+    Pobiera dane z Google Ads API na różnych poziomach dla różnych klientów.
+    
+    Args:
+        date_from: Data początkowa YYYY-MM-DD
+        date_to: Data końcowa YYYY-MM-DD
+        level: Poziom danych - "campaign", "adgroup", "ad"
+        campaign_name: Filtr po nazwie kampanii
+        adgroup_name: Filtr po nazwie ad group
+        ad_name: Filtr po nazwie reklamy
+        metrics: Lista metryk do pobrania
+        limit: Limit wyników
+        client_name: Nazwa klienta/biznesu
+    
+    Returns:
+        JSON ze statystykami
+    """
+    if not google_ads_client:
+        return {"error": "Google Ads API nie jest skonfigurowane."}
+    
+    # Wczytaj mapowanie kont
+    accounts_json = os.environ.get("GOOGLE_ADS_CUSTOMER_IDS", "{}")
+    try:
+        accounts_map = json.loads(accounts_json)
+    except json.JSONDecodeError:
+        accounts_map = {}
+    
+    # Jeśli nie podano klienta - zwróć listę
+    if not client_name:
+        available_clients = list(set(accounts_map.keys()))
+        return {
+            "message": "Nie podano nazwy klienta. Dostępne klienty:",
+            "available_clients": available_clients,
+            "hint": "Podaj nazwę klienta w zapytaniu"
+        }
+    
+    # Znajdź Customer ID
+    client_name_lower = client_name.lower()
+    customer_id = None
+    
+    for key, value in accounts_map.items():
+        if key.lower() == client_name_lower or client_name_lower in key.lower():
+            customer_id = value
+            break
+    
+    if not customer_id:
+        return {
+            "error": f"Nie znaleziono konta dla klienta '{client_name}'",
+            "available_clients": list(set(accounts_map.keys())),
+            "hint": "Sprawdź pisownię"
+        }
+    
+    try:
+        # Konwertuj daty
+        if date_from:
+            date_from = parse_relative_date(date_from)
+        if date_to:
+            date_to = parse_relative_date(date_to)
+        
+        # Walidacja roku
+        if date_from and len(date_from) >= 4:
+            year = int(date_from[:4])
+            if year < 2026:
+                date_from = '2026' + date_from[4:]
+        
+        if date_to and len(date_to) >= 4:
+            year = int(date_to[:4])
+            if year < 2026:
+                date_to = '2026' + date_to[4:]
+        
+        # Domyślne daty
+        if not date_to:
+            date_to = datetime.now().strftime('%Y-%m-%d')
+        if not date_from:
+            date_from = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+        
+        # Formatuj daty dla Google Ads (YYYYMMDD)
+        date_from_ga = date_from.replace('-', '')
+        date_to_ga = date_to.replace('-', '')
+        
+        # Metryki domyślne
+        default_metrics = {
+            'campaign': ['campaign.name', 'metrics.impressions', 'metrics.clicks', 'metrics.cost_micros', 
+                        'metrics.conversions', 'metrics.ctr', 'metrics.average_cpc'],
+            'adgroup': ['campaign.name', 'ad_group.name', 'metrics.impressions', 'metrics.clicks', 
+                       'metrics.cost_micros', 'metrics.conversions', 'metrics.ctr'],
+            'ad': ['campaign.name', 'ad_group.name', 'ad_group_ad.ad.name', 'metrics.impressions', 
+                  'metrics.clicks', 'metrics.cost_micros', 'metrics.ctr']
+        }
+        
+        if not metrics:
+            metrics = default_metrics.get(level, default_metrics['campaign'])
+        
+        # Zbuduj zapytanie GAQL
+        resource_map = {
+            'campaign': 'campaign',
+            'adgroup': 'ad_group',
+            'ad': 'ad_group_ad'
+        }
+        
+        resource = resource_map.get(level, 'campaign')
+        fields = ', '.join(metrics)
+        
+        query = f"""
+            SELECT {fields}
+            FROM {resource}
+            WHERE segments.date BETWEEN '{date_from_ga}' AND '{date_to_ga}'
+        """
+        
+        # Dodaj filtry
+        if campaign_name:
+            query += f" AND campaign.name LIKE '%{campaign_name}%'"
+        if adgroup_name and level in ['adgroup', 'ad']:
+            query += f" AND ad_group.name LIKE '%{adgroup_name}%'"
+        
+        if limit:
+            query += f" LIMIT {limit}"
+        
+        # Wykonaj zapytanie
+        ga_service = google_ads_client.get_service("GoogleAdsService")
+        response = ga_service.search(customer_id=customer_id, query=query)
+        
+        # Przetwórz wyniki
+        data = []
+        for row in response:
+            item = {}
+            
+            # Wyciągnij wartości z różnych poziomów
+            for metric in metrics:
+                parts = metric.split('.')
+                value = row
+                
+                try:
+                    for part in parts:
+                        value = getattr(value, part)
+                    
+                    # Konwertuj cost_micros na walutę
+                    if 'cost_micros' in metric:
+                        item['cost'] = float(value) / 1000000
+                    elif 'ctr' in metric or 'cpc' in metric:
+                        item[parts[-1]] = float(value)
+                    elif isinstance(value, (int, float)):
+                        item[parts[-1]] = value
+                    else:
+                        item[parts[-1]] = str(value)
+                except:
+                    pass
+            
+            # Filtrowanie
+            should_include = True
+            
+            if campaign_name and 'name' in item:
+                if campaign_name.lower() not in str(item.get('name', '')).lower():
+                    should_include = False
+            
+            if should_include:
+                data.append(item)
+        
+        return {
+            "date_from": date_from,
+            "date_to": date_to,
+            "level": level,
+            "customer_id": customer_id,
+            "total_items": len(data),
+            "data": data
+        }
+        
+    except Exception as e:
+        logger.error(f"Błąd pobierania danych Google Ads: {e}")
+        return {"error": str(e)}
 # Funkcja pomocnicza do pobierania danych email użytkownika
 def get_user_email_config(user_id):
     """Pobierz konfigurację email dla danego użytkownika"""
@@ -589,6 +774,55 @@ def handle_mention(event, say):
                 "required": ["action"]
             }
         }
+        ,
+        {
+            "name": "get_google_ads_data",
+            "description": "Pobiera szczegółowe statystyki z Google Ads na poziomie kampanii, ad groups lub pojedynczych reklam. Użyj gdy użytkownik pyta o kampanie Google, wydatki w Google Ads, wyniki wyszukiwania, kampanie displayowe.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "client_name": {
+                        "type": "string",
+                        "description": "Nazwa klienta/biznesu. WYMAGANE. Dostępne: '3wm', 'pato', 'dre 2024', 'dre24', 'dre 2025', 'dre25', 'dre', 'm2', 'zbiorcze'. Wyciągnij z pytania użytkownika."
+                    },
+                    "date_from": {
+                        "type": "string",
+                        "description": "Data początkowa. Format: YYYY-MM-DD lub względnie ('wczoraj', 'ostatni tydzień')."
+                    },
+                    "date_to": {
+                        "type": "string",
+                        "description": "Data końcowa. Format: YYYY-MM-DD lub 'dzisiaj'. Domyślnie dzisiaj."
+                    },
+                    "level": {
+                        "type": "string",
+                        "enum": ["campaign", "adgroup", "ad"],
+                        "description": "Poziom danych: 'campaign' (kampanie), 'adgroup' (grupy reklam), 'ad' (pojedyncze reklamy). Domyślnie 'campaign'."
+                    },
+                    "campaign_name": {
+                        "type": "string",
+                        "description": "Filtr po nazwie kampanii."
+                    },
+                    "adgroup_name": {
+                        "type": "string",
+                        "description": "Filtr po nazwie ad group."
+                    },
+                    "ad_name": {
+                        "type": "string",
+                        "description": "Filtr po nazwie reklamy."
+                    },
+                    "metrics": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Lista metryk: campaign.name, ad_group.name, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.ctr, metrics.average_cpc"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Limit wyników."
+                    }
+                },
+                "required": []
+            }
+        }
     ]
     
     try:
@@ -644,6 +878,18 @@ def handle_mention(event, say):
                         subject=tool_input.get('subject'),
                         body=tool_input.get('body'),
                         query=tool_input.get('query')
+                    )
+                    elif tool_name == "get_google_ads_data":
+                    tool_result = google_ads_tool(
+                        date_from=tool_input.get('date_from'),
+                        date_to=tool_input.get('date_to'),
+                        level=tool_input.get('level', 'campaign'),
+                        campaign_name=tool_input.get('campaign_name'),
+                        adgroup_name=tool_input.get('adgroup_name'),
+                        ad_name=tool_input.get('ad_name'),
+                        metrics=tool_input.get('metrics'),
+                        limit=tool_input.get('limit'),
+                        client_name=tool_input.get('client_name')
                     )
                 else:
                     tool_result = {"error": "Nieznane narzędzie"}
