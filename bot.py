@@ -575,7 +575,7 @@ def handle_mention(event, say):
                         ad_name=tool_input.get('ad_name'),
                         metrics=tool_input.get('metrics'),
                         breakdown=tool_input.get('breakdown'),
-                        limit=tool_input.get('limit')
+                        limit=tool_input.get('limit'),
                         client_name=tool_input.get('client_name')
                     )
                 elif tool_name == "manage_email":
