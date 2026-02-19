@@ -980,10 +980,6 @@ def handle_mention(event, say):
                 "required": []
             }
         },
-        
-                "required": ["query"]
-            }
-        },
         {
             "name": "slack_read_thread",
             "description": "Czyta wątek (thread) z kanału. Użyj gdy użytkownik pyta o odpowiedzi w wątku lub kontynuację rozmowy.",
