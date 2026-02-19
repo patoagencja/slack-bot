@@ -1068,7 +1068,6 @@ def handle_mention(event, say):
                         client_name=tool_input.get('client_name')
                     )
                 elif tool_name == "manage_email":
-                    # Pobierz user_id z eventu
                     user_id = event.get('user')
                     tool_result = email_tool(
                         user_id=user_id,
@@ -1079,7 +1078,7 @@ def handle_mention(event, say):
                         body=tool_input.get('body'),
                         query=tool_input.get('query')
                     )
-                    elif tool_name == "get_google_ads_data":
+                elif tool_name == "get_google_ads_data":
                     tool_result = google_ads_tool(
                         date_from=tool_input.get('date_from'),
                         date_to=tool_input.get('date_to'),
@@ -1091,8 +1090,7 @@ def handle_mention(event, say):
                         limit=tool_input.get('limit'),
                         client_name=tool_input.get('client_name')
                     )
-                   elif tool_name == "slack_read_channel":
-                    # Pobierz channel z eventu jeśli nie podano
+                elif tool_name == "slack_read_channel":
                     channel_id = tool_input.get('channel_id') or event.get('channel')
                     tool_result = slack_read_channel_tool(
                         channel_id=channel_id,
