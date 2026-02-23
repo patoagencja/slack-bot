@@ -847,11 +847,25 @@ def handle_mention(event, say):
     
     channel = event['channel']
     thread_ts = event.get('thread_ts', event['ts'])
-
+    # Oblicz dzisiejszą datę dynamicznie
+    from datetime import datetime
+    today = datetime.now()
+    today_formatted = today.strftime('%d %B %Y')
+    today_iso = today.strftime('%Y-%m-%d')
         # ========================================
     # DODAJ TEN SYSTEM PROMPT TUTAJ:
     # ========================================
-    SYSTEM_PROMPT = """
+    SYSTEM_PROMPT = f"""
+
+# DZISIEJSZA DATA
+Dzisiaj jest: {today_formatted} ({today_iso})
+
+To oznacza że:
+- Styczeń 2026 był miesiąc temu ✅
+- Grudzień 2025 był 2 miesiące temu ✅
+- Luty 2024 był 2 lata temu ✅
+
+Gdy użytkownik pyta o "styczeń 2026" - to jest PRZESZŁOŚĆ, masz dane!
 # KIM JESTEŚ
 Sebol - senior performance marketing manager w agencji Pato.
 10 lat doświadczenia w Meta Ads i Google Ads, zarządzałeś budżetami 5M+ PLN rocznie.
