@@ -182,6 +182,36 @@ def parse_relative_date(date_string):
         return (today - timedelta(days=days)).strftime('%Y-%m-%d')
     
     # Jeśli nic nie pasuje, zwróć oryginalny string
+        # Parsuj nazwy miesięcy (np. "grudzień 2025", "styczeń 2026")
+    import re
+    from datetime import datetime
+    
+    # Lista miesięcy po polsku
+    months = {
+        'styczeń': 1, 'stycznia': 1,
+        'luty': 2, 'lutego': 2,
+        'marzec': 3, 'marca': 3,
+        'kwiecień': 4, 'kwietnia': 4,
+        'maj': 5, 'maja': 5,
+        'czerwiec': 6, 'czerwca': 6,
+        'lipiec': 7, 'lipca': 7,
+        'sierpień': 8, 'sierpnia': 8,
+        'wrzesień': 9, 'września': 9,
+        'październik': 10, 'października': 10,
+        'listopad': 11, 'listopada': 11,
+        'grudzień': 12, 'grudnia': 12
+    }
+    
+    # Spróbuj match "miesiąc YYYY" (np. "grudzień 2025")
+    for month_name, month_num in months.items():
+        if month_name in date_lower:
+            # Szukaj roku
+            year_match = re.search(r'202[0-9]', date_string)
+            if year_match:
+                year = int(year_match.group())
+                # Pierwszy dzień miesiąca
+                date_obj = datetime(year, month_num, 1)
+                return date_obj.strftime('%Y-%m-%d')
     return date_string
 
 # Narzędzie Meta Ads dla Claude - ROZSZERZONE Z MULTI-ACCOUNT
