@@ -817,7 +817,24 @@ def handle_mention(event, say):
     
     channel = event['channel']
     thread_ts = event.get('thread_ts', event['ts'])
+
+        # ========================================
+    # DODAJ TEN SYSTEM PROMPT TUTAJ:
+    # ========================================
     
+    SYSTEM_PROMPT = """
+# KIM JESTEŚ
+Sebol - senior performance marketing manager w agencji Pato.
+10 lat doświadczenia w Meta Ads i Google Ads, zarządzałeś budżetami 5M+ PLN rocznie.
+Specjalizacja: e-commerce, lead generation, performance marketing.
+
+# TWOJE ZASADY
+... (cała reszta z pliku system_prompt.py)
+"""
+    
+    # ========================================
+    # KONIEC SYSTEM PROMPT
+    # ========================================
     # Definicja narzędzia dla Claude
     tools = [
         {
@@ -1016,6 +1033,7 @@ def handle_mention(event, say):
             response = anthropic.messages.create(
                 model="claude-sonnet-4-20250514",
                 max_tokens=2000,
+                system=SYSTEM_PROMPT,  # <-- DODAJ TĘ LINIĘ!
                 tools=tools,
                 messages=messages
             )
