@@ -1485,6 +1485,494 @@ def _benchmark_flag(current, benchmark, higher_is_better=True):
     return f" {flag} (avg: {benchmark:.2f}, {sign}{diff_pct:.0f}%)"
 
 
+# ============================================
+# SELF-LEARNING SYSTEM
+# ============================================
+
+HISTORY_FILE = "/tmp/campaign_history.json"
+HISTORY_RETENTION_DAYS = 90
+
+
+def _load_history_raw():
+    if not os.path.exists(HISTORY_FILE):
+        return {}
+    try:
+        with open(HISTORY_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_history_raw(data):
+    try:
+        with open(HISTORY_FILE, "w") as f:
+            json.dump(data, f, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Błąd zapisu historii: {e}")
+
+
+def save_campaign_results(client, campaign, metrics, actions_taken=None):
+    """Zapisuje dzisiejsze wyniki kampanii do historii (90-dniowy retention)."""
+    if actions_taken is None:
+        actions_taken = []
+    data = _load_history_raw()
+    if client not in data:
+        data[client] = {"campaigns": {}, "predictions": []}
+    data[client].setdefault("campaigns", {})
+    data[client].setdefault("predictions", [])
+
+    today = datetime.now().strftime('%Y-%m-%d')
+    dow = datetime.now().strftime('%A').lower()
+    entry = {
+        "date": today,
+        "day_of_week": dow,
+        "is_weekend": dow in ["saturday", "sunday"],
+        "ctr": metrics.get("ctr"),
+        "cpc": metrics.get("cpc"),
+        "roas": metrics.get("roas"),
+        "frequency": metrics.get("frequency"),
+        "spend": metrics.get("spend", 0),
+        "conversions": metrics.get("conversions", 0),
+        "impressions": metrics.get("impressions", 0),
+        "clicks": metrics.get("clicks", 0),
+        "platform": metrics.get("platform", "meta"),
+        "actions_taken": actions_taken,
+    }
+
+    if campaign not in data[client]["campaigns"]:
+        data[client]["campaigns"][campaign] = []
+
+    # Replace today's entry if exists
+    data[client]["campaigns"][campaign] = [
+        e for e in data[client]["campaigns"][campaign] if e.get("date") != today
+    ]
+    data[client]["campaigns"][campaign].append(entry)
+
+    # Prune old entries
+    cutoff = (datetime.now() - timedelta(days=HISTORY_RETENTION_DAYS)).strftime('%Y-%m-%d')
+    data[client]["campaigns"][campaign] = [
+        e for e in data[client]["campaigns"][campaign] if e.get("date", "") >= cutoff
+    ]
+    _save_history_raw(data)
+
+
+def load_campaign_history(client, campaign=None, days_back=30):
+    """Loads campaign history. Returns list (single campaign) or dict (all campaigns)."""
+    data = _load_history_raw()
+    campaigns = data.get(client, {}).get("campaigns", {})
+    cutoff = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+
+    if campaign:
+        return [e for e in campaigns.get(campaign, []) if e.get("date", "") >= cutoff]
+
+    return {
+        name: [e for e in entries if e.get("date", "") >= cutoff]
+        for name, entries in campaigns.items()
+        if any(e.get("date", "") >= cutoff for e in entries)
+    }
+
+
+def _save_prediction(client, campaign, recommendation, predicted_metric, predicted_change_pct, confidence):
+    """Saves prediction for later accuracy evaluation."""
+    data = _load_history_raw()
+    if client not in data:
+        data[client] = {"campaigns": {}, "predictions": []}
+    data[client].setdefault("predictions", [])
+
+    data[client]["predictions"].append({
+        "date": datetime.now().strftime('%Y-%m-%d'),
+        "campaign": campaign,
+        "recommendation": recommendation,
+        "predicted_metric": predicted_metric,
+        "predicted_change_pct": predicted_change_pct,
+        "confidence": confidence,
+        "actual_change_pct": None,
+        "verified": False,
+    })
+
+    cutoff = (datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d')
+    data[client]["predictions"] = [
+        p for p in data[client]["predictions"] if p.get("date", "") >= cutoff
+    ]
+    _save_history_raw(data)
+
+
+def calculate_confidence(pattern_count, success_count):
+    """Returns confidence 0.0–1.0. Requires ≥2 observations to be nonzero."""
+    if pattern_count < 2:
+        return 0.0
+    rate = success_count / pattern_count
+    weight = min(pattern_count / 5.0, 1.0)  # max weight at 5+ observations
+    return rate * weight
+
+
+def analyze_patterns(client):
+    """
+    Analyzes 90-day history. Returns dict with:
+    - summary.frequency_creative: CTR improvement after creative refresh when freq>4.5
+    - summary.budget_increase: CPC impact after spend >+20%
+    - summary.weekend: weekend vs weekday CTR/ROAS
+    """
+    all_history = load_campaign_history(client, days_back=90)
+    freq_creative = []
+    budget_impact = []
+    weekend_wd, weekend_we = [], []
+    ctr_recovery = []
+
+    for campaign, entries in all_history.items():
+        if len(entries) < 3:
+            continue
+        entries_s = sorted(entries, key=lambda x: x.get("date", ""))
+
+        for i in range(1, len(entries_s)):
+            prev = entries_s[i - 1]
+            curr = entries_s[i]
+
+            # Weekend performance bucket
+            if curr.get("ctr"):
+                bucket = weekend_we if curr.get("is_weekend") else weekend_wd
+                bucket.append({"ctr": curr["ctr"], "roas": curr.get("roas"), "campaign": campaign})
+
+            # Frequency spike → creative refresh → CTR change 48h later
+            if (prev.get("frequency", 0) >= 4.5
+                    and "creative_refresh" in curr.get("actions_taken", [])
+                    and i + 1 < len(entries_s)):
+                after = entries_s[i + 1]
+                if prev.get("ctr") and after.get("ctr") and prev["ctr"] > 0:
+                    imp = (after["ctr"] - prev["ctr"]) / prev["ctr"] * 100
+                    freq_creative.append({
+                        "campaign": campaign,
+                        "freq_trigger": prev["frequency"],
+                        "improvement_pct": imp,
+                        "success": imp > 0,
+                    })
+
+            # Budget increase → CPC impact
+            if prev.get("spend", 0) > 0 and curr.get("spend"):
+                spend_chg = (curr["spend"] - prev["spend"]) / prev["spend"] * 100
+                if spend_chg > 20 and prev.get("cpc") and curr.get("cpc"):
+                    cpc_chg = (curr["cpc"] - prev["cpc"]) / prev["cpc"] * 100
+                    budget_impact.append({
+                        "campaign": campaign,
+                        "spend_increase_pct": spend_chg,
+                        "cpc_change_pct": cpc_chg,
+                        "success": cpc_chg < 10,  # <10% CPC increase = acceptable
+                    })
+
+            # CTR change after any action
+            for action in curr.get("actions_taken", []):
+                if prev.get("ctr") and curr.get("ctr") and prev["ctr"] > 0:
+                    chg = (curr["ctr"] - prev["ctr"]) / prev["ctr"] * 100
+                    ctr_recovery.append({
+                        "campaign": campaign, "action": action,
+                        "ctr_change_pct": chg, "success": chg > 5,
+                    })
+
+    summary = {}
+
+    if freq_creative:
+        successes = [p for p in freq_creative if p["success"]]
+        avg_imp = sum(p["improvement_pct"] for p in successes) / len(successes) if successes else 0
+        summary["frequency_creative"] = {
+            "total": len(freq_creative),
+            "successes": len(successes),
+            "avg_ctr_improvement_pct": avg_imp,
+            "confidence": calculate_confidence(len(freq_creative), len(successes)),
+        }
+
+    if budget_impact:
+        successes = [p for p in budget_impact if p["success"]]
+        summary["budget_increase"] = {
+            "total": len(budget_impact),
+            "successes": len(successes),
+            "confidence": calculate_confidence(len(budget_impact), len(successes)),
+        }
+
+    if weekend_wd and weekend_we:
+        avg_wd_ctr = sum(d["ctr"] for d in weekend_wd) / len(weekend_wd)
+        avg_we_ctr = sum(d["ctr"] for d in weekend_we) / len(weekend_we)
+        wd_roas = [d["roas"] for d in weekend_wd if d.get("roas")]
+        we_roas = [d["roas"] for d in weekend_we if d.get("roas")]
+        avg_wd_roas = sum(wd_roas) / len(wd_roas) if wd_roas else 0
+        avg_we_roas = sum(we_roas) / len(we_roas) if we_roas else 0
+        summary["weekend"] = {
+            "weekday_avg_ctr": avg_wd_ctr,
+            "weekend_avg_ctr": avg_we_ctr,
+            "ctr_diff_pct": (avg_we_ctr - avg_wd_ctr) / avg_wd_ctr * 100 if avg_wd_ctr else 0,
+            "weekday_avg_roas": avg_wd_roas,
+            "weekend_avg_roas": avg_we_roas,
+            "roas_diff_pct": (avg_we_roas - avg_wd_roas) / avg_wd_roas * 100 if avg_wd_roas else 0,
+        }
+
+    return {
+        "freq_creative_data": freq_creative,
+        "budget_impact_data": budget_impact,
+        "weekend_wd": weekend_wd,
+        "weekend_we": weekend_we,
+        "ctr_recovery": ctr_recovery,
+        "summary": summary,
+    }
+
+
+def _confidence_label(conf):
+    """Returns human-readable confidence label or None if below threshold."""
+    if conf >= 0.90:
+        return f"Strongly recommend ({conf * 100:.0f}%)"
+    elif conf >= 0.70:
+        return f"Recommend ({conf * 100:.0f}%)"
+    elif conf >= 0.50:
+        return f"Consider ({conf * 100:.0f}%)"
+    return None
+
+
+def generate_smart_recommendations(client, current_campaigns, patterns=None):
+    """
+    Generates ranked recommendations based on current metrics + learned patterns.
+    Only returns items with confidence ≥50%.
+    """
+    if patterns is None:
+        patterns = analyze_patterns(client)
+
+    recs = []
+    freq_p = patterns.get("summary", {}).get("frequency_creative", {})
+
+    for c in current_campaigns:
+        name = c.get("campaign_name", c.get("name", ""))
+        if not name:
+            continue
+        freq = c.get("frequency")
+        ctr = c.get("ctr")
+        roas = c.get("purchase_roas", c.get("roas"))
+        cpc = c.get("cpc")
+        spend = c.get("spend", c.get("cost", 0))
+
+        # --- Frequency → Creative Refresh ---
+        if freq and freq >= 4.5:
+            avg_imp = freq_p.get("avg_ctr_improvement_pct", 30.0)
+            base = freq_p.get("confidence", 0.0) if freq_p.get("total", 0) >= 2 else 0.0
+            conf = min(base + 0.30 + (freq - 4.5) * 0.05, 0.95)
+            if conf >= 0.50:
+                hist_note = (
+                    f"{freq_p.get('successes', '?')}/{freq_p.get('total', '?')} razy dało CTR +{avg_imp:.0f}%"
+                    if freq_p.get("total") else "benchmark branżowy (brak własnej historii)"
+                )
+                recs.append({
+                    "campaign": name,
+                    "action": "Wymień kreacje (Creative Refresh)",
+                    "reason": f"Frequency {freq:.1f} ≥ 4.5 – ryzyko ad fatigue",
+                    "evidence": hist_note,
+                    "expected_impact": f"CTR +{avg_imp * 0.7:.0f}% – {avg_imp * 1.3:.0f}%",
+                    "confidence": conf,
+                    "urgency": "🔴" if freq >= 6.0 else "🟡",
+                    "predicted_metric": "ctr",
+                    "predicted_change_pct": avg_imp,
+                })
+
+        # --- Low CTR → targeting review ---
+        if ctr is not None and ctr < 0.6:
+            recs.append({
+                "campaign": name,
+                "action": "Zmień targeting / grupę odbiorców",
+                "reason": f"CTR {ctr:.2f}% < 0.6% (bardzo niski)",
+                "evidence": "Mismatching audience lub silna ad fatigue",
+                "expected_impact": "CTR +0.3-0.8 pp po zmianie targetingu",
+                "confidence": 0.72,
+                "urgency": "🟡",
+                "predicted_metric": "ctr",
+                "predicted_change_pct": 50.0,
+            })
+
+        # --- ROAS below break-even ---
+        if roas is not None and roas < 1.5 and spend > 50:
+            recs.append({
+                "campaign": name,
+                "action": "Pause lub głęboka optymalizacja",
+                "reason": f"ROAS {roas:.2f}x – poniżej break-even (marża 40%)",
+                "evidence": "ROAS <1.5x = strata na każdej transakcji",
+                "expected_impact": "Oszczędność budżetu lub ROAS +60% po optymalizacji",
+                "confidence": 0.80,
+                "urgency": "🔴",
+                "predicted_metric": "roas",
+                "predicted_change_pct": 60.0,
+            })
+
+        # --- High CPC ---
+        if cpc is not None and cpc > 15:
+            recs.append({
+                "campaign": name,
+                "action": "Zmień strategię bidowania (Target CPA)",
+                "reason": f"CPC {cpc:.2f} PLN > 15 PLN",
+                "evidence": "Target CPA zazwyczaj obniża CPC o 20-30% vs manual",
+                "expected_impact": "CPC -20-30%",
+                "confidence": 0.65,
+                "urgency": "🟡",
+                "predicted_metric": "cpc",
+                "predicted_change_pct": -25.0,
+            })
+
+    # --- Weekend dayparting ---
+    weekend = patterns.get("summary", {}).get("weekend", {})
+    if weekend and weekend.get("roas_diff_pct", 0) > 10:
+        diff = weekend["roas_diff_pct"]
+        recs.append({
+            "campaign": "WSZYSTKIE kampanie",
+            "action": "Dayparting – zwiększ budżet w weekendy",
+            "reason": f"ROAS w weekendy +{diff:.0f}% vs dni robocze",
+            "evidence": (
+                f"Weekday avg ROAS: {weekend['weekday_avg_roas']:.2f}x | "
+                f"Weekend: {weekend['weekend_avg_roas']:.2f}x"
+            ),
+            "expected_impact": f"+{diff * 0.4:.0f}% efektywności budżetu",
+            "confidence": min(0.50 + abs(diff) / 100, 0.85),
+            "urgency": "💡",
+            "predicted_metric": "roas",
+            "predicted_change_pct": diff * 0.4,
+        })
+
+    recs.sort(key=lambda x: x["confidence"], reverse=True)
+    return [r for r in recs if r["confidence"] >= 0.50]
+
+
+def suggest_experiments(client, current_campaigns):
+    """Suggests A/B tests for placements/features never tried before."""
+    all_history = load_campaign_history(client, days_back=90)
+    known_names = set()
+    for camp_list in all_history.values():
+        for entry in camp_list:
+            known_names.add(entry.get("campaign_name", "").lower())
+    for c in current_campaigns:
+        known_names.add(c.get("campaign_name", c.get("name", "")).lower())
+
+    experiment_pool = [
+        {
+            "name": "Instagram Reels",
+            "keywords": ["reels"],
+            "expected": "CTR 1.8-2.5%",
+            "budget": "200 PLN / 7 dni",
+            "reason": "Reels mają ~40% niższy CPM vs feed – nigdy niespróbowane dla DRE",
+        },
+        {
+            "name": "Stories",
+            "keywords": ["stories", "story"],
+            "expected": "CTR 1.5-2.0%",
+            "budget": "150 PLN / 7 dni",
+            "reason": "Stories świetne dla produktów fizycznych – niespróbowane",
+        },
+        {
+            "name": "Advantage+ Shopping Campaign",
+            "keywords": ["advantage", "adv+", "asc"],
+            "expected": "ROAS +30-50% vs standard",
+            "budget": "300 PLN / 14 dni",
+            "reason": "ASC automatycznie optymalizuje kreacje i targeting – nieprzetestowane",
+        },
+        {
+            "name": "Google Performance Max",
+            "keywords": ["pmax", "performance max"],
+            "expected": "Szerszy zasięg (Search+Display+YouTube)",
+            "budget": "500 PLN / 14 dni",
+            "reason": "PMax pokrywa wszystkie kanały Google jednocześnie – nieprzetestowane",
+        },
+    ]
+
+    suggestions = []
+    for exp in experiment_pool:
+        tested = any(any(kw in n for kw in exp["keywords"]) for n in known_names)
+        if not tested:
+            suggestions.append({
+                "experiment": f"Test: {exp['name']}",
+                "reason": exp["reason"],
+                "expected": exp["expected"],
+                "budget": exp["budget"],
+                "confidence": 0.70,
+            })
+
+    return suggestions[:3]
+
+
+def generate_weekly_learnings(client="dre"):
+    """
+    Weekly summary of:
+    - Predictions vs actual results (accuracy score)
+    - Learned patterns (frequency/creative, weekend, budget)
+    """
+    data = _load_history_raw()
+    predictions = data.get(client, {}).get("predictions", [])
+    cutoff = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+    week_preds = [p for p in predictions if p.get("date", "") >= cutoff]
+
+    patterns = analyze_patterns(client)
+    summary = patterns.get("summary", {})
+    text = "🧠 **WEEKLY LEARNINGS – Co nauczyłem się w tym tygodniu:**\n\n"
+
+    # Evaluate predictions
+    if week_preds:
+        all_hist = load_campaign_history(client, days_back=30)
+        verified = []
+        for pred in week_preds:
+            camp_hist = all_hist.get(pred["campaign"], [])
+            after_date = (datetime.strptime(pred["date"], '%Y-%m-%d') + timedelta(days=2)).strftime('%Y-%m-%d')
+            before = [e for e in camp_hist if e.get("date", "") < after_date]
+            after = [e for e in camp_hist if e.get("date", "") >= after_date]
+            metric = pred.get("predicted_metric", "ctr")
+            if before and after:
+                bv = before[-1].get(metric)
+                av = after[0].get(metric)
+                if bv and av and bv > 0:
+                    actual_chg = (av - bv) / bv * 100
+                    pred_chg = pred.get("predicted_change_pct", 0)
+                    success = (actual_chg > 0) == (pred_chg > 0)
+                    verified.append({**pred, "actual_change_pct": actual_chg, "success": success})
+
+        if verified:
+            for v in verified[:4]:
+                icon = "✅" if v["success"] else "❌"
+                text += f"{icon} **{v['campaign']}** – {v['recommendation']}\n"
+                text += f"   Predicted: {v.get('predicted_change_pct', 0):+.0f}% | "
+                text += f"Actual: {v.get('actual_change_pct', 0):+.0f}%\n\n"
+            acc = sum(1 for v in verified if v["success"]) / len(verified) * 100
+            text += f"🎯 **Accuracy: {acc:.0f}%** ({len(verified)} predictions verified)\n\n"
+            text += "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+
+    # Pattern insights
+    freq_p = summary.get("frequency_creative", {})
+    if freq_p and freq_p.get("total", 0) >= 2:
+        text += f"📌 **Creative refresh pattern** ({freq_p['total']} obserwacji):\n"
+        text += f"   {freq_p['successes']}/{freq_p['total']} razy pomogło"
+        text += f" | Avg CTR +{freq_p['avg_ctr_improvement_pct']:.0f}%\n\n"
+
+    weekend = summary.get("weekend", {})
+    if weekend:
+        ctr_d = weekend.get("ctr_diff_pct", 0)
+        roas_d = weekend.get("roas_diff_pct", 0)
+        we_count = len(patterns.get("weekend_we", []))
+        text += f"📌 **Weekend vs Weekday** ({we_count} weekend-dni):\n"
+        text += f"   CTR: {'🟢 +' if ctr_d > 0 else '🔴 '}{abs(ctr_d):.1f}% w weekendy\n"
+        text += f"   ROAS: {'🟢 +' if roas_d > 0 else '🔴 '}{abs(roas_d):.1f}% w weekendy\n\n"
+
+    budget_p = summary.get("budget_increase", {})
+    if budget_p and budget_p.get("total", 0) >= 2:
+        text += f"📌 **Budget increase pattern** ({budget_p['total']} obserwacji):\n"
+        text += f"   {budget_p['successes']}/{budget_p['total']} razy CPC nie wzrósł >10%\n\n"
+
+    if not freq_p and not weekend and not week_preds:
+        text += "ℹ️ Za mało danych historycznych – bot zbiera dane od dziś.\n"
+        text += "Po 2-3 tygodniach działania zacznę wykrywać wzorce i weryfikować własne rekomendacje.\n"
+
+    return text
+
+
+def weekly_learnings_dre():
+    """Wysyła weekly learnings w poniedziałek 8:30."""
+    try:
+        dre_channel = os.environ.get("DRE_CHANNEL_ID", "C05GPM4E9B8")
+        logger.info("🧠 Generuję Weekly Learnings DRE...")
+        text = generate_weekly_learnings("dre")
+        app.client.chat_postMessage(channel=dre_channel, text=text)
+        logger.info("✅ Weekly Learnings wysłane!")
+    except Exception as e:
+        logger.error(f"❌ Błąd weekly_learnings_dre: {e}")
+
+
 def generate_daily_digest_dre():
     """
     Generuje daily digest dla klienta DRE (Meta + Google Ads) z benchmarkami.
@@ -1535,6 +2023,35 @@ def generate_daily_digest_dre():
 
         if not all_campaigns:
             return "📊 DRE - Daily Digest\n\n⚠️ Brak danych za wczoraj. Sprawdź czy kampanie są aktywne."
+
+        # === SAVE RESULTS TO HISTORY ===
+        for c in meta_campaigns:
+            name = c.get("campaign_name", "")
+            if name:
+                save_campaign_results("dre", name, {
+                    "ctr": c.get("ctr"),
+                    "cpc": c.get("cpc"),
+                    "roas": c.get("purchase_roas"),
+                    "frequency": c.get("frequency"),
+                    "spend": c.get("spend", 0),
+                    "conversions": c.get("conversions", 0),
+                    "impressions": c.get("impressions", 0),
+                    "clicks": c.get("clicks", 0),
+                    "platform": "meta",
+                })
+        for c in google_data_combined:
+            name = c.get("campaign_name", c.get("name", ""))
+            if name:
+                save_campaign_results("dre", name, {
+                    "ctr": c.get("ctr"),
+                    "cpc": c.get("cpc"),
+                    "roas": None,
+                    "spend": c.get("cost", c.get("spend", 0)),
+                    "conversions": c.get("conversions", 0),
+                    "impressions": c.get("impressions", 0),
+                    "clicks": c.get("clicks", 0),
+                    "platform": "google",
+                })
 
         # Analizuj trendy
         analysis = analyze_campaign_trends(all_campaigns)
@@ -1648,6 +2165,50 @@ def generate_daily_digest_dre():
         # Benchmark footer
         if meta_benchmarks:
             digest += f"\n_📊 Benchmarki z ostatnich {meta_benchmarks['period_days']} dni ({meta_benchmarks['campaign_count']} kampanii Meta)_\n"
+
+        # === SMART RECOMMENDATIONS (AI-learned) ===
+        try:
+            patterns = analyze_patterns("dre")
+            recs = generate_smart_recommendations("dre", all_campaigns, patterns)
+            experiments = suggest_experiments("dre", all_campaigns)
+
+            if recs or experiments:
+                digest += "\n━━━━━━━━━━━━━━━━━━━━━━\n"
+                digest += "\n🧠 **SMART RECOMMENDATIONS (AI-learned):**\n\n"
+
+                shown = 0
+                for rec in recs[:4]:
+                    label = _confidence_label(rec["confidence"])
+                    if not label:
+                        continue
+                    shown += 1
+                    digest += f"{shown}. {rec['urgency']} **{rec['campaign']}** – {rec['action']}\n"
+                    digest += f"   Dlaczego: {rec['reason']}\n"
+                    digest += f"   Historia: {rec['evidence']}\n"
+                    digest += f"   Expected: {rec['expected_impact']}\n"
+                    digest += f"   Confidence: **{label}**\n\n"
+
+                    # Save prediction for accuracy tracking
+                    _save_prediction(
+                        "dre", rec["campaign"], rec["action"],
+                        rec.get("predicted_metric", "ctr"),
+                        rec.get("predicted_change_pct", 20.0),
+                        rec["confidence"],
+                    )
+
+                if experiments:
+                    digest += "💡 **EKSPERYMENTY DO PRZETESTOWANIA:**\n\n"
+                    for exp in experiments:
+                        digest += f"🧪 **{exp['experiment']}**\n"
+                        digest += f"   Dlaczego: {exp['reason']}\n"
+                        digest += f"   Expected: {exp['expected']}\n"
+                        digest += f"   Budget: {exp['budget']}\n\n"
+
+                if not recs and not experiments:
+                    digest += "_Brak rekomendacji – za mało danych historycznych. Bot uczy się z każdym dniem._\n"
+
+        except Exception as e:
+            logger.error(f"Błąd smart recommendations w digest: {e}")
 
         return digest
 
@@ -2323,6 +2884,7 @@ scheduler.add_job(checkin_summary, 'cron', day_of_week='mon', hour=9, minute=0)
 scheduler.add_job(check_budget_alerts, 'cron', minute=0, id='budget_alerts')
 scheduler.add_job(send_budget_alerts_dre, 'cron', hour='9,11,13,15,17,19', minute=0, id='budget_alerts_dre')
 scheduler.add_job(weekly_report_dre, 'cron', day_of_week='fri', hour=16, minute=0, id='weekly_reports')
+scheduler.add_job(weekly_learnings_dre, 'cron', day_of_week='mon', hour=8, minute=30, id='weekly_learnings')
 scheduler.start()
 
 print(f"✅ Scheduler załadowany! Jobs: {len(scheduler.get_jobs())}")
