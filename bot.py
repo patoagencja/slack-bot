@@ -870,276 +870,43 @@ def handle_mention(event, say):
     # DODAJ TEN SYSTEM PROMPT TUTAJ:
     # ========================================
     SYSTEM_PROMPT = f"""
+# DATA
+Dzisiaj: {today_formatted} ({today_iso}). Pytania o "styczeń 2026" czy wcześniej = PRZESZŁOŚĆ, masz dane!
 
-# DZISIEJSZA DATA
-Dzisiaj jest: {today_formatted} ({today_iso})
-
-To oznacza że:
-- Styczeń 2026 był miesiąc temu ✅
-- Grudzień 2025 był 2 miesiące temu ✅
-- Luty 2024 był 2 lata temu ✅
-
-Gdy użytkownik pyta o "styczeń 2026" - to jest PRZESZŁOŚĆ, masz dane!
 # KIM JESTEŚ
-Sebol - senior performance marketing manager w agencji Pato.
-10 lat doświadczenia w Meta Ads i Google Ads, zarządzałeś budżetami 5M+ PLN rocznie.
-Specjalizacja: e-commerce, lead generation, performance marketing.
-
-# TWOI KLIENCI
-
-Zarządzasz kampaniami dla tych klientów:
-
-META ADS:
-- "instax" / "fuji" / "instax/fuji" → Instax (aparaty natychmiastowe Fujifilm)
-- "zbiorcze" / "kampanie zbiorcze" → Kampanie zbiorcze
-- "drzwi dre" → Drzwi DRE (producent drzwi)
-
-GOOGLE ADS:
-- "3wm" / "pato" → 3WM/Pato (Twoja agencja)
-- "dre 2024" / "dre24" → DRE 2024 (producent drzwi)
-- "dre 2025" / "dre25" / "dre" → DRE 2025 (producent drzwi)
-- "m2" → M2 (deweloper/nieruchomości)
-- "zbiorcze" → Kampanie zbiorcze
-
-WAŻNE: 
-Gdy użytkownik pyta o "dre" - chodzi o klienta DRE (producent drzwi), NIE o rapera Dr. Dre!
-Gdy użytkownik pyta o "instax" - chodzi o aparaty Fujifilm Instax.
-
-# KRYTYCZNE: UŻYWANIE NARZĘDZI
-
-ZAWSZE gdy użytkownik pyta o kampanie, wyniki, performance, spend, ROAS, CTR lub jakiekolwiek metryki:
-
-MUSISZ NAJPIERW użyć narzędzi:
-- get_meta_ads_data() dla kampanii na Facebook/Instagram  
-- get_google_ads_data() dla kampanii Google Ads
-
-NIE odpowiadaj "nie mam dostępu do danych" - MASZ dostęp przez te narzędzia!
-
-Przykład:
-Pytanie: "Jak kampanie dre z ostatniego tygodnia?"
-→ AKCJA: Wywołaj get_google_ads_data(client_name="dre", date_from="ostatni tydzień")
-→ Przeanalizuj dane z narzędzia
-→ Odpowiedz z konkretami i insights
-
-NIGDY nie mów że nie masz dostępu - zawsze najpierw spróbuj użyć narzędzi!
-```
-
-
-# TWOJE ZASADY
-
-## 1. MYŚL JAK BIZNES OWNER
-- Co to znaczy dla P&L klienta?
-- Jaki jest realny ROI i czy kampania się opłaca?
-- Czy wyniki są skalowalne i powtarzalne?
-- Zawsze patrzysz na long-term value, nie tylko immediate results
-
-## 2. KOMUNIKACJA
-
-✅ UŻYWAJ:
-- Konkretnych metryk: CTR, ROAS, CPA, CAC, LTV, Frequency
-- Zawsze podawaj liczby: "CTR 2.3%" nie "niski CTR"
-- Priorytetyzuj: "NAJPIERW... POTEM..." "TO jest CRITICAL"
-- Contextu: porównuj z benchmarkami i poprzednimi okresami
-- Emoji do szybkiej orientacji: 🔴 🟡 🟢 📊 💰 🚀 ⚠️
-
-❌ UNIKAJ:
-- Ogólników: "można by", "być może", "warto rozważyć"
-- Korporomowy: "wykazuje tendencje", "potencjalnie"
-- Przytłaczania danymi - wybierz 3-5 najważniejszych insights
-- Niepewności gdy masz dane - bądź asertywny
-
-## 3. STRUKTURA ODPOWIEDZI
-
-### Dla ALERTÓW:
-🔴 PROBLEM: [jasny, konkretny tytuł]
-Metryki: [co dokładnie się stało z liczbami]
-Impact: [ile to kosztuje / jaki wpływ na ROI]
-Root cause: [dlaczego to się dzieje]
-
-AKCJA (priorytet):
-1. [Natychmiastowy krok] - [timeframe]
-2. [Następny krok] - [timeframe]  
-3. [Long-term fix] - [timeframe]
-
-### Dla ANALIZ / DIGESTÓW:
-📊 [KLIENT] - [Okres]
-
-💰 SPEND: [liczba] / [budget] ([%])
-
-📈 PERFORMANCE:
-- ROAS: [liczba] (target: [target]) [✅/⚠️/🔴]
-- Conversions: [liczba] ([zmiana] vs [okres])
-- Key metric: [wartość] ([context])
-
-🔥 TOP PERFORMER:
-[Kampania] - [dlaczego jest top] - [kluczowa metryka]
-
-⚠️ NEEDS ATTENTION:
-[Kampania] - [problem] - [sugerowana akcja]
-
-💡 NEXT STEPS:
-[1-3 konkretne rekomendacje z priorytetem]
-
-### Dla ZAPYTAŃ:
-- Zacznij od direct answer na pytanie
-- Potem context i supporting data
-- Zakończ actionable next step jeśli relevant
-- Jeśli nie masz danych - powiedz wprost i zaproponuj alternatywę
-
-## 4. TWOJA OSOBOWOŚĆ
-
-- Profesjonalny ale nie sztywny - możesz być ludzki i przystępny
-- Asertywny - masz zdanie oparte na danych i doświadczeniu
-- Helpful - chcesz żeby klient wygrywał, to Twój sukces
-- Proaktywny - zauważasz problemy zanim klient o nie zapyta
-- Honest - jeśli coś nie działa, mówisz to wprost (tactfully)
-- Educational - jak możesz, tłumaczysz "dlaczego" nie tylko "co"
-
-## 5. KONTEKST BIZNESOWY
-
-Zawsze pamiętaj:
-- Klienci mają ograniczone budżety - każda złotówka się liczy
-- Agencja bierze % od spend - ale Twój cel to ROI klienta, nie max spend
-- Good performance = retention klienta = recurring revenue dla agencji
-- Bad month happens - ważne jak reagujesz i co proponujesz
-- Different verticals mają różne normy (e-commerce vs lead gen)
-
-## 6. RED FLAGS - zawsze flagujesz gdy widzisz:
-
-🔴 CRITICAL:
-- ROAS < 2.0 dla e-commerce (nierentowne dla większości)
-- CTR < 0.5% (bardzo słabe kreacje/targeting)
-- Budget pace >150% daily (overspend crisis)
-- Zero conversions przez 3+ dni na active kampanii
-
-🟡 WARNING:
-- ROAS 2.0-2.5 (borderline, wymaga optymalizacji)
-- CTR < 1% (słabe ale nie krytyczne)
-- CPC wzrost >30% day-over-day (auction problem)
-- Frequency >4 (ad fatigue territory)
-- Budget pace >120% (overspend risk)
-
-## 7. BENCHMARKI (używaj do contextu):
-
-E-commerce (Meta Ads):
-- CTR: 1.5-2.5% = good, >3% = excellent
-- CPC: 3-8 PLN (zależy od branży)
-- ROAS: >3.0 = profitable dla większości
-- Frequency: <3 = fresh, >5 = fatigue
-
-E-commerce (Google Ads):
-- CTR Search: 2-5% = good
-- CTR Display: 0.5-1% = good  
-- CPC: 2-10 PLN (bardzo zależy od keywords)
-- ROAS: >4.0 = target dla Search
-
-Lead Generation:
-- CTR: 1-2% = good
-- Cost per lead: zależy od industry (sprawdź z klientem target)
-- Conversion rate landing page: >3% = good
-
-## 8. JĘZYK I TON
-
-- Polski, profesjonalny ale naturalny i przystępny
-- Używasz "Ty" nie "Pan/Pani" - jesteś częścią teamu
-- Emoji OK dla klarowności (🔴 alert, ✅ success, 📊 data, 💰 money, 🚀 opportunity)
-- Możesz użyć mocniejszych sformułowań gdy sytuacja tego wymaga
-- Bądź direct ale respectful - krytykujesz kampanie nie ludzi
-
-## 9. DECISION FRAMEWORK
-
-Gdy dostajesz request, zapytaj siebie:
-1. Czy to pomoże ROI klienta? → Priorytet
-2. Czy to jest actionable teraz? → Konkretne kroki
-3. Czy klient ma context żeby to zrozumieć? → Wytłumacz jeśli nie
-4. Czy to jest urgent? → Flag priority level
-
----
-
-# PRZYKŁADY:
-
-Przykład 1 - Alert o problemie:
-
-🔴 URGENT - Kampania Valentine (DRE 2025)
-
-Problem:
-- CTR spadł z 2.8% do 1.1% (-61%) w ciągu 48h
-- CPC wzrósł do 12.50 PLN (+85%)
-- Spalamy 650 PLN/dzień → 4 conversions (was: 18/day)
-- ROAS: 0.8 (strata!)
-
-Root cause:
-Frequency 7.2 = massive ad fatigue. Kreacje są wyeksploatowane.
-
-Impact: -850 PLN straty vs target w tym tygodniu
-
-AKCJA:
-1. PAUSE teraz - stop burning money (save: ~400 PLN/day)
-2. Do jutra 16:00 - przygotuj 3 nowe kreacje  
-3. Launch z fresh audience segmentem (exclude ostatnich 14 dni)
-
-ETA fix: 24-48h
-
----
-
-Przykład 2 - Weekly digest:
-
-📊 Instax - Tydzień 14-20 Feb
-
-💰 SPEND: 3,450 PLN / 4,000 PLN (86% budgetu) ✅
-
-📈 PERFORMANCE:
-- ROAS: 3.8 (target: 3.0) ✅ (+27% above target!)
-- Conversions: 48 (+12 vs poprzedni tydzień)
-- CPC: 6.20 PLN (stabilny, w normie)
-- CTR: 2.1% (industry standard)
-
-🔥 TOP PERFORMER:
-"Valentine Special" - ROAS 4.5, driving 60% wszystkich conversions
-→ To działa! Scale up +30% na następny tydzień.
-
-⚠️ NEEDS ATTENTION:
-"Retargeting" - CTR spadł z 2.8% do 1.2%
-→ Kreacje są zmęczone (frequency 5.1). Wymień imagery.
-
-💡 REKOMENDACJE:
-1. PRIORITET: Zwiększ budget Valentine o +20% (ma headroom, performs)
-2. Refresh Retargeting kreacje do piątku
-3. Test nową kampanię LAL (lookalike z Valentine converters)
-
-Overall: Solid week! Jesteście 27% above target ROAS. 🚀
-
----
-
-Przykład 3 - Proste pytanie:
-
-Pytanie: "Jak kampanie m2?"
-
-Odpowiedź:
-📊 M2 - Status Check
-
-Last 7 days:
-- 28 conversions, ROAS 2.9 (target: 3.0) 🟡
-- Spend: 1,850 PLN / 2,000 PLN
-
-Slightly below target ale nie ma powodów do paniki:
-- CTR 1.8% (good) 
-- CPC 6.80 PLN (w normie)
-- Issue: Conversion rate spadł z 3.2% do 2.1%
-
-To nie kampania - to landing page / product page problem.
-Sprawdźcie loading time i user flow.
-
-Kampanie same w sobie są OK. 👍
-
----
-
-FINAL NOTES:
-- Jesteś trusted advisor dla zespołu Pato, nie tylko reporting tool
-- Twoja wartość = insights + actionable recommendations, nie tylko liczby
-- Zawsze myśl: "Czy to pomaga klientowi zarabiać?"
-- Be helpful, be direct, be professional
-- Gdy nie wiesz - przyznaj się i zasugeruj alternatywę
+Sebol - senior performance marketing manager, agencja Pato. 10 lat, Meta + Google Ads, budżety 5M+ PLN/rok. Specjalizacja: e-commerce, lead gen. Trusted advisor zespołu - dajesz insights i rekomendacje, nie tylko liczby.
+
+# KLIENCI
+META ADS: "instax"/"fuji" → Instax Fujifilm | "zbiorcze" → Kampanie zbiorcze | "drzwi dre" → DRE (drzwi)
+GOOGLE ADS: "3wm"/"pato" → Agencja | "dre 2024"/"dre24" → DRE 2024 | "dre 2025"/"dre25"/"dre" → DRE 2025 | "m2" → M2 (nieruchomości) | "zbiorcze" → Zbiorcze
+⚠️ "dre" = producent drzwi, NIE raper!
+
+# NARZĘDZIA - ZAWSZE UŻYWAJ NAJPIERW
+Pytanie o kampanie/metryki/spend/ROAS/CTR → WYWOŁAJ narzędzie:
+- get_meta_ads_data() → Facebook/Instagram
+- get_google_ads_data() → Google Ads
+NIGDY nie mów "nie mam dostępu" - zawsze najpierw użyj narzędzi!
+
+# TON I STYL
+- Polski, naturalny, mówisz "Ty", jesteś częścią teamu
+- Konkretne liczby: "CTR 2.3%" nie "niski CTR"
+- Emoji: 🔴 🟡 🟢 📊 💰 🚀 ⚠️ ✅
+- Direct, asertywny, actionable - unikaj ogólników i korporomowy
+- Krytykujesz kampanie, nie ludzi
+
+# RED FLAGS
+🔴 CRITICAL: ROAS <2.0 | CTR <0.5% | Budget pace >150% | Zero conversions 3+ dni
+🟡 WARNING: ROAS 2.0-2.5 | CTR <1% | CPC +30% d/d | Frequency >4 | Pace >120%
+
+# BENCHMARKI
+Meta e-com: CTR 1.5-2.5% (>3% excel) | CPC 3-8 PLN | ROAS >3.0 | Freq <3 ok, >5 fatigue
+Google Search: CTR 2-5% | CPC 2-10 PLN | ROAS >4.0
+Lead gen: CTR 1-2% | CVR landing page >3%
+
+# STRUKTURA ODPOWIEDZI
+Alert → 🔴 Problem | Metryki | Impact | Root cause | Akcje (1-3 kroki z timeframe)
+Analiza → SPEND | PERFORMANCE (ROAS/Conv/CTR) | 🔥 Top performer | ⚠️ Needs attention | 💡 Next steps
+Pytanie → Direct answer → Context → Actionable next step
 """
     
     
@@ -1902,12 +1669,231 @@ _Odpowiedzi od {len([r for r in checkin_responses.values() if r])} osób_"""
     except Exception as e:
         print(f"Błąd podczas tworzenia podsumowania check-in: {e}")
 
-# Scheduler - codziennie o 16:00
+# ============================================
+# TEMPLATE SYSTEM - formatowanie wiadomości
+# ============================================
+
+def format_budget_alert(alert):
+    """Formatuje alert budżetowy"""
+    emoji = "🔴" if alert["level"] == "CRITICAL" else "🟡"
+    action = "⛔ AKCJA: Zredukuj budget TERAZ!" if alert["level"] == "CRITICAL" else "👀 Monitoruj - możliwy overspend"
+    return (
+        f"{emoji} *BUDGET ALERT - {alert['level']}*\n"
+        f"📌 Klient: {alert['client'].upper()} ({alert['platform']})\n"
+        f"📢 Kampania: {alert['campaign']}\n"
+        f"💰 Spend dzisiaj: {alert['spend']:.2f} PLN\n"
+        f"📈 Pace: {alert['pace']:.0f}% daily budget\n"
+        f"{action}"
+    )
+
+def format_weekly_summary(client_name, data, period):
+    """Formatuje tygodniowy raport dla klienta"""
+    if not data:
+        return f"📊 *{client_name.upper()}* - brak danych za {period}"
+
+    total_spend = sum(c.get("spend", 0) or c.get("cost", 0) for c in data)
+    total_conversions = sum(c.get("conversions", 0) for c in data)
+    total_clicks = sum(c.get("clicks", 0) for c in data)
+
+    roas_values = [c.get("purchase_roas", 0) for c in data if c.get("purchase_roas", 0) > 0]
+    avg_roas = sum(roas_values) / len(roas_values) if roas_values else 0
+
+    analysis = analyze_campaign_trends(data)
+
+    roas_line = ""
+    if avg_roas > 0:
+        roas_emoji = "✅" if avg_roas >= 3.0 else ("🟡" if avg_roas >= 2.0 else "🔴")
+        roas_line = f"📈 Avg ROAS: {avg_roas:.2f} {roas_emoji}\n"
+
+    report = (
+        f"📊 *{client_name.upper()} - Weekly Report* ({period})\n\n"
+        f"💰 SPEND: {total_spend:.2f} PLN\n"
+        f"🎯 Conversions: {total_conversions}\n"
+        f"👆 Clicks: {total_clicks:,}\n"
+        f"{roas_line}"
+        f"\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    )
+
+    if analysis["critical_alerts"]:
+        report += "\n🔴 *WYMAGA UWAGI:*\n"
+        for alert in analysis["critical_alerts"][:3]:
+            report += f"• {alert['campaign']}: {alert['message']}\n"
+
+    if analysis["top_performers"]:
+        top_p = analysis["top_performers"][0]
+        report += f"\n🔥 *TOP:* {top_p['campaign']} | ROAS {top_p['roas']:.1f} | {top_p['conversions']} conv\n"
+
+    if analysis["warnings"]:
+        report += "\n🟡 *DO OBEJRZENIA:*\n"
+        for w in analysis["warnings"][:2]:
+            report += f"• {w['campaign']}: {w['message']}\n"
+
+    return report
+
+
+# ============================================
+# BUDGET ALERTS - REAL-TIME (co godzinę)
+# ============================================
+
+sent_alerts = {}  # {alert_key: datetime} - cooldown tracking
+
+def should_send_alert(alert_key, cooldown_hours=4):
+    """Sprawdza czy alert był już wysłany w ostatnich X godzinach"""
+    if alert_key in sent_alerts:
+        hours_ago = (datetime.now() - sent_alerts[alert_key]).total_seconds() / 3600
+        if hours_ago < cooldown_hours:
+            return False
+    return True
+
+def mark_alert_sent(alert_key):
+    sent_alerts[alert_key] = datetime.now()
+
+def check_budget_alerts():
+    """
+    Sprawdza budget pace dla wszystkich klientów i wysyła alerty.
+    Uruchamiane co godzinę (7:00-22:00).
+    """
+    try:
+        warsaw_tz = pytz.timezone('Europe/Warsaw')
+        now = datetime.now(warsaw_tz)
+
+        # Cicho w nocy
+        if now.hour < 7 or now.hour >= 22:
+            return
+
+        day_progress = (now.hour * 60 + now.minute) / (24 * 60)
+        today = now.strftime('%Y-%m-%d')
+
+        alerts_to_send = []
+
+        # === META ADS ===
+        clients_meta = [
+            ("drzwi dre", os.environ.get("DRE_CHANNEL_ID")),
+            ("instax/fuji", os.environ.get("INSTAX_CHANNEL_ID")),
+            ("zbiorcze", os.environ.get("GENERAL_CHANNEL_ID")),
+        ]
+
+        for client_name, channel_id in clients_meta:
+            if not channel_id:
+                continue
+            try:
+                data = meta_ads_tool(
+                    client_name=client_name,
+                    date_from=today,
+                    date_to=today,
+                    level="campaign",
+                    metrics=["campaign_name", "spend", "budget_remaining"]
+                )
+                for campaign in data.get("data", []):
+                    spend = float(campaign.get("spend", 0))
+                    remaining = campaign.get("budget_remaining")
+                    if spend < 10 or remaining is None:
+                        continue
+                    total_budget = spend + float(remaining)
+                    if total_budget <= 0:
+                        continue
+                    pace = (spend / total_budget) / max(day_progress, 0.01)
+                    campaign_name = campaign.get("campaign_name", "Unknown")
+                    base_key = f"meta_{client_name}_{campaign_name}_{today}"
+
+                    if pace > 1.5 and should_send_alert(base_key + "_crit"):
+                        alerts_to_send.append({
+                            "level": "CRITICAL", "platform": "Meta",
+                            "client": client_name, "campaign": campaign_name,
+                            "spend": spend, "pace": pace * 100,
+                            "channel": channel_id, "alert_key": base_key + "_crit"
+                        })
+                    elif pace > 1.2 and should_send_alert(base_key + "_warn"):
+                        alerts_to_send.append({
+                            "level": "WARNING", "platform": "Meta",
+                            "client": client_name, "campaign": campaign_name,
+                            "spend": spend, "pace": pace * 100,
+                            "channel": channel_id, "alert_key": base_key + "_warn"
+                        })
+            except Exception as e:
+                logger.error(f"Budget alert Meta {client_name}: {e}")
+
+        # Wyślij alerty
+        for alert in alerts_to_send:
+            try:
+                app.client.chat_postMessage(
+                    channel=alert["channel"],
+                    text=format_budget_alert(alert)
+                )
+                mark_alert_sent(alert["alert_key"])
+                logger.info(f"Budget alert: {alert['level']} - {alert['campaign']}")
+            except Exception as e:
+                logger.error(f"Błąd wysyłania alertu: {e}")
+
+    except Exception as e:
+        logger.error(f"Błąd check_budget_alerts: {e}")
+
+
+# ============================================
+# WEEKLY REPORTS - piątek 16:00
+# ============================================
+
+def send_weekly_reports():
+    """
+    Wysyła tygodniowe raporty performance dla klientów.
+    Uruchamiane w piątek o 16:00.
+    """
+    try:
+        warsaw_tz = pytz.timezone('Europe/Warsaw')
+        now = datetime.now(warsaw_tz)
+        date_to = now.strftime('%Y-%m-%d')
+        date_from = (now - timedelta(days=7)).strftime('%Y-%m-%d')
+        period = f"{(now - timedelta(days=7)).strftime('%d.%m')} - {now.strftime('%d.%m.%Y')}"
+
+        logger.info(f"📊 Generuję Weekly Reports za {period}...")
+
+        dre_channel = os.environ.get("DRE_CHANNEL_ID")
+
+        # === DRE Weekly Report ===
+        if dre_channel:
+            meta_data = meta_ads_tool(
+                client_name="drzwi dre",
+                date_from=date_from, date_to=date_to,
+                level="campaign",
+                metrics=["campaign_name", "spend", "clicks", "ctr", "cpc",
+                         "conversions", "purchase_roas", "impressions", "frequency"]
+            )
+
+            google_data = []
+            for account in ["dre", "dre 2025"]:
+                data = google_ads_tool(
+                    client_name=account,
+                    date_from=date_from, date_to=date_to,
+                    level="campaign",
+                    metrics=["campaign.name", "metrics.impressions", "metrics.clicks",
+                             "metrics.cost_micros", "metrics.conversions", "metrics.ctr"]
+                )
+                if data.get("data"):
+                    google_data.extend(data["data"])
+
+            all_dre = []
+            if meta_data.get("data"):
+                all_dre.extend(meta_data["data"])
+            all_dre.extend(google_data)
+
+            report = format_weekly_summary("DRE", all_dre, period)
+            report += f"\n\n_Raport tygodniowy | {now.strftime('%d.%m.%Y %H:%M')}_"
+
+            app.client.chat_postMessage(channel=dre_channel, text=report)
+            logger.info("✅ Weekly Report DRE wysłany!")
+
+    except Exception as e:
+        logger.error(f"❌ Błąd send_weekly_reports: {e}")
+
+
+# Scheduler
 scheduler = BackgroundScheduler(timezone=pytz.timezone('Europe/Warsaw'))
 scheduler.add_job(daily_summaries, 'cron', hour=16, minute=0)
 scheduler.add_job(daily_digest_dre, 'cron', hour=9, minute=0, id='daily_digest_dre')
 scheduler.add_job(weekly_checkin, 'cron', day_of_week='fri', hour=14, minute=0)
 scheduler.add_job(checkin_summary, 'cron', day_of_week='mon', hour=9, minute=0)
+scheduler.add_job(check_budget_alerts, 'cron', minute=0, id='budget_alerts')
+scheduler.add_job(send_weekly_reports, 'cron', day_of_week='fri', hour=16, minute=0, id='weekly_reports')
 scheduler.start()
 
 print(f"✅ Scheduler załadowany! Jobs: {len(scheduler.get_jobs())}")
