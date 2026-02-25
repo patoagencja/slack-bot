@@ -2875,6 +2875,163 @@ def send_weekly_reports():
         logger.error(f"❌ Błąd send_weekly_reports: {e}")
 
 
+# ============================================
+# DAILY EMAIL SUMMARY → Slack DM
+# ============================================
+
+def daily_email_summary_slack():
+    """
+    Czyta emaile z daniel@patoagencja.com, kategoryzuje przez Claude,
+    wysyła podsumowanie jako Slack DM do Daniela (UTE1RN6SJ) o 16:00.
+    """
+    daniel_user_id = "UTE1RN6SJ"
+    today_str = datetime.now().strftime('%d.%m.%Y')
+    today_date = datetime.now().date()
+
+    try:
+        logger.info("📧 Generuję Daily Email Summary...")
+
+        # 1. Pobierz emaile
+        result = email_tool(user_id=daniel_user_id, action="read", limit=50, folder="INBOX")
+
+        if "error" in result:
+            app.client.chat_postMessage(
+                channel=daniel_user_id,
+                text=f"📧 **Email Summary - {today_str}**\n\n❌ Nie udało się pobrać emaili: {result['error']}"
+            )
+            return
+
+        all_emails = result.get("emails", [])
+
+        # 2. Filtruj tylko dzisiejsze
+        from email.utils import parsedate_to_datetime
+        today_emails = []
+        for em in all_emails:
+            try:
+                em_date = parsedate_to_datetime(em["date"]).date()
+                if em_date == today_date:
+                    today_emails.append(em)
+            except Exception:
+                # Jeśli nie da się sparsować daty, pomiń
+                pass
+
+        # 3. Edge case: brak emaili
+        if not today_emails:
+            app.client.chat_postMessage(
+                channel=daniel_user_id,
+                text=f"📧 **Email Summary - {today_str}**\n\n✅ Brak nowych emaili dzisiaj. Spokojny dzień!"
+            )
+            logger.info("✅ Email Summary wysłany (brak emaili).")
+            return
+
+        # 4. Kategoryzuj + summarize przez Claude
+        emails_for_claude = "\n\n".join([
+            f"Email {i+1}:\nOd: {e['from']}\nTemat: {e['subject']}\nPodgląd: {e['body_preview']}"
+            for i, e in enumerate(today_emails)
+        ])
+
+        claude_prompt = f"""Jesteś asystentem który kategoryzuje emaile dla Daniela z agencji marketingowej Pato.
+
+Masz {len(today_emails)} emaili z dzisiaj. Dla każdego:
+1. Przypisz kategorię: IMPORTANT | MARKETING | ADMIN | SPAM
+   - IMPORTANT: klienci, faktury, urgent, oferty, pytania wymagające odpowiedzi
+   - MARKETING: newslettery, promocje, mailingi
+   - ADMIN: automatyczne powiadomienia, potwierdzenia
+   - SPAM: low priority, niechciane
+
+2. Dla IMPORTANT napisz 1-2 zdania podsumowania po polsku.
+3. Zaproponuj max 3 sugerowane akcje.
+
+Emaile:
+{emails_for_claude}
+
+Odpowiedz w formacie JSON:
+{{
+  "categorized": [
+    {{"index": 0, "category": "IMPORTANT", "summary": "...", "from": "...", "subject": "..."}},
+    {{"index": 1, "category": "MARKETING", "summary": null, "from": "...", "subject": "..."}}
+  ],
+  "suggested_actions": ["Odpowiedz na email od X", "Sprawdź fakturę od Y"]
+}}"""
+
+        claude_response = anthropic.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1500,
+            messages=[{"role": "user", "content": claude_prompt}]
+        )
+
+        # Parse JSON z odpowiedzi Claude
+        import re
+        raw_text = claude_response.content[0].text
+        json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+        categorized_data = json.loads(json_match.group()) if json_match else {"categorized": [], "suggested_actions": []}
+
+        categorized = categorized_data.get("categorized", [])
+        suggested_actions = categorized_data.get("suggested_actions", [])
+
+        # 5. Zlicz kategorie
+        important = [c for c in categorized if c.get("category") == "IMPORTANT"]
+        marketing = [c for c in categorized if c.get("category") == "MARKETING"]
+        admin = [c for c in categorized if c.get("category") == "ADMIN"]
+        spam = [c for c in categorized if c.get("category") == "SPAM"]
+
+        # 6. Zbuduj wiadomość Slack
+        msg = f"📧 *Email Summary - {today_str}*\n\n"
+        msg += f"📥 *OTRZYMANE DZISIAJ:* {len(today_emails)} emaili\n"
+        msg += "\n━━━━━━━━━━━━━━━━━━━━━━\n"
+
+        if important:
+            msg += f"\n🔴 *WAŻNE (wymagają odpowiedzi):*\n\n"
+            for i, em in enumerate(important, 1):
+                idx = em.get("index", 0)
+                raw = today_emails[idx] if idx < len(today_emails) else {}
+                sender = em.get("from", raw.get("from", "?"))
+                subject = em.get("subject", raw.get("subject", "?"))
+                summary = em.get("summary") or ""
+                msg += f"{i}. *Od:* {sender}\n"
+                msg += f"   *Temat:* {subject}\n"
+                if summary:
+                    msg += f"   *Podsumowanie:* {summary}\n"
+                msg += "\n"
+        else:
+            msg += "\n✅ *Brak ważnych emaili dzisiaj*\n"
+
+        msg += "━━━━━━━━━━━━━━━━━━━━━━\n"
+        msg += "\n📊 *POZOSTAŁE:*\n"
+        if marketing:
+            msg += f"- Marketing/newslettery: {len(marketing)} emaili\n"
+        if admin:
+            msg += f"- Faktury/admin: {len(admin)} emaili\n"
+        if spam:
+            msg += f"- Spam/low priority: {len(spam)} emaili\n"
+
+        if suggested_actions:
+            msg += "\n━━━━━━━━━━━━━━━━━━━━━━\n"
+            msg += "\n💡 *SUGEROWANE AKCJE:*\n"
+            for action in suggested_actions[:3]:
+                msg += f"- {action}\n"
+
+        msg += "\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        msg += "Miłego wieczoru! 🌆"
+
+        # 7. Wyślij DM
+        app.client.chat_postMessage(
+            channel=daniel_user_id,
+            text=msg
+        )
+        logger.info(f"✅ Email Summary wysłany! ({len(today_emails)} emaili, {len(important)} ważnych)")
+
+    except Exception as e:
+        logger.error(f"❌ Błąd daily_email_summary_slack: {e}")
+        try:
+            app.client.chat_postMessage(
+                channel=daniel_user_id,
+                text=f"📧 **Email Summary - {today_str}**\n\n❌ Błąd generowania podsumowania: {str(e)}"
+            )
+        except Exception:
+            pass
+
+
 # Scheduler
 scheduler = BackgroundScheduler(timezone=pytz.timezone('Europe/Warsaw'))
 scheduler.add_job(daily_summaries, 'cron', hour=16, minute=0)
@@ -2885,6 +3042,7 @@ scheduler.add_job(check_budget_alerts, 'cron', minute=0, id='budget_alerts')
 scheduler.add_job(send_budget_alerts_dre, 'cron', hour='9,11,13,15,17,19', minute=0, id='budget_alerts_dre')
 scheduler.add_job(weekly_report_dre, 'cron', day_of_week='fri', hour=16, minute=0, id='weekly_reports')
 scheduler.add_job(weekly_learnings_dre, 'cron', day_of_week='mon,thu', hour=8, minute=30, id='weekly_learnings')
+scheduler.add_job(daily_email_summary_slack, 'cron', hour=16, minute=0, id='daily_email_summary')
 scheduler.start()
 
 print(f"✅ Scheduler załadowany! Jobs: {len(scheduler.get_jobs())}")
