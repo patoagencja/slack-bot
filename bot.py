@@ -952,32 +952,6 @@ def search_emails(config, query, limit=10):
             }
     except Exception as e:
         return {"error": f"Błąd wyszukiwania: {str(e)}"}
-@app.event("message")
-def handle_manual_digest(body, say, logger):
-    """Manual trigger dla testowania digestów"""
-    event = body.get("event", {})
-
-    if event.get("bot_id") or event.get("subtype") == "bot_message":
-        return
-
-    text = event.get("text", "").lower()
-    digest_triggers = ["digest test", "test digest", "digest", "raport"]
-
-    if any(trigger in text for trigger in digest_triggers):
-        channel_id = event.get("channel")
-
-        # Mapowanie kanałów → klientów
-        CHANNEL_CLIENT_MAP = {
-            "C05GPM4E9B8": "dre",  # #drzwi-dre
-        }
-
-        client = CHANNEL_CLIENT_MAP.get(channel_id)
-
-        if client == "dre":
-            digest = generate_daily_digest_dre()
-            say(digest)
-        else:
-            say("Dla którego klienta? Dostępne: `dre` (wpisz np. `digest test dre`)")
 # Reaguj na wzmianki (@bot)
 @app.event("app_mention")
 def handle_mention(event, say):
@@ -1365,11 +1339,22 @@ def handle_message_events(body, say, logger):
     # --- Manual triggers (obsługuj przed Claude) ---
     text_lower = user_message.lower()
 
-    # Test email summary - TYLKO z DM (channel_type == "im")
+    # Digest triggers - tylko w kanałach
+    CHANNEL_CLIENT_MAP = {"C05GPM4E9B8": "dre"}
+    if any(t in text_lower for t in ["digest test", "test digest", "digest", "raport"]):
+        if event.get("channel_type") != "im":
+            channel_id = event.get("channel")
+            client_name = CHANNEL_CLIENT_MAP.get(channel_id)
+            if client_name == "dre":
+                say(generate_daily_digest_dre())
+            else:
+                say("Dla którego klienta? Dostępne: `dre` (wpisz np. `digest test dre`)")
+            return
+
+    # Email summary - TYLKO z DM
     if any(t in text_lower for t in ["test email", "email test", "email summary"]):
         if event.get("channel_type") != "im":
-            # Cicho ignoruj w kanałach - nie odpowiadaj nic
-            return
+            return  # cicho ignoruj w kanałach
         say("📧 Uruchamiam Email Summary...")
         try:
             email_config = get_user_email_config("UTE1RN6SJ")
