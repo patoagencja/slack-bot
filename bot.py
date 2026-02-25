@@ -1841,6 +1841,117 @@ def check_budget_alerts():
 
 
 # ============================================
+# BUDGET ALERTS DRE - real-time monitoring
+# ============================================
+
+def check_budget_status(client_name, platform):
+    """
+    Pobiera spend vs daily budget dla klienta.
+    Zwraca listę kampanii z alertami: >80% 🟡, >90% 🟠, >100% 🔴
+    """
+    today = datetime.now().strftime('%Y-%m-%d')
+    alerts = []
+
+    try:
+        if platform == "meta":
+            data = meta_ads_tool(
+                client_name=client_name,
+                date_from=today,
+                date_to=today,
+                level="campaign",
+                metrics=["campaign_name", "spend", "budget_remaining"]
+            )
+            for campaign in data.get("data", []):
+                spend = float(campaign.get("spend", 0))
+                remaining = campaign.get("budget_remaining")
+                if spend < 1 or remaining is None:
+                    continue
+                total = spend + float(remaining)
+                if total <= 0:
+                    continue
+                pct = (spend / total) * 100
+                if pct >= 80:
+                    alerts.append({
+                        "campaign": campaign.get("campaign_name", "Unknown"),
+                        "spend": spend,
+                        "total": total,
+                        "pct": pct
+                    })
+
+        elif platform == "google":
+            data = google_ads_tool(
+                client_name=client_name,
+                date_from=today,
+                date_to=today,
+                level="campaign",
+                metrics=["campaign.name", "metrics.cost_micros"]
+            )
+            # Google Ads nie zwraca daily budget przez insights —
+            # logujemy spend bez procentu (brak budget_remaining)
+            for campaign in data.get("data", []):
+                cost = campaign.get("cost", 0)
+                if cost > 10:
+                    alerts.append({
+                        "campaign": campaign.get("name", "Unknown"),
+                        "spend": cost,
+                        "total": None,
+                        "pct": None
+                    })
+
+    except Exception as e:
+        logger.error(f"check_budget_status {client_name}/{platform}: {e}")
+
+    return alerts
+
+
+def send_budget_alerts_dre():
+    """
+    Sprawdza budgety dla wszystkich kont DRE i wysyła alert na #drzwi-dre.
+    Uruchamiane co 2 godziny (9:00-19:00).
+    """
+    try:
+        warsaw_tz = pytz.timezone('Europe/Warsaw')
+        now = datetime.now(warsaw_tz)
+
+        if now.hour < 9 or now.hour >= 19:
+            return
+
+        dre_channel = os.environ.get("DRE_CHANNEL_ID", "C05GPM4E9B8")
+        alert_lines = []
+
+        # === META ===
+        meta_alerts = check_budget_status("drzwi dre", "meta")
+        for a in meta_alerts:
+            pct = a["pct"]
+            emoji = "🔴" if pct >= 100 else ("🟠" if pct >= 90 else "🟡")
+            line = f"{emoji} [Meta] {a['campaign']}: {a['spend']:.0f}/{a['total']:.0f} PLN ({pct:.0f}%)"
+            alert_lines.append((pct, line))
+
+        # === GOOGLE ===
+        for account in ["dre", "dre 2024", "dre 2025"]:
+            google_alerts = check_budget_status(account, "google")
+            for a in google_alerts:
+                line = f"📊 [Google/{account}] {a['campaign']}: {a['spend']:.0f} PLN spend today"
+                alert_lines.append((0, line))
+
+        if not alert_lines:
+            return
+
+        # Sortuj: najwyższy % najpierw
+        alert_lines.sort(key=lambda x: x[0], reverse=True)
+
+        msg = f"⚠️ *BUDGET ALERT - DRE* ({now.strftime('%H:%M')})\n\n"
+        msg += "\n".join(line for _, line in alert_lines)
+        msg += "\n\n_Sprawdź kampanie i zredukuj budget jeśli potrzeba._"
+
+        app.client.chat_postMessage(channel=dre_channel, text=msg)
+        logger.info(f"Budget alert DRE wysłany: {len(alert_lines)} kampanii")
+
+    except Exception as e:
+        logger.error(f"Błąd send_budget_alerts_dre: {e}")
+
+
+# ============================================
 # WEEKLY REPORTS - piątek 16:00
 # ============================================
 
@@ -1904,6 +2015,7 @@ scheduler.add_job(daily_digest_dre, 'cron', hour=9, minute=0, id='daily_digest_d
 scheduler.add_job(weekly_checkin, 'cron', day_of_week='fri', hour=14, minute=0)
 scheduler.add_job(checkin_summary, 'cron', day_of_week='mon', hour=9, minute=0)
 scheduler.add_job(check_budget_alerts, 'cron', minute=0, id='budget_alerts')
+scheduler.add_job(send_budget_alerts_dre, 'cron', hour='9,11,13,15,17,19', minute=0, id='budget_alerts_dre')
 scheduler.add_job(send_weekly_reports, 'cron', day_of_week='fri', hour=16, minute=0, id='weekly_reports')
 scheduler.start()
 
