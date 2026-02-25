@@ -748,23 +748,50 @@ def read_emails(config, limit=10, folder='INBOX'):
                 raw_message = client.fetch([uid], ['RFC822'])[uid][b'RFC822']
                 msg = email.message_from_bytes(raw_message)
                 
-                # Dekoduj subject
-                subject = decode_header(msg['Subject'])[0][0]
-                if isinstance(subject, bytes):
-                    subject = subject.decode()
-                
-                # Pobierz treść
+                # Dekoduj subject (obsługa różnych encodingów)
+                subject_parts = []
+                for part, charset in decode_header(msg['Subject'] or ''):
+                    if isinstance(part, bytes):
+                        subject_parts.append(part.decode(charset or 'utf-8', errors='replace'))
+                    else:
+                        subject_parts.append(part or '')
+                subject = ''.join(subject_parts)
+
+                # Dekoduj From (może mieć encoded words)
+                sender_parts = []
+                for part, charset in decode_header(msg['From'] or ''):
+                    if isinstance(part, bytes):
+                        sender_parts.append(part.decode(charset or 'utf-8', errors='replace'))
+                    else:
+                        sender_parts.append(part or '')
+                sender = ''.join(sender_parts)
+
+                # Pobierz treść z wykrywaniem kodowania
+                def _decode_payload(part_or_msg):
+                    raw = part_or_msg.get_payload(decode=True)
+                    if not raw:
+                        return ""
+                    charset = part_or_msg.get_content_charset()
+                    for enc in [charset, 'utf-8', 'latin-1', 'cp1250', 'iso-8859-2']:
+                        if not enc:
+                            continue
+                        try:
+                            return raw.decode(enc)
+                        except (UnicodeDecodeError, LookupError):
+                            continue
+                    return raw.decode('utf-8', errors='replace')
+
                 body = ""
                 if msg.is_multipart():
                     for part in msg.walk():
                         if part.get_content_type() == "text/plain":
-                            body = part.get_payload(decode=True).decode()
+                            body = _decode_payload(part)
                             break
                 else:
-                    body = msg.get_payload(decode=True).decode()
+                    body = _decode_payload(msg)
                 
                 emails_data.append({
-                    "from": msg['From'],
+                    "from": sender,
                     "subject": subject,
                     "date": msg['Date'],
                     "body_preview": body[:200] + "..." if len(body) > 200 else body
