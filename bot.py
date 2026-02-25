@@ -957,7 +957,21 @@ def search_emails(config, query, limit=10):
 def handle_mention(event, say):
     user_message = event['text']
     user_message = ' '.join(user_message.split()[1:])  # Usuń wzmianke bota
-    
+
+    # Email trigger - wyniki zawsze na DM, nie w kanale
+    if any(t in user_message.lower() for t in ["test email", "email test", "email summary"]):
+        say("📧 Uruchamiam Email Summary... wyślę Ci to na DM.")
+        try:
+            email_config = get_user_email_config("UTE1RN6SJ")
+            if not email_config:
+                say("❌ Brak konfiguracji email (`EMAIL_ACCOUNTS`).")
+                return
+            daily_email_summary_slack()
+        except Exception as e:
+            say(f"❌ Błąd Email Summary: `{str(e)}`")
+            logger.error(f"Błąd email trigger w mention: {e}")
+        return
+
     channel = event['channel']
     thread_ts = event.get('thread_ts', event['ts'])
     # Oblicz dzisiejszą datę dynamicznie
