@@ -790,11 +790,21 @@ def read_emails(config, limit=10, folder='INBOX'):
                 else:
                     body = _decode_payload(msg)
                 
+                # Wykryj czy to newsletter/mailing (przed dodaniem)
+                is_newsletter = bool(
+                    msg.get('List-Unsubscribe') or
+                    msg.get('List-Id') or
+                    msg.get('X-Mailchimp-ID') or
+                    msg.get('X-Campaign') or
+                    (msg.get('Precedence', '').lower() in ['bulk', 'list', 'junk'])
+                )
+
                 emails_data.append({
                     "from": sender,
                     "subject": subject,
                     "date": msg['Date'],
-                    "body_preview": body[:200] + "..." if len(body) > 200 else body
+                    "body_preview": body[:200] + "..." if len(body) > 200 else body,
+                    "is_newsletter": is_newsletter,
                 })
             
             return {
@@ -3038,66 +3048,72 @@ def daily_email_summary_slack():
         # 2. Filtruj: dzisiejsze + ostatnie 3 dni (dla unreplied check)
         from email.utils import parsedate_to_datetime
         cutoff_date = (datetime.now() - timedelta(days=3)).date()
-        today_emails = []
-        recent_emails = []   # ostatnie 3 dni (bez dzisiaj)
+        today_emails_raw = []
+        recent_emails = []
         for em in all_emails:
             try:
                 em_date = parsedate_to_datetime(em["date"]).date()
                 if em_date == today_date:
-                    today_emails.append(em)
+                    today_emails_raw.append(em)
                 elif em_date >= cutoff_date:
                     recent_emails.append(em)
             except Exception:
                 pass
 
-        # 3. Sprawdź unreplied z ostatnich 3 dni (PRZED edge case check)
+        # 2b. Pre-filtruj newslettery (mają List-Unsubscribe/List-Id itp.)
+        today_emails = [e for e in today_emails_raw if not e.get("is_newsletter")]
+        newsletter_count = len(today_emails_raw) - len(today_emails)
+
+        # 3. Sprawdź unreplied — tylko non-newsletter z ostatnich 3 dni
         email_config = get_user_email_config(daniel_user_id)
-        all_recent = today_emails + recent_emails
+        all_recent = today_emails + [e for e in recent_emails if not e.get("is_newsletter")]
         unreplied = find_unreplied_emails(email_config, all_recent, days_back=3) if email_config else []
-        # Ogranicz do IMPORTANT-looking (nie sprawdzamy tu Claude — prosty subject filter)
-        # Oznacz ile dni czeka
         unreplied_map = {_normalize_subject(e['subject']): e for e in unreplied}
 
-        # 4. Edge case: brak emaili dzisiaj
+        # 4. Edge case: brak ważnych emaili dzisiaj
         if not today_emails:
-            no_email_msg = f"📧 *Email Summary - {today_str}*\n\n✅ Brak nowych emaili dzisiaj."
+            no_email_msg = f"📧 *Email Summary - {today_str}*\n\n✅ Brak nowych ważnych emaili dzisiaj."
+            if newsletter_count:
+                no_email_msg += f"\n_(pominięto {newsletter_count} newsletterów/mailingów)_"
             if unreplied:
                 no_email_msg += f"\n\n🚨 *UWAGA: {len(unreplied)} emaili bez odpowiedzi z ostatnich 3 dni!*\n"
                 for em in unreplied[:5]:
                     days = em.get('days_waiting', '?')
                     no_email_msg += f"  • *{em['subject']}* — od: {em['from']} _(czeka {days}d)_\n"
             app.client.chat_postMessage(channel=daniel_user_id, text=no_email_msg)
-            logger.info("✅ Email Summary wysłany (brak emaili dzisiaj).")
+            logger.info("✅ Email Summary wysłany (brak ważnych emaili).")
             return
 
-        # 5. Kategoryzuj + summarize przez Claude
+        # 5. Kategoryzuj przez Claude — tylko pre-filtrowane emaile
         emails_for_claude = "\n\n".join([
             f"Email {i+1}:\nOd: {e['from']}\nTemat: {e['subject']}\nPodgląd: {e['body_preview']}"
             for i, e in enumerate(today_emails)
         ])
 
-        claude_prompt = f"""Jesteś asystentem który kategoryzuje emaile dla Daniela z agencji marketingowej Pato.
+        claude_prompt = f"""Kategoryzujesz emaile dla Daniela Koszuka, właściciela agencji marketingowej Pato.
 
-Masz {len(today_emails)} emaili z dzisiaj. Dla każdego:
-1. Przypisz kategorię: IMPORTANT | MARKETING | ADMIN | SPAM
-   - IMPORTANT: klienci, faktury, urgent, oferty, pytania wymagające odpowiedzi
-   - MARKETING: newslettery, promocje, mailingi
-   - ADMIN: automatyczne powiadomienia, potwierdzenia
-   - SPAM: low priority, niechciane
+Newslettery i mailingi masowe zostały już odfiltrowane — te {len(today_emails)} emaili to potencjalnie ważna korespondencja.
 
-2. Dla IMPORTANT napisz 1-2 zdania podsumowania po polsku.
-3. Zaproponuj max 3 sugerowane akcje.
+Dla każdego emaila przypisz kategorię:
+- IMPORTANT: bezpośrednia korespondencja od klienta/partnera/dostawcy, faktura, oferta, pytanie wymagające odpowiedzi Daniela
+- ADMIN: automatyczne potwierdzenia, powiadomienia systemowe, raporty cykliczne — NIE wymagają odpowiedzi
+- SPAM: niechciane, nieistotne
+
+ZASADA: Oznacz IMPORTANT TYLKO jeśli Daniel MUSI coś z tym zrobić. Automatyczne powiadomienia i potwierdzenia = ADMIN.
+
+Dla każdego IMPORTANT: napisz 1-2 zdania po polsku co chce nadawca i jakiej akcji wymaga.
+Zaproponuj max 3 konkretne sugerowane akcje tylko dla IMPORTANT emaili.
 
 Emaile:
 {emails_for_claude}
 
-Odpowiedz w formacie JSON:
+Odpowiedz TYLKO w formacie JSON:
 {{
   "categorized": [
-    {{"index": 0, "category": "IMPORTANT", "summary": "...", "from": "...", "subject": "..."}},
-    {{"index": 1, "category": "MARKETING", "summary": null, "from": "...", "subject": "..."}}
+    {{"index": 0, "category": "IMPORTANT", "summary": "Klient pyta o wycenę kampanii Q2. Wymaga odpowiedzi.", "from": "...", "subject": "..."}},
+    {{"index": 1, "category": "ADMIN", "summary": null, "from": "...", "subject": "..."}}
   ],
-  "suggested_actions": ["Odpowiedz na email od X", "Sprawdź fakturę od Y"]
+  "suggested_actions": ["Odpowiedz na email od X ws. wyceny"]
 }}"""
 
         claude_response = anthropic.messages.create(
@@ -3130,7 +3146,10 @@ Odpowiedz w formacie JSON:
 
         # 7. Zbuduj wiadomość Slack
         msg = f"📧 *Email Summary - {today_str}*\n\n"
-        msg += f"📥 *OTRZYMANE DZISIAJ:* {len(today_emails)} emaili\n"
+        msg += f"📥 *OTRZYMANE DZISIAJ:* {len(today_emails)} ważnych emaili"
+        if newsletter_count:
+            msg += f" _(+ {newsletter_count} newsletterów pominięto)_"
+        msg += "\n"
 
         # Sekcja URGENT (bez odpowiedzi z poprzednich dni)
         old_unreplied = [e for e in unreplied if e.get('days_waiting', 0) > 0]
