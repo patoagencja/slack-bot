@@ -1386,61 +1386,164 @@ def analyze_campaign_trends(campaigns_data, lookback_days=7):
     }
 
 
+def get_client_benchmarks(client_name, platform, lookback_days=30):
+    """
+    Pobiera benchmarki (30-dniowe średnie) dla klienta.
+
+    Returns:
+        dict z avg_ctr, avg_cpc, avg_roas, avg_frequency (lub None jeśli brak danych)
+    """
+    try:
+        date_to = datetime.now().strftime('%Y-%m-%d')
+        date_from = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
+
+        if platform == "meta":
+            data = meta_ads_tool(
+                client_name=client_name,
+                date_from=date_from,
+                date_to=date_to,
+                level="campaign",
+                metrics=["campaign_name", "spend", "impressions", "clicks", "ctr",
+                         "cpc", "purchase_roas", "frequency", "conversions"]
+            )
+            campaigns = data.get("data", [])
+            if not campaigns:
+                return None
+
+            ctrs = [c["ctr"] for c in campaigns if c.get("ctr")]
+            cpcs = [c["cpc"] for c in campaigns if c.get("cpc")]
+            roases = [c["purchase_roas"] for c in campaigns if c.get("purchase_roas")]
+            freqs = [c["frequency"] for c in campaigns if c.get("frequency")]
+
+            return {
+                "avg_ctr": sum(ctrs) / len(ctrs) if ctrs else None,
+                "avg_cpc": sum(cpcs) / len(cpcs) if cpcs else None,
+                "avg_roas": sum(roases) / len(roases) if roases else None,
+                "avg_frequency": sum(freqs) / len(freqs) if freqs else None,
+                "period_days": lookback_days,
+                "campaign_count": len(campaigns)
+            }
+
+        elif platform == "google":
+            all_campaigns = []
+            for account in ["dre", "dre 2024", "dre 2025"]:
+                gdata = google_ads_tool(
+                    client_name=account,
+                    date_from=date_from,
+                    date_to=date_to,
+                    level="campaign",
+                    metrics=["campaign.name", "metrics.impressions", "metrics.clicks",
+                             "metrics.cost_micros", "metrics.conversions",
+                             "metrics.ctr", "metrics.average_cpc"]
+                )
+                if gdata.get("data"):
+                    all_campaigns.extend(gdata["data"])
+
+            if not all_campaigns:
+                return None
+
+            ctrs = [c["ctr"] for c in all_campaigns if c.get("ctr")]
+            cpcs = [c["cpc"] for c in all_campaigns if c.get("cpc")]
+
+            return {
+                "avg_ctr": sum(ctrs) / len(ctrs) if ctrs else None,
+                "avg_cpc": sum(cpcs) / len(cpcs) if cpcs else None,
+                "avg_roas": None,  # Google nie zwraca ROAS bezpośrednio
+                "avg_frequency": None,
+                "period_days": lookback_days,
+                "campaign_count": len(all_campaigns)
+            }
+
+    except Exception as e:
+        logger.error(f"Błąd pobierania benchmarków: {e}")
+        return None
+
+
+def _benchmark_flag(current, benchmark, higher_is_better=True):
+    """
+    Zwraca emoji + % różnicy vs benchmark.
+    🔴 gorzej >20%, 🟡 gorzej 10-20%, ✅ ±10%, 🟢 lepiej >20%
+    """
+    if benchmark is None or benchmark == 0 or current is None:
+        return ""
+    diff_pct = (current - benchmark) / benchmark * 100
+    if not higher_is_better:
+        diff_pct = -diff_pct  # dla CPC niższy = lepszy
+
+    if diff_pct >= 20:
+        flag = "🟢"
+    elif diff_pct >= 10:
+        flag = "✅"
+    elif diff_pct >= -10:
+        flag = "✅"
+    elif diff_pct >= -20:
+        flag = "🟡"
+    else:
+        flag = "🔴"
+
+    sign = "+" if diff_pct >= 0 else ""
+    return f" {flag} (avg: {benchmark:.2f}, {sign}{diff_pct:.0f}%)"
+
+
 def generate_daily_digest_dre():
     """
-    Generuje daily digest dla klienta DRE (Meta + Google Ads).
+    Generuje daily digest dla klienta DRE (Meta + Google Ads) z benchmarkami.
     """
     try:
         # Pobierz dane z wczoraj
         yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
         today = datetime.now().strftime('%Y-%m-%d')
-        
+
+        # Pobierz benchmarki (30 dni) równolegle z danymi dziennymi
+        meta_benchmarks = get_client_benchmarks("drzwi dre", "meta", lookback_days=30)
+        google_benchmarks = get_client_benchmarks("dre", "google", lookback_days=30)
+
         # === META ADS ===
         meta_data = meta_ads_tool(
             client_name="drzwi dre",
             date_from=yesterday,
             date_to=today,
             level="campaign",
-            metrics=["campaign_name", "spend", "impressions", "clicks", "ctr", "cpc", 
+            metrics=["campaign_name", "spend", "impressions", "clicks", "ctr", "cpc",
                     "conversions", "purchase_roas", "frequency"]
         )
-        
+
         # === GOOGLE ADS ===
         google_data_combined = []
-        
+
         for account in ["dre", "dre 2024", "dre 2025"]:
             data = google_ads_tool(
                 client_name=account,
                 date_from=yesterday,
                 date_to=today,
                 level="campaign",
-                metrics=["campaign.name", "metrics.impressions", "metrics.clicks", 
-                        "metrics.cost_micros", "metrics.conversions", "metrics.ctr", 
+                metrics=["campaign.name", "metrics.impressions", "metrics.clicks",
+                        "metrics.cost_micros", "metrics.conversions", "metrics.ctr",
                         "metrics.average_cpc"]
             )
-            
+
             if data.get("data"):
                 google_data_combined.extend(data["data"])
-        
+
         # Połącz dane Meta + Google
         all_campaigns = []
-        
-        if meta_data.get("data"):
-            all_campaigns.extend(meta_data["data"])
-        
+        meta_campaigns = meta_data.get("data", [])
+
+        if meta_campaigns:
+            all_campaigns.extend(meta_campaigns)
         all_campaigns.extend(google_data_combined)
-        
+
         if not all_campaigns:
             return "📊 DRE - Daily Digest\n\n⚠️ Brak danych za wczoraj. Sprawdź czy kampanie są aktywne."
-        
+
         # Analizuj trendy
         analysis = analyze_campaign_trends(all_campaigns)
-        
+
         # Oblicz totals
         total_spend = sum(c.get("spend", 0) or c.get("cost", 0) for c in all_campaigns)
         total_conversions = sum(c.get("conversions", 0) for c in all_campaigns)
         total_clicks = sum(c.get("clicks", 0) for c in all_campaigns)
-        
+
         # Zbuduj digest
         digest = f"""🌅 **DRE - Daily Digest** ({yesterday})
 
@@ -1451,17 +1554,61 @@ def generate_daily_digest_dre():
 
 ━━━━━━━━━━━━━━━━━━━━━━
 """
-        
+
+        # === META - szczegóły kampanii z benchmarkami ===
+        if meta_campaigns and meta_benchmarks:
+            digest += "\n📘 **META ADS - Kampanie vs 30-dni benchmark:**\n\n"
+            for c in meta_campaigns:
+                name = c.get("campaign_name", "?")
+                spend = c.get("spend", 0)
+                ctr = c.get("ctr")
+                cpc = c.get("cpc")
+                roas = c.get("purchase_roas")
+                freq = c.get("frequency")
+                convs = c.get("conversions", 0)
+
+                digest += f"**{name}**  💰 {spend:.2f} PLN | 🎯 {convs} conv\n"
+
+                if ctr is not None:
+                    digest += f"  - CTR: {ctr:.2f}%{_benchmark_flag(ctr, meta_benchmarks.get('avg_ctr'), higher_is_better=True)}\n"
+                if cpc is not None:
+                    digest += f"  - CPC: {cpc:.2f} PLN{_benchmark_flag(cpc, meta_benchmarks.get('avg_cpc'), higher_is_better=False)}\n"
+                if roas is not None:
+                    digest += f"  - ROAS: {roas:.2f}x{_benchmark_flag(roas, meta_benchmarks.get('avg_roas'), higher_is_better=True)}\n"
+                if freq is not None:
+                    digest += f"  - Freq: {freq:.1f}{_benchmark_flag(freq, meta_benchmarks.get('avg_frequency'), higher_is_better=False)}\n"
+                digest += "\n"
+            digest += "━━━━━━━━━━━━━━━━━━━━━━\n"
+
+        # === GOOGLE - szczegóły kampanii z benchmarkami ===
+        if google_data_combined and google_benchmarks:
+            digest += "\n🔵 **GOOGLE ADS - Kampanie vs 30-dni benchmark:**\n\n"
+            for c in google_data_combined:
+                name = c.get("campaign_name", c.get("name", "?"))
+                spend = c.get("cost", c.get("spend", 0))
+                ctr = c.get("ctr")
+                cpc = c.get("cpc")
+                convs = c.get("conversions", 0)
+
+                digest += f"**{name}**  💰 {spend:.2f} PLN | 🎯 {convs} conv\n"
+
+                if ctr is not None:
+                    digest += f"  - CTR: {ctr:.2f}%{_benchmark_flag(ctr, google_benchmarks.get('avg_ctr'), higher_is_better=True)}\n"
+                if cpc is not None:
+                    digest += f"  - CPC: {cpc:.2f} PLN{_benchmark_flag(cpc, google_benchmarks.get('avg_cpc'), higher_is_better=False)}\n"
+                digest += "\n"
+            digest += "━━━━━━━━━━━━━━━━━━━━━━\n"
+
         # CRITICAL ALERTS
         if analysis["critical_alerts"]:
             digest += "\n🔴 **CRITICAL - WYMAGA AKCJI:**\n\n"
             for alert in analysis["critical_alerts"][:3]:  # Top 3
                 campaign = alert["campaign"]
-                
+
                 # Sprawdź historię jeśli zero conversions
                 if alert["type"] == "zero_conversions":
                     history = check_conversion_history("dre", "google", campaign)
-                    
+
                     if history["had_conversions"]:
                         digest += f"**{campaign}**\n"
                         digest += f"⚠️ Zero conversions (miała {history['total']} w ostatnich 30 dni)\n"
@@ -1471,21 +1618,21 @@ def generate_daily_digest_dre():
                         digest += f"**{campaign}**\n"
                         digest += f"🟡 Zero conversions (ta kampania nie generuje conversions)\n"
                         digest += f"💡 Rozważ pause lub zmianę celu\n\n"
-                
+
                 elif alert["type"] == "low_ctr":
                     digest += f"**{campaign}**\n"
                     digest += f"📉 {alert['message']}\n"
                     digest += f"💡 **AKCJA:** Wymień kreacje (ad fatigue)\n\n"
-            
+
             digest += "━━━━━━━━━━━━━━━━━━━━━━\n"
-        
+
         # WARNINGS
         if analysis["warnings"]:
             digest += "\n🟡 **DO OBEJRZENIA:**\n\n"
             for warning in analysis["warnings"][:2]:  # Top 2
                 digest += f"• **{warning['campaign']}** - {warning['message']}\n"
             digest += "\n━━━━━━━━━━━━━━━━━━━━━━\n"
-        
+
         # TOP PERFORMERS
         if analysis["top_performers"]:
             digest += "\n🟢 **TOP PERFORMERS:**\n\n"
@@ -1493,13 +1640,17 @@ def generate_daily_digest_dre():
                 digest += f"{i}. **{top['campaign']}**\n"
                 digest += f"   ROAS {top['roas']:.1f} | {top['conversions']} conversions | {top['spend']:.2f} PLN\n"
             digest += "\n"
-        
+
         # Footer
         if not analysis["critical_alerts"] and not analysis["warnings"]:
             digest += "\n✅ **Wszystko OK!** Żadnych critical issues.\n"
-        
+
+        # Benchmark footer
+        if meta_benchmarks:
+            digest += f"\n_📊 Benchmarki z ostatnich {meta_benchmarks['period_days']} dni ({meta_benchmarks['campaign_count']} kampanii Meta)_\n"
+
         return digest
-        
+
     except Exception as e:
         logger.error(f"Błąd generowania digestu: {e}")
         return f"❌ Błąd generowania digestu: {str(e)}"
