@@ -806,6 +806,93 @@ def read_emails(config, limit=10, folder='INBOX'):
     except Exception as e:
         return {"error": f"Błąd odczytu emaili: {str(e)}"}
 
+def _normalize_subject(subject):
+    """Usuwa prefixes Re:/Fwd:/Odp: i whitespace żeby porównać wątki."""
+    import re as _re
+    subject = subject or ""
+    subject = _re.sub(r'^(Re|Fwd|FW|Odp|ODP|AW|SV|VS)(\s*\[\d+\])?:\s*', '', subject, flags=_re.IGNORECASE).strip()
+    return subject.lower()
+
+
+def find_unreplied_emails(config, received_emails, days_back=3):
+    """
+    Sprawdza które z podanych emaili nie mają odpowiedzi w folderze SENT.
+
+    Args:
+        config: konfiguracja IMAP
+        received_emails: lista emaili (dict z 'subject', 'from', 'date')
+        days_back: ile dni wstecz szukać w SENT (domyślnie 3)
+
+    Returns:
+        lista emaili bez odpowiedzi (te same dicty z dodanym 'days_waiting')
+    """
+    # Możliwe nazwy folderu SENT w różnych providerach
+    SENT_FOLDERS = [
+        "Sent", "SENT", "Sent Items", "Sent Messages",
+        "[Gmail]/Sent Mail", "INBOX.Sent", "Poczta wysłana"
+    ]
+
+    try:
+        with IMAPClient(config['imap_server'], ssl=True, port=993) as client:
+            client.login(config['email'], config['password'])
+
+            # Znajdź folder SENT
+            sent_folder = None
+            for folder in SENT_FOLDERS:
+                try:
+                    client.select_folder(folder, readonly=True)
+                    sent_folder = folder
+                    break
+                except Exception:
+                    continue
+
+            if not sent_folder:
+                logger.warning("Nie znaleziono folderu SENT — pomijam sprawdzanie odpowiedzi")
+                return []
+
+            # Pobierz wysłane z ostatnich days_back dni
+            since_date = (datetime.now() - timedelta(days=days_back)).strftime('%d-%b-%Y')
+            sent_uids = client.search(['SINCE', since_date])
+
+            sent_subjects = set()
+            for uid in sent_uids:
+                try:
+                    raw = client.fetch([uid], ['RFC822.HEADER'])[uid][b'RFC822.HEADER']
+                    sent_msg = email.message_from_bytes(raw)
+                    parts = decode_header(sent_msg.get('Subject', '') or '')
+                    s_parts = []
+                    for p, ch in parts:
+                        if isinstance(p, bytes):
+                            s_parts.append(p.decode(ch or 'utf-8', errors='replace'))
+                        else:
+                            s_parts.append(p or '')
+                    sent_subjects.add(_normalize_subject(''.join(s_parts)))
+                except Exception:
+                    continue
+
+            # Sprawdź które otrzymane emaile nie mają odpowiedzi
+            unreplied = []
+            for em in received_emails:
+                normalized = _normalize_subject(em.get('subject', ''))
+                # Odpowiedź istnieje jeśli w SENT jest email z tym samym tematem
+                if normalized not in sent_subjects:
+                    # Oblicz ile dni czeka bez odpowiedzi
+                    days_waiting = 0
+                    try:
+                        from email.utils import parsedate_to_datetime
+                        em_date = parsedate_to_datetime(em['date']).date()
+                        days_waiting = (datetime.now().date() - em_date).days
+                    except Exception:
+                        pass
+                    unreplied.append({**em, 'days_waiting': days_waiting})
+
+            return unreplied
+
+    except Exception as e:
+        logger.error(f"Błąd find_unreplied_emails: {e}")
+        return []
+
+
 def send_email(config, to, subject, body):
     """Wyślij email"""
     try:
@@ -2950,28 +3037,42 @@ def daily_email_summary_slack():
 
         all_emails = result.get("emails", [])
 
-        # 2. Filtruj tylko dzisiejsze
+        # 2. Filtruj: dzisiejsze + ostatnie 3 dni (dla unreplied check)
         from email.utils import parsedate_to_datetime
+        cutoff_date = (datetime.now() - timedelta(days=3)).date()
         today_emails = []
+        recent_emails = []   # ostatnie 3 dni (bez dzisiaj)
         for em in all_emails:
             try:
                 em_date = parsedate_to_datetime(em["date"]).date()
                 if em_date == today_date:
                     today_emails.append(em)
+                elif em_date >= cutoff_date:
+                    recent_emails.append(em)
             except Exception:
-                # Jeśli nie da się sparsować daty, pomiń
                 pass
 
-        # 3. Edge case: brak emaili
+        # 3. Sprawdź unreplied z ostatnich 3 dni (PRZED edge case check)
+        email_config = get_user_email_config(daniel_user_id)
+        all_recent = today_emails + recent_emails
+        unreplied = find_unreplied_emails(email_config, all_recent, days_back=3) if email_config else []
+        # Ogranicz do IMPORTANT-looking (nie sprawdzamy tu Claude — prosty subject filter)
+        # Oznacz ile dni czeka
+        unreplied_map = {_normalize_subject(e['subject']): e for e in unreplied}
+
+        # 4. Edge case: brak emaili dzisiaj
         if not today_emails:
-            app.client.chat_postMessage(
-                channel=daniel_user_id,
-                text=f"📧 **Email Summary - {today_str}**\n\n✅ Brak nowych emaili dzisiaj. Spokojny dzień!"
-            )
-            logger.info("✅ Email Summary wysłany (brak emaili).")
+            no_email_msg = f"📧 *Email Summary - {today_str}*\n\n✅ Brak nowych emaili dzisiaj."
+            if unreplied:
+                no_email_msg += f"\n\n🚨 *UWAGA: {len(unreplied)} emaili bez odpowiedzi z ostatnich 3 dni!*\n"
+                for em in unreplied[:5]:
+                    days = em.get('days_waiting', '?')
+                    no_email_msg += f"  • *{em['subject']}* — od: {em['from']} _(czeka {days}d)_\n"
+            app.client.chat_postMessage(channel=daniel_user_id, text=no_email_msg)
+            logger.info("✅ Email Summary wysłany (brak emaili dzisiaj).")
             return
 
-        # 4. Kategoryzuj + summarize przez Claude
+        # 5. Kategoryzuj + summarize przez Claude
         emails_for_claude = "\n\n".join([
             f"Email {i+1}:\nOd: {e['from']}\nTemat: {e['subject']}\nPodgląd: {e['body_preview']}"
             for i, e in enumerate(today_emails)
@@ -3016,15 +3117,33 @@ Odpowiedz w formacie JSON:
         categorized = categorized_data.get("categorized", [])
         suggested_actions = categorized_data.get("suggested_actions", [])
 
-        # 5. Zlicz kategorie
+        # 6. Zlicz kategorie
         important = [c for c in categorized if c.get("category") == "IMPORTANT"]
         marketing = [c for c in categorized if c.get("category") == "MARKETING"]
         admin = [c for c in categorized if c.get("category") == "ADMIN"]
         spam = [c for c in categorized if c.get("category") == "SPAM"]
 
-        # 6. Zbuduj wiadomość Slack
+        # Oznacz które IMPORTANT nie mają odpowiedzi
+        for em in important:
+            subj = _normalize_subject(em.get("subject", ""))
+            if subj in unreplied_map:
+                em["unreplied"] = True
+                em["days_waiting"] = unreplied_map[subj].get("days_waiting", 0)
+
+        # 7. Zbuduj wiadomość Slack
         msg = f"📧 *Email Summary - {today_str}*\n\n"
         msg += f"📥 *OTRZYMANE DZISIAJ:* {len(today_emails)} emaili\n"
+
+        # Sekcja URGENT (bez odpowiedzi z poprzednich dni)
+        old_unreplied = [e for e in unreplied if e.get('days_waiting', 0) > 0]
+        if old_unreplied:
+            msg += "\n━━━━━━━━━━━━━━━━━━━━━━\n"
+            msg += f"\n🚨 *URGENT - BEZ ODPOWIEDZI (ostatnie 3 dni):*\n\n"
+            for em in old_unreplied[:5]:
+                days = em.get('days_waiting', '?')
+                msg += f"⏰ *{em['subject']}*\n"
+                msg += f"   Od: {em['from']} | Czeka: *{days} {'dzień' if days == 1 else 'dni'}*\n\n"
+
         msg += "\n━━━━━━━━━━━━━━━━━━━━━━\n"
 
         if important:
@@ -3035,7 +3154,8 @@ Odpowiedz w formacie JSON:
                 sender = em.get("from", raw.get("from", "?"))
                 subject = em.get("subject", raw.get("subject", "?"))
                 summary = em.get("summary") or ""
-                msg += f"{i}. *Od:* {sender}\n"
+                unreplied_flag = " ⏰ *brak odpowiedzi*" if em.get("unreplied") else ""
+                msg += f"{i}. *Od:* {sender}{unreplied_flag}\n"
                 msg += f"   *Temat:* {subject}\n"
                 if summary:
                     msg += f"   *Podsumowanie:* {summary}\n"
