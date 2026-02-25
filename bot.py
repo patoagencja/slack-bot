@@ -849,6 +849,13 @@ def handle_manual_digest(body, say, logger):
     text = event.get("text", "").lower()
     digest_triggers = ["digest test", "test digest", "digest", "raport"]
 
+    # Test email summary
+    email_triggers = ["test email", "email test", "email summary"]
+    if any(trigger in text for trigger in email_triggers):
+        say("📧 Uruchamiam Email Summary... (może chwilę potrwać)")
+        daily_email_summary_slack()
+        return
+
     if any(trigger in text for trigger in digest_triggers):
         channel_id = event.get("channel")
 
