@@ -2884,7 +2884,7 @@ scheduler.add_job(checkin_summary, 'cron', day_of_week='mon', hour=9, minute=0)
 scheduler.add_job(check_budget_alerts, 'cron', minute=0, id='budget_alerts')
 scheduler.add_job(send_budget_alerts_dre, 'cron', hour='9,11,13,15,17,19', minute=0, id='budget_alerts_dre')
 scheduler.add_job(weekly_report_dre, 'cron', day_of_week='fri', hour=16, minute=0, id='weekly_reports')
-scheduler.add_job(weekly_learnings_dre, 'cron', day_of_week='mon', hour=8, minute=30, id='weekly_learnings')
+scheduler.add_job(weekly_learnings_dre, 'cron', day_of_week='mon,thu', hour=8, minute=30, id='weekly_learnings')
 scheduler.start()
 
 print(f"✅ Scheduler załadowany! Jobs: {len(scheduler.get_jobs())}")
