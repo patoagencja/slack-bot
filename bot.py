@@ -1251,19 +1251,20 @@ def handle_message_events(body, say, logger):
     # --- Manual triggers (obsługuj przed Claude) ---
     text_lower = user_message.lower()
 
-    # Test email summary
+    # Test email summary - TYLKO z DM (channel_type == "im")
     if any(t in text_lower for t in ["test email", "email test", "email summary"]):
-        say("📧 Uruchamiam Email Summary... (może chwilę potrwać)")
+        if event.get("channel_type") != "im":
+            # Cicho ignoruj w kanałach - nie odpowiadaj nic
+            return
+        say("📧 Uruchamiam Email Summary...")
         try:
-            # Sprawdź config emaila
             email_config = get_user_email_config("UTE1RN6SJ")
             if not email_config:
-                say("❌ Brak konfiguracji email dla UTE1RN6SJ w `EMAIL_ACCOUNTS`. Sprawdź zmienne środowiskowe.")
+                say("❌ Brak konfiguracji email (`EMAIL_ACCOUNTS`). Napisz do admina.")
                 return
             daily_email_summary_slack()
-            say("✅ Email Summary wysłany na DM!")
         except Exception as e:
-            say(f"❌ Błąd Email Summary: `{str(e)}`")
+            say(f"❌ Błąd: `{str(e)}`")
             logger.error(f"Błąd test email trigger: {e}")
         return
 
