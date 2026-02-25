@@ -849,13 +849,6 @@ def handle_manual_digest(body, say, logger):
     text = event.get("text", "").lower()
     digest_triggers = ["digest test", "test digest", "digest", "raport"]
 
-    # Test email summary
-    email_triggers = ["test email", "email test", "email summary"]
-    if any(trigger in text for trigger in email_triggers):
-        say("📧 Uruchamiam Email Summary... (może chwilę potrwać)")
-        daily_email_summary_slack()
-        return
-
     if any(trigger in text for trigger in digest_triggers):
         channel_id = event.get("channel")
 
@@ -1254,21 +1247,40 @@ def handle_message_events(body, say, logger):
     
     user_message = event.get("text", "")
     user_id = event.get("user")
-    
+
+    # --- Manual triggers (obsługuj przed Claude) ---
+    text_lower = user_message.lower()
+
+    # Test email summary
+    if any(t in text_lower for t in ["test email", "email test", "email summary"]):
+        say("📧 Uruchamiam Email Summary... (może chwilę potrwać)")
+        try:
+            # Sprawdź config emaila
+            email_config = get_user_email_config("UTE1RN6SJ")
+            if not email_config:
+                say("❌ Brak konfiguracji email dla UTE1RN6SJ w `EMAIL_ACCOUNTS`. Sprawdź zmienne środowiskowe.")
+                return
+            daily_email_summary_slack()
+            say("✅ Email Summary wysłany na DM!")
+        except Exception as e:
+            say(f"❌ Błąd Email Summary: `{str(e)}`")
+            logger.error(f"Błąd test email trigger: {e}")
+        return
+
     try:
         history = get_conversation_history(user_id)
         save_message_to_history(user_id, "user", user_message)
-        
+
         message = anthropic.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=1000,
             messages=get_conversation_history(user_id)
         )
-        
+
         response_text = message.content[0].text
         save_message_to_history(user_id, "assistant", response_text)
         say(text=response_text)
-        
+
     except Exception as e:
         say(text=f"Przepraszam, wystąpił błąd: {str(e)}")
 # ============================================
