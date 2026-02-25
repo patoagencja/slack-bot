@@ -1351,11 +1351,10 @@ def handle_message_events(body, say, logger):
                 say("Dla którego klienta? Dostępne: `dre` (wpisz np. `digest test dre`)")
             return
 
-    # Email summary - TYLKO z DM
+    # Email summary - trigger działa wszędzie, wyniki zawsze idą na DM
     if any(t in text_lower for t in ["test email", "email test", "email summary"]):
-        if event.get("channel_type") != "im":
-            return  # cicho ignoruj w kanałach
-        say("📧 Uruchamiam Email Summary...")
+        logger.info(f"📧 Email trigger od {user_id}, channel_type={event.get('channel_type')}")
+        say("📧 Uruchamiam Email Summary... wyślę Ci to na DM.")
         try:
             email_config = get_user_email_config("UTE1RN6SJ")
             if not email_config:
