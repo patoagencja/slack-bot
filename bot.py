@@ -838,7 +838,21 @@ def search_emails(config, query, limit=10):
             }
     except Exception as e:
         return {"error": f"Błąd wyszukiwania: {str(e)}"}
-
+@app.event("message")
+def handle_manual_digest(body, say, logger):
+    """Manual trigger dla testowania"""
+    event = body.get("event", {})
+    
+    # Ignore bots
+    if event.get("bot_id") or event.get("subtype") == "bot_message":
+        return
+    
+    text = event.get("text", "").lower()
+    
+    # Trigger: "digest test" lub "test digest"
+    if "digest test" in text or "test digest" in text:
+        digest = generate_daily_digest_dre()
+        say(digest)
 # Reaguj na wzmianki (@bot)
 @app.event("app_mention")
 def handle_mention(event, say):
@@ -1472,7 +1486,264 @@ def handle_message_events(body, say, logger):
         
     except Exception as e:
         say(text=f"Przepraszam, wystąpił błąd: {str(e)}")
+# ============================================
+# DAILY DIGEST - ANOMALY DETECTION
+# ============================================
 
+def check_conversion_history(client_name, platform, campaign_name, lookback_days=30):
+    """
+    Sprawdza czy kampania kiedykolwiek miała conversions w historii.
+    Używane do smart alerting - rozróżnienie między "coś się zepsuło" vs "to normalne".
+    """
+    try:
+        date_from = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
+        date_to = datetime.now().strftime('%Y-%m-%d')
+        
+        if platform == "meta":
+            data = meta_ads_tool(
+                client_name=client_name,
+                date_from=date_from,
+                date_to=date_to,
+                level="campaign",
+                campaign_name=campaign_name,
+                metrics=["campaign_name", "conversions"]
+            )
+            
+            if data.get("data"):
+                total_conversions = sum(item.get("conversions", 0) for item in data["data"])
+                return {
+                    "had_conversions": total_conversions > 0,
+                    "total": total_conversions,
+                    "alert_level": "CRITICAL" if total_conversions > 0 else "WARNING"
+                }
+        
+        elif platform == "google":
+            data = google_ads_tool(
+                client_name=client_name,
+                date_from=date_from,
+                date_to=date_to,
+                level="campaign",
+                campaign_name=campaign_name,
+                metrics=["campaign.name", "metrics.conversions"]
+            )
+            
+            if data.get("data"):
+                total_conversions = sum(item.get("conversions", 0) for item in data["data"])
+                return {
+                    "had_conversions": total_conversions > 0,
+                    "total": total_conversions,
+                    "alert_level": "CRITICAL" if total_conversions > 0 else "WARNING"
+                }
+        
+        return {"had_conversions": False, "total": 0, "alert_level": "WARNING"}
+        
+    except Exception as e:
+        logger.error(f"Błąd sprawdzania historii: {e}")
+        return {"had_conversions": False, "total": 0, "alert_level": "WARNING"}
+
+
+def analyze_campaign_trends(campaigns_data, lookback_days=7):
+    """
+    Analizuje trendy kampanii (ostatnie 7 dni) i wykrywa anomalie.
+    Returns: dict z critical alerts, warnings, i top performers
+    """
+    critical_alerts = []
+    warnings = []
+    top_performers = []
+    
+    # Tutaj będzie logika analizy trendów
+    # Na razie podstawowa wersja - można rozbudować później
+    
+    for campaign in campaigns_data:
+        campaign_name = campaign.get("campaign_name") or campaign.get("name", "Unknown")
+        conversions = campaign.get("conversions", 0)
+        ctr = campaign.get("ctr", 0)
+        cpc = campaign.get("cpc") or campaign.get("average_cpc", 0)
+        spend = campaign.get("spend") or campaign.get("cost", 0)
+        roas = campaign.get("purchase_roas", 0)
+        
+        # CRITICAL: Zero conversions
+        if conversions == 0 and spend > 50:  # Tylko jeśli wydaliśmy >50 PLN
+            critical_alerts.append({
+                "type": "zero_conversions",
+                "campaign": campaign_name,
+                "spend": spend,
+                "message": f"Zero conversions przy {spend:.2f} PLN wydatków"
+            })
+        
+        # CRITICAL: Very low CTR
+        if ctr < 0.5 and spend > 50:
+            critical_alerts.append({
+                "type": "low_ctr",
+                "campaign": campaign_name,
+                "ctr": ctr,
+                "message": f"CTR {ctr:.2f}% (bardzo niski)"
+            })
+        
+        # WARNING: Low ROAS
+        if roas > 0 and roas < 2.0:
+            warnings.append({
+                "type": "low_roas",
+                "campaign": campaign_name,
+                "roas": roas,
+                "message": f"ROAS {roas:.1f} (poniżej target 2.0)"
+            })
+        
+        # TOP PERFORMER: Good ROAS
+        if roas >= 3.5:
+            top_performers.append({
+                "campaign": campaign_name,
+                "roas": roas,
+                "spend": spend,
+                "conversions": conversions
+            })
+    
+    # Sort top performers by ROAS
+    top_performers.sort(key=lambda x: x.get("roas", 0), reverse=True)
+    
+    return {
+        "critical_alerts": critical_alerts,
+        "warnings": warnings,
+        "top_performers": top_performers[:3]  # Top 3
+    }
+
+
+def generate_daily_digest_dre():
+    """
+    Generuje daily digest dla klienta DRE (Meta + Google Ads).
+    """
+    try:
+        # Pobierz dane z wczoraj
+        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        today = datetime.now().strftime('%Y-%m-%d')
+        
+        # === META ADS ===
+        meta_data = meta_ads_tool(
+            client_name="drzwi dre",
+            date_from=yesterday,
+            date_to=today,
+            level="campaign",
+            metrics=["campaign_name", "spend", "impressions", "clicks", "ctr", "cpc", 
+                    "conversions", "purchase_roas", "frequency"]
+        )
+        
+        # === GOOGLE ADS ===
+        google_data_combined = []
+        
+        for account in ["dre", "dre 2024", "dre 2025"]:
+            data = google_ads_tool(
+                client_name=account,
+                date_from=yesterday,
+                date_to=today,
+                level="campaign",
+                metrics=["campaign.name", "metrics.impressions", "metrics.clicks", 
+                        "metrics.cost_micros", "metrics.conversions", "metrics.ctr", 
+                        "metrics.average_cpc"]
+            )
+            
+            if data.get("data"):
+                google_data_combined.extend(data["data"])
+        
+        # Połącz dane Meta + Google
+        all_campaigns = []
+        
+        if meta_data.get("data"):
+            all_campaigns.extend(meta_data["data"])
+        
+        all_campaigns.extend(google_data_combined)
+        
+        if not all_campaigns:
+            return "📊 DRE - Daily Digest\n\n⚠️ Brak danych za wczoraj. Sprawdź czy kampanie są aktywne."
+        
+        # Analizuj trendy
+        analysis = analyze_campaign_trends(all_campaigns)
+        
+        # Oblicz totals
+        total_spend = sum(c.get("spend", 0) or c.get("cost", 0) for c in all_campaigns)
+        total_conversions = sum(c.get("conversions", 0) for c in all_campaigns)
+        total_clicks = sum(c.get("clicks", 0) for c in all_campaigns)
+        
+        # Zbuduj digest
+        digest = f"""🌅 **DRE - Daily Digest** ({yesterday})
+
+💰 **WCZORAJ:** {total_spend:.2f} PLN
+📊 **Aktywnych kampanii:** {len(all_campaigns)}
+🎯 **Conversions:** {total_conversions}
+👆 **Clicks:** {total_clicks:,}
+
+━━━━━━━━━━━━━━━━━━━━━━
+"""
+        
+        # CRITICAL ALERTS
+        if analysis["critical_alerts"]:
+            digest += "\n🔴 **CRITICAL - WYMAGA AKCJI:**\n\n"
+            for alert in analysis["critical_alerts"][:3]:  # Top 3
+                campaign = alert["campaign"]
+                
+                # Sprawdź historię jeśli zero conversions
+                if alert["type"] == "zero_conversions":
+                    history = check_conversion_history("dre", "google", campaign)
+                    
+                    if history["had_conversions"]:
+                        digest += f"**{campaign}**\n"
+                        digest += f"⚠️ Zero conversions (miała {history['total']} w ostatnich 30 dni)\n"
+                        digest += f"💰 Spend: {alert['spend']:.2f} PLN\n"
+                        digest += f"💡 **AKCJA:** Sprawdź tracking/landing page!\n\n"
+                    else:
+                        digest += f"**{campaign}**\n"
+                        digest += f"🟡 Zero conversions (ta kampania nie generuje conversions)\n"
+                        digest += f"💡 Rozważ pause lub zmianę celu\n\n"
+                
+                elif alert["type"] == "low_ctr":
+                    digest += f"**{campaign}**\n"
+                    digest += f"📉 {alert['message']}\n"
+                    digest += f"💡 **AKCJA:** Wymień kreacje (ad fatigue)\n\n"
+            
+            digest += "━━━━━━━━━━━━━━━━━━━━━━\n"
+        
+        # WARNINGS
+        if analysis["warnings"]:
+            digest += "\n🟡 **DO OBEJRZENIA:**\n\n"
+            for warning in analysis["warnings"][:2]:  # Top 2
+                digest += f"• **{warning['campaign']}** - {warning['message']}\n"
+            digest += "\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        
+        # TOP PERFORMERS
+        if analysis["top_performers"]:
+            digest += "\n🟢 **TOP PERFORMERS:**\n\n"
+            for i, top in enumerate(analysis["top_performers"], 1):
+                digest += f"{i}. **{top['campaign']}**\n"
+                digest += f"   ROAS {top['roas']:.1f} | {top['conversions']} conversions | {top['spend']:.2f} PLN\n"
+            digest += "\n"
+        
+        # Footer
+        if not analysis["critical_alerts"] and not analysis["warnings"]:
+            digest += "\n✅ **Wszystko OK!** Żadnych critical issues.\n"
+        
+        return digest
+        
+    except Exception as e:
+        logger.error(f"Błąd generowania digestu: {e}")
+        return f"❌ Błąd generowania digestu: {str(e)}"
+
+def daily_digest_dre():
+    """Wysyła daily digest dla DRE o 9:00"""
+    try:
+        dre_channel_id = os.environ.get("DRE_CHANNEL_ID", "C05GPM4E9B8")
+        
+        logger.info("🔥 Generuję Daily Digest dla DRE...")
+        
+        digest = generate_daily_digest_dre()
+        
+        app.client.chat_postMessage(
+            channel=dre_channel_id,
+            text=digest
+        )
+        
+        logger.info("✅ Daily Digest wysłany!")
+        
+    except Exception as e:
+        logger.error(f"❌ Błąd wysyłania digestu: {e}")
 # Funkcja do codziennych podsumowań
 def daily_summaries():
     warsaw_tz = pytz.timezone('Europe/Warsaw')
@@ -1634,6 +1905,7 @@ _Odpowiedzi od {len([r for r in checkin_responses.values() if r])} osób_"""
 # Scheduler - codziennie o 16:00
 scheduler = BackgroundScheduler(timezone=pytz.timezone('Europe/Warsaw'))
 scheduler.add_job(daily_summaries, 'cron', hour=16, minute=0)
+scheduler.add_job(daily_digest_dre, 'cron', hour=9, minute=0, id='daily_digest_dre')
 scheduler.add_job(weekly_checkin, 'cron', day_of_week='fri', hour=14, minute=0)
 scheduler.add_job(checkin_summary, 'cron', day_of_week='mon', hour=9, minute=0)
 scheduler.start()
