@@ -840,19 +840,30 @@ def search_emails(config, query, limit=10):
         return {"error": f"Błąd wyszukiwania: {str(e)}"}
 @app.event("message")
 def handle_manual_digest(body, say, logger):
-    """Manual trigger dla testowania"""
+    """Manual trigger dla testowania digestów"""
     event = body.get("event", {})
-    
-    # Ignore bots
+
     if event.get("bot_id") or event.get("subtype") == "bot_message":
         return
-    
+
     text = event.get("text", "").lower()
-    
-    # Trigger: "digest test" lub "test digest"
-    if "digest test" in text or "test digest" in text:
-        digest = generate_daily_digest_dre()
-        say(digest)
+    digest_triggers = ["digest test", "test digest", "digest", "raport"]
+
+    if any(trigger in text for trigger in digest_triggers):
+        channel_id = event.get("channel")
+
+        # Mapowanie kanałów → klientów
+        CHANNEL_CLIENT_MAP = {
+            "C05GPM4E9B8": "dre",  # #drzwi-dre
+        }
+
+        client = CHANNEL_CLIENT_MAP.get(channel_id)
+
+        if client == "dre":
+            digest = generate_daily_digest_dre()
+            say(digest)
+        else:
+            say("Dla którego klienta? Dostępne: `dre` (wpisz np. `digest test dre`)")
 # Reaguj na wzmianki (@bot)
 @app.event("app_mention")
 def handle_mention(event, say):
