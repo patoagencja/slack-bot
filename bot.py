@@ -1462,69 +1462,119 @@ def check_conversion_history(client_name, platform, campaign_name, lookback_days
         return {"had_conversions": False, "total": 0, "alert_level": "WARNING"}
 
 
-def analyze_campaign_trends(campaigns_data, lookback_days=7):
+def analyze_campaign_trends(campaigns_data, lookback_days=7, goal="conversion"):
     """
-    Analizuje trendy kampanii (ostatnie 7 dni) i wykrywa anomalie.
+    Analizuje trendy kampanii i wykrywa anomalie.
+    goal: "conversion" (e-commerce, ROAS/konwersje) lub "engagement" (traffic, CTR/reach)
     Returns: dict z critical alerts, warnings, i top performers
     """
     critical_alerts = []
     warnings = []
     top_performers = []
-    
-    # Tutaj będzie logika analizy trendów
-    # Na razie podstawowa wersja - można rozbudować później
-    
+
     for campaign in campaigns_data:
         campaign_name = campaign.get("campaign_name") or campaign.get("name", "Unknown")
         conversions = campaign.get("conversions", 0)
-        ctr = campaign.get("ctr", 0)
-        cpc = campaign.get("cpc") or campaign.get("average_cpc", 0)
-        spend = campaign.get("spend") or campaign.get("cost", 0)
-        roas = campaign.get("purchase_roas", 0)
-        
-        # CRITICAL: Zero conversions
-        if conversions == 0 and spend > 50:  # Tylko jeśli wydaliśmy >50 PLN
-            critical_alerts.append({
-                "type": "zero_conversions",
-                "campaign": campaign_name,
-                "spend": spend,
-                "message": f"Zero conversions przy {spend:.2f} PLN wydatków"
-            })
-        
-        # CRITICAL: Very low CTR
-        if ctr < 0.5 and spend > 50:
-            critical_alerts.append({
-                "type": "low_ctr",
-                "campaign": campaign_name,
-                "ctr": ctr,
-                "message": f"CTR {ctr:.2f}% (bardzo niski)"
-            })
-        
-        # WARNING: Low ROAS
-        if roas > 0 and roas < 2.0:
-            warnings.append({
-                "type": "low_roas",
-                "campaign": campaign_name,
-                "roas": roas,
-                "message": f"ROAS {roas:.1f} (poniżej target 2.0)"
-            })
-        
-        # TOP PERFORMER: Good ROAS
-        if roas >= 3.5:
-            top_performers.append({
-                "campaign": campaign_name,
-                "roas": roas,
-                "spend": spend,
-                "conversions": conversions
-            })
-    
-    # Sort top performers by ROAS
-    top_performers.sort(key=lambda x: x.get("roas", 0), reverse=True)
-    
+        ctr = campaign.get("ctr", 0) or 0
+        cpc = campaign.get("cpc") or campaign.get("average_cpc", 0) or 0
+        spend = campaign.get("spend") or campaign.get("cost", 0) or 0
+        roas = campaign.get("purchase_roas", 0) or 0
+        frequency = campaign.get("frequency", 0) or 0
+        reach = campaign.get("reach", 0) or 0
+        impressions = campaign.get("impressions", 0) or 0
+
+        if goal == "engagement":
+            # === CEL: ENGAGEMENT / TRAFFIC ===
+            # Nie alarmuj o zerowych konwersjach ani niskim ROAS — nie to mierzymy
+
+            # CRITICAL: bardzo niski CTR (engagement powinien mieć CTR >0.8%)
+            if ctr < 0.8 and spend > 50:
+                critical_alerts.append({
+                    "type": "low_ctr",
+                    "campaign": campaign_name,
+                    "ctr": ctr,
+                    "message": f"CTR {ctr:.2f}% — bardzo niski dla kampanii engagement"
+                })
+
+            # WARNING: wysoka frequency (>4 = ad fatigue)
+            if frequency > 4:
+                warnings.append({
+                    "type": "high_frequency",
+                    "campaign": campaign_name,
+                    "frequency": frequency,
+                    "message": f"Frequency {frequency:.1f} — ryzyko ad fatigue (>4)"
+                })
+
+            # WARNING: frequency >2.5 (żółte ostrzeżenie wcześnie)
+            elif frequency > 2.5:
+                warnings.append({
+                    "type": "medium_frequency",
+                    "campaign": campaign_name,
+                    "frequency": frequency,
+                    "message": f"Frequency {frequency:.1f} — obserwuj (>2.5)"
+                })
+
+            # TOP PERFORMER: najlepszy CTR
+            if ctr >= 1.5 and spend > 20:
+                top_performers.append({
+                    "campaign": campaign_name,
+                    "ctr": ctr,
+                    "cpc": cpc,
+                    "spend": spend,
+                    "reach": reach,
+                    "impressions": impressions,
+                })
+
+        else:
+            # === CEL: CONVERSION / E-COMMERCE ===
+
+            # CRITICAL: Zero conversions przy dużym spendzie
+            if conversions == 0 and spend > 50:
+                critical_alerts.append({
+                    "type": "zero_conversions",
+                    "campaign": campaign_name,
+                    "spend": spend,
+                    "message": f"Zero conversions przy {spend:.2f} PLN wydatków"
+                })
+
+            # CRITICAL: Very low CTR
+            if ctr < 0.5 and spend > 50:
+                critical_alerts.append({
+                    "type": "low_ctr",
+                    "campaign": campaign_name,
+                    "ctr": ctr,
+                    "message": f"CTR {ctr:.2f}% (bardzo niski)"
+                })
+
+            # WARNING: Low ROAS
+            if roas > 0 and roas < 2.0:
+                warnings.append({
+                    "type": "low_roas",
+                    "campaign": campaign_name,
+                    "roas": roas,
+                    "message": f"ROAS {roas:.1f} (poniżej target 2.0)"
+                })
+
+            # TOP PERFORMER: Good ROAS
+            if roas >= 3.5:
+                top_performers.append({
+                    "campaign": campaign_name,
+                    "roas": roas,
+                    "spend": spend,
+                    "conversions": conversions
+                })
+
+    # Sort
+    if goal == "engagement":
+        top_performers.sort(key=lambda x: x.get("ctr", 0), reverse=True)
+    else:
+        top_performers.sort(key=lambda x: x.get("roas", 0), reverse=True)
+
     return {
         "critical_alerts": critical_alerts,
         "warnings": warnings,
-        "top_performers": top_performers[:3]  # Top 3
+        "top_performers": top_performers[:3],
+        "goal": goal,
     }
 
 
@@ -1633,6 +1683,20 @@ def _benchmark_flag(current, benchmark, higher_is_better=True):
 
 HISTORY_FILE = "/tmp/campaign_history.json"
 HISTORY_RETENTION_DAYS = 90
+
+# ============================================
+# CLIENT GOALS CONFIG
+# Definiuje cel każdego klienta — wpływa na to
+# jakie metryki są ważne i jakie alerty się pokazują
+# ============================================
+CLIENT_GOALS = {
+    # engagement/traffic — mierzy CTR, CPC, Reach, Frequency
+    # NIE mierzy konwersji sprzedażowych ani ROAS
+    "drzwi dre": "engagement",
+
+    # conversion — mierzy ROAS, konwersje, CPA (domyślne dla reszty klientów)
+    # "inny klient": "conversion",
+}
 
 
 def _load_history_raw():
@@ -2129,13 +2193,16 @@ def generate_daily_digest_dre():
         google_benchmarks = get_client_benchmarks("dre", "google", lookback_days=30)
 
         # === META ADS ===
+        # Cel klienta DRE: engagement (nie konwersje sprzedażowe)
+        client_goal = CLIENT_GOALS.get("drzwi dre", "conversion")
+
         meta_data = meta_ads_tool(
             client_name="drzwi dre",
             date_from=yesterday,
             date_to=today,
             level="campaign",
             metrics=["campaign_name", "spend", "impressions", "clicks", "ctr", "cpc",
-                    "conversions", "purchase_roas", "frequency"]
+                    "reach", "frequency", "conversions", "purchase_roas"]
         )
 
         # === GOOGLE ADS ===
@@ -2209,21 +2276,29 @@ def generate_daily_digest_dre():
                     "platform": "google",
                 })
 
-        # Analizuj trendy
-        analysis = analyze_campaign_trends(all_campaigns)
+        # Analizuj trendy (z uwzględnieniem celu klienta)
+        analysis = analyze_campaign_trends(all_campaigns, goal=client_goal)
 
         # Oblicz totals
         total_spend = sum(c.get("spend", 0) or c.get("cost", 0) for c in all_campaigns)
-        total_conversions = sum(c.get("conversions", 0) for c in all_campaigns)
         total_clicks = sum(c.get("clicks", 0) for c in all_campaigns)
+        total_impressions = sum(c.get("impressions", 0) for c in all_campaigns)
+        total_reach = sum(c.get("reach", 0) for c in all_campaigns)
 
         # Zbuduj digest
         skipped_note = f" _(+ {skipped_count} kampanii z <20 PLN pominięto)_" if skipped_count > 0 else ""
+
+        if client_goal == "engagement":
+            goal_line = f"👁️ **Impressions:** {total_impressions:,}\n👥 **Reach:** {total_reach:,}"
+        else:
+            total_conversions = sum(c.get("conversions", 0) for c in all_campaigns)
+            goal_line = f"🎯 **Conversions:** {total_conversions}"
+
         digest = f"""🌅 **DRE - Daily Digest** ({yesterday})
 
 💰 **WCZORAJ:** {total_spend:.2f} PLN
 📊 **Aktywnych kampanii:** {len(all_campaigns)}{skipped_note}
-🎯 **Conversions:** {total_conversions}
+{goal_line}
 👆 **Clicks:** {total_clicks:,}
 
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -2239,18 +2314,33 @@ def generate_daily_digest_dre():
                 cpc = c.get("cpc")
                 roas = c.get("purchase_roas")
                 freq = c.get("frequency")
+                reach = c.get("reach", 0)
+                impressions = c.get("impressions", 0)
                 convs = c.get("conversions", 0)
 
-                digest += f"**{name}**  💰 {spend:.2f} PLN | 🎯 {convs} conv\n"
+                if client_goal == "engagement":
+                    # Engagement: pokaż reach/impressions zamiast konwersji
+                    digest += f"**{name}**  💰 {spend:.2f} PLN | 👥 {reach:,} reach\n"
+                else:
+                    digest += f"**{name}**  💰 {spend:.2f} PLN | 🎯 {convs} conv\n"
 
                 if ctr is not None:
                     digest += f"  - CTR: {ctr:.2f}%{_benchmark_flag(ctr, meta_benchmarks.get('avg_ctr'), higher_is_better=True)}\n"
                 if cpc is not None:
                     digest += f"  - CPC: {cpc:.2f} PLN{_benchmark_flag(cpc, meta_benchmarks.get('avg_cpc'), higher_is_better=False)}\n"
-                if roas is not None:
-                    digest += f"  - ROAS: {roas:.2f}x{_benchmark_flag(roas, meta_benchmarks.get('avg_roas'), higher_is_better=True)}\n"
-                if freq is not None:
-                    digest += f"  - Freq: {freq:.1f}{_benchmark_flag(freq, meta_benchmarks.get('avg_frequency'), higher_is_better=False)}\n"
+                if client_goal == "engagement":
+                    # Engagement: pokaż impressions i frequency zamiast ROAS
+                    if impressions:
+                        digest += f"  - Impressions: {impressions:,}\n"
+                    if freq is not None:
+                        freq_warn = " ⚠️ ad fatigue!" if freq > 4 else (" 👀 obserwuj" if freq > 2.5 else "")
+                        digest += f"  - Frequency: {freq:.1f}{freq_warn}{_benchmark_flag(freq, meta_benchmarks.get('avg_frequency'), higher_is_better=False)}\n"
+                else:
+                    # Conversion: pokaż ROAS i frequency
+                    if roas is not None:
+                        digest += f"  - ROAS: {roas:.2f}x{_benchmark_flag(roas, meta_benchmarks.get('avg_roas'), higher_is_better=True)}\n"
+                    if freq is not None:
+                        digest += f"  - Freq: {freq:.1f}{_benchmark_flag(freq, meta_benchmarks.get('avg_frequency'), higher_is_better=False)}\n"
                 digest += "\n"
             digest += "━━━━━━━━━━━━━━━━━━━━━━\n"
 
@@ -2263,8 +2353,12 @@ def generate_daily_digest_dre():
                 ctr = c.get("ctr")
                 cpc = c.get("cpc")
                 convs = c.get("conversions", 0)
+                clicks = c.get("clicks", 0)
 
-                digest += f"**{name}**  💰 {spend:.2f} PLN | 🎯 {convs} conv\n"
+                if client_goal == "engagement":
+                    digest += f"**{name}**  💰 {spend:.2f} PLN | 👆 {clicks:,} clicks\n"
+                else:
+                    digest += f"**{name}**  💰 {spend:.2f} PLN | 🎯 {convs} conv\n"
 
                 if ctr is not None:
                     digest += f"  - CTR: {ctr:.2f}%{_benchmark_flag(ctr, google_benchmarks.get('avg_ctr'), higher_is_better=True)}\n"
@@ -2312,7 +2406,13 @@ def generate_daily_digest_dre():
             digest += "\n🟢 **TOP PERFORMERS:**\n\n"
             for i, top in enumerate(analysis["top_performers"], 1):
                 digest += f"{i}. **{top['campaign']}**\n"
-                digest += f"   ROAS {top['roas']:.1f} | {top['conversions']} conversions | {top['spend']:.2f} PLN\n"
+                if client_goal == "engagement":
+                    ctr_val = top.get('ctr', 0)
+                    cpc_val = top.get('cpc', 0)
+                    reach_val = top.get('reach', 0)
+                    digest += f"   CTR {ctr_val:.2f}% | CPC {cpc_val:.2f} PLN | 👥 {reach_val:,} reach\n"
+                else:
+                    digest += f"   ROAS {top['roas']:.1f} | {top['conversions']} conversions | {top['spend']:.2f} PLN\n"
             digest += "\n"
 
         # Footer
