@@ -3509,57 +3509,40 @@ def handle_employee_dm(user_id, user_name, user_message, say):
     today_weekday = datetime.now().strftime('%A')
     current_year = datetime.now().year
 
-    prompt = f"""Jesteś asystentem agencji marketingowej Pato. Pracownik {user_name} napisał do Ciebie na Slack DM.
+    prompt = f"""Przetwórz wiadomość od pracownika agencji marketingowej.
 
-Dzisiaj: {today_str} ({today_weekday}), rok {current_year}
+NADAWCA: {user_name}
+WIADOMOŚĆ: "{user_message}"
+DZIŚ: {today_str} ({today_weekday}), rok {current_year}
 
-Wiadomość: "{user_message}"
+═══ KROK 1: KTO JEST NIEOBECNY? ═══
+Przeczytaj wiadomość. Czy nieobecność dotyczy {user_name} (piszącego), czy INNEJ osoby?
 
-Zdecyduj co to jest. Możliwe typy:
+Przykłady (nadawca = "Daniel"):
+  "Paulina wyjezdza 1-8 marca"           → absent_person: "Paulina"
+  "Piotrek nie bedzie w piatek"           → absent_person: "Piotr"
+  "Kasia ma urlop w przyszlym tygodniu"   → absent_person: "Kasia"
+  "jutro mnie nie bedzie"                 → absent_person: null
+  "mam wyjazd 5-10 marca"                → absent_person: null
+  "biorę urlop w maju"                    → absent_person: null
 
-"absence" — ktoś informuje o niedostępności (swojej lub innej osoby).
-  Przykłady własne: "jutro mnie nie będzie", "mam wyjazd 5-20 marca", "w piątek tylko rano",
-  "jestem chory", "biorę urlop", "jadę na delegację", "home office w środę".
-  Przykłady o kimś innym: "Piotrek jedzie do Nowej Zelandii od 10 marca", "Kasia będzie na urlopie w przyszłym tygodniu",
-  "Marek nie przyjdzie w piątek", "Marta ma wyjazd 5-23 marca".
-  NIE jest to nieobecność: "czy mogę iść na obiad", "mogę wziąć dziś wolne?" (prośba, nie informacja).
+Zasada: jeśli podmiotem zdania jest inne imię niż {user_name} → wpisz to imię. Jeśli {user_name} mówi o sobie → null.
 
-"request" — prośba do szefa o zgodę lub działanie których bot sam nie załatwi.
-  Przykłady: "czy mogę wziąć urlop w maju", "potrzebuję nowego monitora",
-  "chciałbym porozmawiać o podwyżce", "mam problem z dostępem do systemu",
-  "możemy się umówić na rozmowę?", "potrzebuję faktury za marzec".
-  Uwaga: "czy mogę iść na kupę/obiad/kawę" = NIE jest to prośba do szefa, to żart/casual.
+═══ KROK 2: TYP WIADOMOŚCI ═══
+"absence" — informacja o niedostępności (swojej lub kogoś innego).
+"request" — prośba do szefa wymagająca decyzji/działania.
+  Uwaga: żarty i casual ("czy mogę iść na kawę") = NIE request, to chat.
+"chat" — wszystko inne.
 
-"chat" — wszystko inne: pytania do bota, żarty, rozmowa, krótkie odpowiedzi.
-
-Dla "absence" — wyciągnij daty i typy:
+═══ KROK 3: DLA "absence" — daty ═══
 Typy: absent / morning_only / afternoon_only / late_start / early_end / remote / partial
-Formaty dat: jutro, pojutrze, "w piątek", "5 marca", "05.03", "05.03.25",
-  zakresy: "05.03-23.03", "5-23 marca", "od 5 do 23 marca" → wygeneruj KAŻDY dzień roboczy (pomiń sob/niedz).
-  Rok domyślny gdy brak: {current_year}.
-
-KROK 1 — KTO JEST NIEOBECNY?
-Piszący to: "{user_name}"
-Przeczytaj wiadomość i zdecyduj: czy nieobecność dotyczy {user_name}, czy INNEJ osoby?
-
-Jeśli w wiadomości pojawia się INNE imię jako podmiot, lub nadawca mówi o kimś innym w 3. osobie:
-  → about_someone_else: true, absent_person_name: "to imię"
-
-Jeśli wiadomość jest o samym {user_name} (zaimki: mnie/mój/jadę/jestem/biorę itp.):
-  → about_someone_else: false, absent_person_name: null
-
-KONKRETNE PRZYKŁADY (nadawca = "Daniel"):
-  "Piotr wyjezdza do zelandi 1 marca do 15 wez to zapisz" → about_someone_else: true, absent_person_name: "Piotr"
-  "Kasia bedzie na urlopie w przyszlym tygodniu" → about_someone_else: true, absent_person_name: "Kasia"
-  "Marek nie przyjdzie w piatek zapisz to" → about_someone_else: true, absent_person_name: "Marek"
-  "jutro mnie nie bedzie" → about_someone_else: false, absent_person_name: null
-  "mam wyjazd 5-10 marca" → about_someone_else: false, absent_person_name: null
+Formaty dat: jutro, pojutrze, "w piątek", "5 marca", zakresy "5-23 marca" → KAŻDY dzień roboczy (pomiń sob/niedz).
+Rok domyślny: {current_year}.
 
 Odpowiedz TYLKO JSON:
 {{
+  "absent_person": <"Imie" jeśli inna osoba, null jeśli sam nadawca>,
   "type": "absence" | "request" | "chat",
-  "about_someone_else": <WYMAGANE: true jeśli inna osoba, false jeśli sam piszący>,
-  "absent_person_name": <WYMAGANE: "Imie" jeśli about_someone_else=true, null jeśli false>,
   "absence_has_dates": true/false,
   "absence_entries": [{{"date": "YYYY-MM-DD", "type": "absent", "details": "opis pl"}}],
   "request_category": "urlop|zakup|dostep|spotkanie|problem|pytanie|inne",
@@ -3579,40 +3562,32 @@ Odpowiedz TYLKO JSON:
             return False
         data = json.loads(m.group())
         msg_type = data.get("type", "chat")
-        logger.info(f"🤖 DM classify [{user_name}]: type={msg_type} about_someone_else={data.get('about_someone_else')} absent_person={data.get('absent_person_name')}")
+        absent_person = (data.get("absent_person") or "").strip() or None
+        logger.info(f"🤖 DM classify [{user_name}]: type={msg_type} absent_person={absent_person!r}")
 
         # ── NIEOBECNOŚĆ ──
         if msg_type == "absence":
-            # Wykryj czy chodzi o kogoś innego
-            about_someone_else = data.get("about_someone_else", False)
-            absent_person_name = data.get("absent_person_name") or None
-
-            # Ustal kto jest nieobecny
-            if about_someone_else and absent_person_name:
-                # Daniel zgłasza nieobecność Piotrka itp.
-                absent_name = absent_person_name.strip()
-                absent_uid = f"reported_{absent_name.lower()}"  # placeholder — nie mamy real user_id
+            # Ustal kto jest nieobecny: Claude podał imię → inna osoba, null → sam nadawca
+            if absent_person:
+                absent_name = absent_person
+                absent_uid = f"reported_{absent_name.lower()}"
                 reporter_suffix = f" _(zgłoszone przez {user_name})_"
                 confirm_msg_prefix = f"✅ Zapisałem nieobecność *{absent_name}*!"
+                no_date_msg = f"📅 Rozumiem, że *{absent_name}* będzie niedostępny/a — kiedy dokładnie? Podaj termin to od razu zapiszę. 👍"
             else:
                 absent_name = user_name
                 absent_uid = user_id
                 reporter_suffix = ""
                 confirm_msg_prefix = "✅ Zapisałem!"
+                no_date_msg = "📅 Rozumiem, że będziesz niedostępny/a — kiedy dokładnie? Podaj termin (np. *'5-23 marca'* albo *'jutro'*) to od razu zapiszę. 👍"
 
             if not data.get("absence_has_dates", True):
-                if about_someone_else and absent_person_name:
-                    say(f"📅 Rozumiem, że *{absent_person_name}* będzie niedostępny/a — kiedy dokładnie? Podaj termin to od razu zapiszę. 👍")
-                else:
-                    say("📅 Rozumiem, że będziesz niedostępny/a — kiedy dokładnie? Podaj termin (np. *'5-23 marca'* albo *'jutro'*) to od razu zapiszę. 👍")
+                say(no_date_msg)
                 return True
 
             entries = data.get("absence_entries", [])
             if not entries:
-                if about_someone_else and absent_person_name:
-                    say(f"📅 Rozumiem, że *{absent_person_name}* będzie niedostępny/a — kiedy dokładnie? Podaj termin to od razu zapiszę. 👍")
-                else:
-                    say("📅 Rozumiem, że będziesz niedostępny/a — kiedy dokładnie? Podaj termin to od razu zapiszę. 👍")
+                say(no_date_msg)
                 return True
 
             saved_dates = save_availability_entry(absent_uid, absent_name, entries)
