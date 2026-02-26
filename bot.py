@@ -968,6 +968,22 @@ def handle_mention(event, say):
     user_message = event['text']
     user_message = ' '.join(user_message.split()[1:])  # Usuń wzmianke bota
 
+    # === AVAILABILITY QUERY: "kto jutro?" / "dostępność" ===
+    msg_lower_m = user_message.lower()
+    if any(t in msg_lower_m for t in ["kto jutro", "kto nie będzie", "kto nie bedzie",
+                                       "dostępność", "dostepnosc", "nieobecności", "nieobecnosci",
+                                       "kto jest jutro", "availability"]):
+        # Rozpoznaj datę: jutro / pojutrze / konkretny dzień
+        if "pojutrze" in msg_lower_m:
+            target = _next_workday(_next_workday())
+        else:
+            target = _next_workday()
+        target_str = target.strftime('%Y-%m-%d')
+        target_label = target.strftime('%A %d.%m.%Y')
+        entries = get_availability_for_date(target_str)
+        say(_format_availability_summary(entries, target_label))
+        return
+
     # Email trigger - wyniki zawsze na DM, nie w kanale
     if any(t in user_message.lower() for t in ["test email", "email test", "email summary"]):
         say("📧 Uruchamiam Email Summary... wyślę Ci to na DM.")
@@ -1373,6 +1389,18 @@ def handle_message_events(body, say, logger):
                 say(generate_daily_digest_dre())
             else:
                 say("Dla którego klienta? Dostępne: `dre` (wpisz np. `digest test dre`)")
+            return
+
+    # === AVAILABILITY: pracownik pisze o nieobecności (tylko DM) ===
+    if event.get("channel_type") == "im" and user_id != "UTE1RN6SJ":
+        try:
+            user_info = app.client.users_info(user=user_id)
+            user_name = (user_info["user"].get("real_name")
+                         or user_info["user"].get("profile", {}).get("display_name")
+                         or user_info["user"].get("name", user_id))
+        except Exception:
+            user_name = user_id
+        if handle_availability_dm(user_id, user_name, user_message, say):
             return
 
     # Email summary - trigger działa wszędzie, wyniki zawsze idą na DM
@@ -3133,6 +3161,198 @@ def send_weekly_reports():
 
 
 # ============================================
+# TEAM AVAILABILITY SYSTEM
+# Pracownicy piszą do Sebola o nieobecnościach,
+# Sebol zapisuje i codziennie o 17:00 informuje Daniela
+# ============================================
+
+AVAILABILITY_FILE = "/tmp/team_availability.json"
+
+# Szybki pre-filtr (słowa kluczowe PL) zanim wywołamy Claude
+ABSENCE_KEYWORDS = [
+    "nie będzie", "nie bedzie", "nie ma mnie", "nie będę", "nie bede",
+    "urlop", "wolne", "nieobecn", "będę tylko", "bede tylko",
+    "będę od", "bede od", "będę do", "bede do",
+    "wychodzę wcześniej", "wychodze wczesniej", "wcześniej wychodzę",
+    "zdalnie", "home office", "homeoffice", "choruję", "choruje", "l4",
+    "nie przyjdę", "nie przyjde", "spóźnię się", "spoznie sie",
+    "przyjdę później", "przyjde pozniej", "późniejszy start",
+    "tylko rano", "tylko po południu", "tylko popoludniu",
+]
+
+def _load_availability():
+    """Wczytaj nieobecności z pliku JSON."""
+    try:
+        if os.path.exists(AVAILABILITY_FILE):
+            with open(AVAILABILITY_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return []
+
+def _save_availability(entries):
+    """Zapisz nieobecności do pliku JSON, czyść starsze niż 60 dni."""
+    try:
+        cutoff = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')
+        entries = [e for e in entries if e.get("date", "2000-01-01") >= cutoff]
+        with open(AVAILABILITY_FILE, "w", encoding="utf-8") as f:
+            json.dump(entries, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"❌ Błąd zapisu availability: {e}")
+
+def _parse_availability_with_claude(user_message, user_name):
+    """
+    Użyj Claude do sparsowania wiadomości o nieobecności.
+    Zwraca listę {date, type, details} lub None.
+    """
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    today_weekday = datetime.now().strftime('%A')
+
+    prompt = f"""Analizujesz wiadomość od pracownika polskiej agencji o jego dostępności.
+
+Dzisiaj: {today_str} ({today_weekday})
+Wiadomość od {user_name}: "{user_message}"
+
+Jeśli to wiadomość o nieobecności lub ograniczonej dostępności, wyciągnij info.
+Typy nieobecności:
+- "absent" = cały dzień nieobecny/a
+- "morning_only" = tylko rano (do ~12:00)
+- "afternoon_only" = tylko po południu (od ~12:00)
+- "late_start" = późniejszy start (np. od 10-11:00)
+- "early_end" = wcześniejsze wyjście
+- "remote" = praca zdalna (dostępny/a, inna lokalizacja)
+- "partial" = częściowo dostępny/a
+
+Daty: "jutro"=następny dzień, "pojutrze"=za 2 dni, "w piątek"=ten tydzień itp.
+Może być wiele dat (np. "wtorek i środa").
+
+Odpowiedz TYLKO JSON:
+{{
+  "is_availability": true/false,
+  "entries": [
+    {{"date": "YYYY-MM-DD", "type": "absent", "details": "opis po polsku, np. urlop"}}
+  ]
+}}
+Jeśli to nie wiadomość o dostępności: {{"is_availability": false, "entries": []}}"""
+
+    try:
+        resp = anthropic.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = resp.content[0].text.strip()
+        import re as _re
+        m = _re.search(r'\{.*\}', raw, _re.DOTALL)
+        if m:
+            data = json.loads(m.group())
+            if data.get("is_availability") and data.get("entries"):
+                return data["entries"]
+    except Exception as e:
+        logger.error(f"❌ Błąd parsowania availability: {e}")
+    return None
+
+def save_availability_entry(user_id, user_name, entries):
+    """Zapisuje wpisy nieobecności (nadpisuje jeśli już był wpis na ten dzień)."""
+    all_entries = _load_availability()
+    saved_dates = []
+    for entry in entries:
+        # Usuń poprzedni wpis tego usera na ten sam dzień
+        all_entries = [e for e in all_entries
+                       if not (e["user_id"] == user_id and e["date"] == entry["date"])]
+        all_entries.append({
+            "user_id": user_id,
+            "user_name": user_name,
+            "date": entry["date"],
+            "type": entry["type"],
+            "details": entry.get("details", ""),
+            "recorded_at": datetime.now().isoformat(),
+        })
+        saved_dates.append(entry["date"])
+    _save_availability(all_entries)
+    return saved_dates
+
+def get_availability_for_date(target_date):
+    """Zwraca listę nieobecności na dany dzień."""
+    return [e for e in _load_availability() if e.get("date") == target_date]
+
+def _next_workday(from_date=None):
+    """Zwraca następny dzień roboczy (pomiń weekend)."""
+    d = from_date or datetime.now()
+    d = d + timedelta(days=1)
+    while d.weekday() >= 5:  # sob=5, nie=6
+        d = d + timedelta(days=1)
+    return d
+
+def _format_availability_summary(entries, date_label):
+    """Formatuje czytelne podsumowanie dla Daniela."""
+    TYPE_LABELS = {
+        "absent":           "❌ Nieobecna/y cały dzień",
+        "morning_only":     "🌅 Tylko rano",
+        "afternoon_only":   "🌆 Tylko po południu",
+        "late_start":       "🕙 Późniejszy start",
+        "early_end":        "🏃 Wcześniejsze wyjście",
+        "remote":           "🏠 Praca zdalna",
+        "partial":          "⏰ Częściowo dostępna/y",
+    }
+    if not entries:
+        return f"✅ *{date_label}* — wszyscy w biurze, żadnych nieobecności 🎉"
+
+    msg = f"📅 *Dostępność teamu — {date_label}:*\n\n"
+    for e in entries:
+        type_label = TYPE_LABELS.get(e["type"], "⚠️ Ograniczona dostępność")
+        msg += f"• *{e['user_name']}* — {type_label}\n"
+        if e.get("details"):
+            msg += f"  _{e['details']}_\n"
+    return msg
+
+def send_daily_team_availability():
+    """Wysyła Danielowi o 17:00 podsumowanie dostępności na następny dzień roboczy."""
+    try:
+        tomorrow = _next_workday()
+        tomorrow_str = tomorrow.strftime('%Y-%m-%d')
+        tomorrow_label = tomorrow.strftime('%A %d.%m.%Y')
+
+        entries = get_availability_for_date(tomorrow_str)
+        msg = _format_availability_summary(entries, tomorrow_label)
+
+        app.client.chat_postMessage(channel="UTE1RN6SJ", text=msg)
+        logger.info(f"✅ Team availability wysłane do Daniela ({tomorrow_str})")
+    except Exception as e:
+        logger.error(f"❌ Błąd send_daily_team_availability: {e}")
+
+def handle_availability_dm(user_id, user_name, user_message, say):
+    """
+    Obsługuje wiadomość o nieobecności od pracownika.
+    Zwraca True jeśli wiadomość była o dostępności (i została obsłużona).
+    """
+    # Szybki pre-filtr — czy w ogóle wygląda jak wiadomość o nieobecności?
+    msg_lower = user_message.lower()
+    if not any(kw in msg_lower for kw in ABSENCE_KEYWORDS):
+        return False
+
+    # Sparsuj przez Claude
+    entries = _parse_availability_with_claude(user_message, user_name)
+    if not entries:
+        return False
+
+    # Zapisz
+    saved_dates = save_availability_entry(user_id, user_name, entries)
+
+    # Potwierdź pracownikowi
+    if len(saved_dates) == 1:
+        date_obj = datetime.strptime(saved_dates[0], '%Y-%m-%d')
+        date_fmt = date_obj.strftime('%A %d.%m')
+        say(f"✅ Zapisałem! *{date_fmt}* — poinformuję Daniela dziś o 17:00. 👍")
+    else:
+        dates_fmt = ", ".join(datetime.strptime(d, '%Y-%m-%d').strftime('%d.%m') for d in saved_dates)
+        say(f"✅ Zapisałem nieobecności: *{dates_fmt}* — Daniel dostanie info o 17:00. 👍")
+
+    logger.info(f"📅 Availability zapisana: {user_name} ({user_id}) → {saved_dates}")
+    return True
+
+
+# ============================================
 # DAILY EMAIL SUMMARY → Slack DM
 # ============================================
 
@@ -3358,6 +3578,8 @@ scheduler.add_job(send_budget_alerts_dre, 'cron', hour='9,11,13,15,17,19', minut
 scheduler.add_job(weekly_report_dre, 'cron', day_of_week='fri', hour=16, minute=0, id='weekly_reports')
 scheduler.add_job(weekly_learnings_dre, 'cron', day_of_week='mon,thu', hour=8, minute=30, id='weekly_learnings')
 scheduler.add_job(daily_email_summary_slack, 'cron', hour=16, minute=0, id='daily_email_summary')
+# Team availability: podsumowanie jutrzejszej dostępności, pn-pt o 17:00
+scheduler.add_job(send_daily_team_availability, 'cron', day_of_week='mon-fri', hour=17, minute=0, id='team_availability')
 scheduler.start()
 
 print(f"✅ Scheduler załadowany! Jobs: {len(scheduler.get_jobs())}")
