@@ -1526,118 +1526,85 @@ def check_conversion_history(client_name, platform, campaign_name, lookback_days
 
 def analyze_campaign_trends(campaigns_data, lookback_days=7, goal="conversion"):
     """
-    Analizuje trendy kampanii i wykrywa anomalie.
-    goal: "conversion" (e-commerce, ROAS/konwersje) lub "engagement" (traffic, CTR/reach)
-    Returns: dict z critical alerts, warnings, i top performers
+    Claude analizuje kampanie holistycznie i decyduje co jest krytyczne, co wymaga uwagi,
+    co jest top performerem. Zero hardcoded progów.
+    goal: "conversion" lub "engagement" — kontekst dla Claude
+    Returns: dict z critical_alerts, warnings, top_performers (backward compat)
     """
-    critical_alerts = []
-    warnings = []
-    top_performers = []
+    if not campaigns_data:
+        return {"critical_alerts": [], "warnings": [], "top_performers": [], "goal": goal}
 
-    for campaign in campaigns_data:
-        campaign_name = campaign.get("campaign_name") or campaign.get("name", "Unknown")
-        conversions = campaign.get("conversions", 0)
-        ctr = campaign.get("ctr", 0) or 0
-        cpc = campaign.get("cpc") or campaign.get("average_cpc", 0) or 0
-        spend = campaign.get("spend") or campaign.get("cost", 0) or 0
-        roas = campaign.get("purchase_roas", 0) or 0
-        frequency = campaign.get("frequency", 0) or 0
-        reach = campaign.get("reach", 0) or 0
-        impressions = campaign.get("impressions", 0) or 0
+    # Przygotuj dane dla Claude — czytelna lista kampanii
+    campaigns_txt = ""
+    for c in campaigns_data:
+        name = c.get("campaign_name") or c.get("name", "?")
+        spend = c.get("spend") or c.get("cost", 0) or 0
+        ctr = c.get("ctr", 0) or 0
+        cpc = c.get("cpc") or c.get("average_cpc", 0) or 0
+        roas = c.get("purchase_roas", 0) or 0
+        convs = c.get("conversions", 0) or 0
+        freq = c.get("frequency", 0) or 0
+        reach = c.get("reach", 0) or 0
+        impressions = c.get("impressions", 0) or 0
+        clicks = c.get("clicks", 0) or 0
 
-        if goal == "engagement":
-            # === CEL: ENGAGEMENT / TRAFFIC ===
-            # Nie alarmuj o zerowych konwersjach ani niskim ROAS — nie to mierzymy
+        campaigns_txt += f"- {name}: spend={spend:.0f}PLN ctr={ctr:.2f}% cpc={cpc:.2f}PLN"
+        if goal == "conversion":
+            campaigns_txt += f" roas={roas:.2f} conv={convs}"
+        campaigns_txt += f" freq={freq:.1f} reach={reach:,} impr={impressions:,} clicks={clicks:,}\n"
 
-            # CRITICAL: bardzo niski CTR (engagement powinien mieć CTR >0.8%)
-            if ctr < 0.8 and spend > 50:
-                critical_alerts.append({
-                    "type": "low_ctr",
-                    "campaign": campaign_name,
-                    "ctr": ctr,
-                    "message": f"CTR {ctr:.2f}% — bardzo niski dla kampanii engagement"
-                })
+    goal_context = (
+        "Klient robi kampanie ENGAGEMENT/TRAFFIC (nie e-commerce). Ważne metryki: CTR, CPC, reach, frequency. "
+        "NIE oceniaj konwersji ani ROAS — to nie jest cel tych kampanii."
+        if goal == "engagement" else
+        "Klient robi kampanie CONVERSION/E-COMMERCE. Ważne metryki: ROAS, konwersje, CPA, CTR."
+    )
 
-            # WARNING: wysoka frequency (>4 = ad fatigue)
-            if frequency > 4:
-                warnings.append({
-                    "type": "high_frequency",
-                    "campaign": campaign_name,
-                    "frequency": frequency,
-                    "message": f"Frequency {frequency:.1f} — ryzyko ad fatigue (>4)"
-                })
+    prompt = f"""Jesteś senior performance marketerem analizującym wyniki kampanii z wczoraj.
 
-            # WARNING: frequency >2.5 (żółte ostrzeżenie wcześnie)
-            elif frequency > 2.5:
-                warnings.append({
-                    "type": "medium_frequency",
-                    "campaign": campaign_name,
-                    "frequency": frequency,
-                    "message": f"Frequency {frequency:.1f} — obserwuj (>2.5)"
-                })
+Kontekst klienta: {goal_context}
 
-            # TOP PERFORMER: najlepszy CTR
-            if ctr >= 1.5 and spend > 20:
-                top_performers.append({
-                    "campaign": campaign_name,
-                    "ctr": ctr,
-                    "cpc": cpc,
-                    "spend": spend,
-                    "reach": reach,
-                    "impressions": impressions,
-                })
+Dane kampanii (tylko te z min. 20 PLN spend):
+{campaigns_txt}
 
-        else:
-            # === CEL: CONVERSION / E-COMMERCE ===
+Przeanalizuj CAŁOŚCIOWO. Nie stosuj sztywnych progów — oceniaj w kontekście:
+- czy coś jest podejrzanie złe względem innych kampanii?
+- czy coś wymaga działania TERAZ?
+- co działa świetnie?
 
-            # CRITICAL: Zero conversions przy dużym spendzie
-            if conversions == 0 and spend > 50:
-                critical_alerts.append({
-                    "type": "zero_conversions",
-                    "campaign": campaign_name,
-                    "spend": spend,
-                    "message": f"Zero conversions przy {spend:.2f} PLN wydatków"
-                })
+Zwróć TYLKO JSON (bez komentarzy):
+{{
+  "critical_alerts": [
+    {{"campaign": "nazwa", "message": "konkretny problem z liczbami", "action": "co zrobić — 1 konkretne zdanie"}}
+  ],
+  "warnings": [
+    {{"campaign": "nazwa", "message": "co warto sprawdzić i dlaczego"}}
+  ],
+  "top_performers": [
+    {{"campaign": "nazwa", "metrics_line": "kluczowe metryki w 1 linii, np. CTR 2.4% | CPC 1.80 PLN | 8k reach"}}
+  ]
+}}
 
-            # CRITICAL: Very low CTR
-            if ctr < 0.5 and spend > 50:
-                critical_alerts.append({
-                    "type": "low_ctr",
-                    "campaign": campaign_name,
-                    "ctr": ctr,
-                    "message": f"CTR {ctr:.2f}% (bardzo niski)"
-                })
+Max: 3 critical, 3 warnings, 3 top performers. Jeśli wszystko OK — puste listy. Bądź konkretny, nie ogólnikowy.
+"""
 
-            # WARNING: Low ROAS
-            if roas > 0 and roas < 2.0:
-                warnings.append({
-                    "type": "low_roas",
-                    "campaign": campaign_name,
-                    "roas": roas,
-                    "message": f"ROAS {roas:.1f} (poniżej target 2.0)"
-                })
-
-            # TOP PERFORMER: Good ROAS
-            if roas >= 3.5:
-                top_performers.append({
-                    "campaign": campaign_name,
-                    "roas": roas,
-                    "spend": spend,
-                    "conversions": conversions
-                })
-
-    # Sort
-    if goal == "engagement":
-        top_performers.sort(key=lambda x: x.get("ctr", 0), reverse=True)
-    else:
-        top_performers.sort(key=lambda x: x.get("roas", 0), reverse=True)
-
-    return {
-        "critical_alerts": critical_alerts,
-        "warnings": warnings,
-        "top_performers": top_performers[:3],
-        "goal": goal,
-    }
+    try:
+        resp = anthropic.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=800,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = resp.content[0].text.strip()
+        import re as _re
+        m = _re.search(r'\{.*\}', raw, _re.DOTALL)
+        if not m:
+            return {"critical_alerts": [], "warnings": [], "top_performers": [], "goal": goal}
+        data = json.loads(m.group())
+        data["goal"] = goal
+        return data
+    except Exception as e:
+        logger.error(f"❌ Błąd analyze_campaign_trends (Claude): {e}")
+        return {"critical_alerts": [], "warnings": [], "top_performers": [], "goal": goal}
 
 
 def get_client_benchmarks(client_name, platform, lookback_days=30):
@@ -2432,52 +2399,27 @@ def generate_daily_digest_dre():
         # CRITICAL ALERTS
         if analysis["critical_alerts"]:
             digest += "\n🔴 **CRITICAL - WYMAGA AKCJI:**\n\n"
-            for alert in analysis["critical_alerts"][:3]:  # Top 3
-                campaign = alert["campaign"]
-
-                # Sprawdź historię jeśli zero conversions
-                if alert["type"] == "zero_conversions":
-                    history = check_conversion_history("dre", "google", campaign)
-
-                    if history["had_conversions"]:
-                        digest += f"**{campaign}**\n"
-                        digest += f"⚠️ Zero conversions (miała {history['total']} w ostatnich 30 dni)\n"
-                        digest += f"💰 Spend: {alert['spend']:.2f} PLN\n"
-                        digest += f"💡 **AKCJA:** Sprawdź tracking/landing page!\n\n"
-                    else:
-                        digest += f"**{campaign}**\n"
-                        digest += f"🟡 Zero conversions (ta kampania nie generuje conversions)\n"
-                        digest += f"💡 Rozważ pause lub zmianę celu\n\n"
-
-                elif alert["type"] == "low_ctr":
-                    digest += f"**{campaign}**\n"
-                    digest += f"📉 {alert['message']}\n"
-                    digest += f"💡 **AKCJA:** Wymień kreacje (ad fatigue)\n\n"
-
+            for alert in analysis["critical_alerts"]:
+                digest += f"**{alert['campaign']}**\n"
+                digest += f"⚠️ {alert['message']}\n"
+                if alert.get("action"):
+                    digest += f"💡 {alert['action']}\n"
+                digest += "\n"
             digest += "━━━━━━━━━━━━━━━━━━━━━━\n"
 
-        # WARNINGS
         if analysis["warnings"]:
             digest += "\n🟡 **DO OBEJRZENIA:**\n\n"
-            for warning in analysis["warnings"][:2]:  # Top 2
-                digest += f"• **{warning['campaign']}** - {warning['message']}\n"
+            for w in analysis["warnings"]:
+                digest += f"• **{w['campaign']}** — {w['message']}\n"
             digest += "\n━━━━━━━━━━━━━━━━━━━━━━\n"
 
-        # TOP PERFORMERS
         if analysis["top_performers"]:
             digest += "\n🟢 **TOP PERFORMERS:**\n\n"
             for i, top in enumerate(analysis["top_performers"], 1):
                 digest += f"{i}. **{top['campaign']}**\n"
-                if client_goal == "engagement":
-                    ctr_val = top.get('ctr', 0)
-                    cpc_val = top.get('cpc', 0)
-                    reach_val = top.get('reach', 0)
-                    digest += f"   CTR {ctr_val:.2f}% | CPC {cpc_val:.2f} PLN | 👥 {reach_val:,} reach\n"
-                else:
-                    digest += f"   ROAS {top['roas']:.1f} | {top['conversions']} conversions | {top['spend']:.2f} PLN\n"
+                digest += f"   {top.get('metrics_line', '')}\n"
             digest += "\n"
 
-        # Footer
         if not analysis["critical_alerts"] and not analysis["warnings"]:
             digest += "\n✅ **Wszystko OK!** Żadnych critical issues.\n"
 
@@ -2759,16 +2701,19 @@ def format_weekly_summary(client_name, data, period):
     if analysis["critical_alerts"]:
         report += "\n🔴 *WYMAGA UWAGI:*\n"
         for alert in analysis["critical_alerts"][:3]:
-            report += f"• {alert['campaign']}: {alert['message']}\n"
+            report += f"• **{alert['campaign']}**: {alert['message']}\n"
+            if alert.get("action"):
+                report += f"  💡 {alert['action']}\n"
 
     if analysis["top_performers"]:
-        top_p = analysis["top_performers"][0]
-        report += f"\n🔥 *TOP:* {top_p['campaign']} | ROAS {top_p['roas']:.1f} | {top_p['conversions']} conv\n"
+        report += "\n🔥 *TOP PERFORMERS:*\n"
+        for top in analysis["top_performers"][:3]:
+            report += f"• **{top['campaign']}** — {top.get('metrics_line', '')}\n"
 
     if analysis["warnings"]:
         report += "\n🟡 *DO OBEJRZENIA:*\n"
         for w in analysis["warnings"][:2]:
-            report += f"• {w['campaign']}: {w['message']}\n"
+            report += f"• **{w['campaign']}**: {w['message']}\n"
 
     return report
 
