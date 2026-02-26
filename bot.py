@@ -3490,74 +3490,63 @@ EMPLOYEE_MSG_KEYWORDS = ABSENCE_KEYWORDS + [
     "faktura", "rachunek", "rozliczenie",
 ]
 
+TYPE_LABELS_ABSENCE = {
+    "absent":           "❌ Nieobecna/y cały dzień",
+    "morning_only":     "🌅 Tylko rano",
+    "afternoon_only":   "🌆 Tylko po południu",
+    "late_start":       "🕙 Późniejszy start",
+    "early_end":        "🏃 Wcześniejsze wyjście",
+    "remote":           "🏠 Praca zdalna",
+    "partial":          "⏰ Częściowo dostępna/y",
+}
+
+
 def handle_employee_dm(user_id, user_name, user_message, say):
     """
-    Główny handler DM od pracownika.
-    STAGE 1: jeśli pasuje ABSENCE_KEYWORDS → od razu parsuj jako nieobecność (bez pytania Claude co to jest)
-    STAGE 2: jeśli pasuje EMPLOYEE_MSG_KEYWORDS → zapytaj Claude czy to prośba
-    Zwraca True jeśli obsłużono, False = zwykła rozmowa → idzie do normalnego Claude chat
+    Każdy DM jedzie przez Claude — żadnych keywordów.
+    Claude sam ocenia: nieobecność / prośba do szefa / zwykła rozmowa.
+    Zwraca True jeśli obsłużono (nieobecność lub prośba), False = chat.
     """
-    msg_lower = user_message.lower()
-
-    # ── STAGE 1: ABSENCE — twarde słowa kluczowe, nie pytamy Claude czy to chat ──
-    if any(kw in msg_lower for kw in ABSENCE_KEYWORDS):
-        entries = _parse_availability_with_claude(user_message, user_name)
-        if not entries:
-            # Claude rozpoznał nieobecność ale nie wyciągnął dat → zapytaj o termin
-            say("📅 Widzę że będziesz niedostępny/a — podaj mi konkretny termin (np. *'5-23 marca'* albo *'jutro'*), to od razu zapiszę. 👍")
-            return True
-        if entries:
-            saved_dates = save_availability_entry(user_id, user_name, entries)
-            if saved_dates:
-                TYPE_LABELS = {
-                    "absent": "❌ Nieobecna/y cały dzień",
-                    "morning_only": "🌅 Tylko rano",
-                    "afternoon_only": "🌆 Tylko po południu",
-                    "late_start": "🕙 Późniejszy start",
-                    "early_end": "🏃 Wcześniejsze wyjście",
-                    "remote": "🏠 Praca zdalna",
-                    "partial": "⏰ Częściowo dostępna/y",
-                }
-                if len(saved_dates) == 1:
-                    date_fmt = datetime.strptime(saved_dates[0], '%Y-%m-%d').strftime('%A %d.%m')
-                    say(f"✅ Zapisałem! *{date_fmt}* 👍")
-                    # Powiadom #zarzondpato od razu
-                    entry = next((e for e in entries if e["date"] == saved_dates[0]), entries[0])
-                    type_label = TYPE_LABELS.get(entry.get("type", "absent"), "⚠️ Nieobecność")
-                    notif = f"📅 *{user_name}* — {type_label} ({date_fmt})"
-                    if entry.get("details"):
-                        notif += f"\n_{entry['details']}_"
-                else:
-                    dates_fmt = ", ".join(datetime.strptime(d, '%Y-%m-%d').strftime('%d.%m') for d in saved_dates)
-                    say(f"✅ Zapisałem nieobecności: *{dates_fmt}* 👍")
-                    notif = f"📅 *{user_name}* — nieobecności: {dates_fmt}"
-                try:
-                    app.client.chat_postMessage(channel="C0AJ4HBS94G", text=notif)
-                except Exception as _e:
-                    logger.error(f"❌ Błąd powiadomienia #zarzondpato: {_e}")
-                logger.info(f"📅 Availability: {user_name} → {saved_dates}")
-                return True
-
-    # ── STAGE 2: REQUEST — słowa kluczowe próśb, pytamy Claude o klasyfikację ──
-    request_keywords = [kw for kw in EMPLOYEE_MSG_KEYWORDS if kw not in ABSENCE_KEYWORDS]
-    if not any(kw in msg_lower for kw in request_keywords):
+    # Pomijaj bardzo krótkie wiadomości (emoji, "ok", "hej" itp.)
+    if len(user_message.strip()) < 8:
         return False
 
     today_str = datetime.now().strftime('%Y-%m-%d')
     today_weekday = datetime.now().strftime('%A')
+    current_year = datetime.now().year
 
-    prompt = f"""Jesteś asystentem w polskiej agencji marketingowej.
-Pracownik {user_name} napisał do bota Slack.
+    prompt = f"""Jesteś asystentem agencji marketingowej Pato. Pracownik {user_name} napisał do Ciebie na Slack DM.
 
-Dzisiaj: {today_str} ({today_weekday})
+Dzisiaj: {today_str} ({today_weekday}), rok {current_year}
+
 Wiadomość: "{user_message}"
 
-Czy to prośba do szefa której nie możesz sam obsłużyć?
-Przykłady próśb: urlop do zatwierdzenia, zakup sprzętu, dostęp do narzędzi, prośba o spotkanie, pytanie o decyzję, problem do rozwiązania, podwyżka.
+Zdecyduj co to jest. Możliwe typy:
+
+"absence" — pracownik informuje że będzie niedostępny lub ma ograniczoną dostępność.
+  Przykłady: "jutro mnie nie będzie", "mam wyjazd 5-20 marca", "w piątek tylko rano",
+  "jestem chory", "biorę urlop", "jadę na delegację", "home office w środę".
+  NIE jest to nieobecność: "czy mogę iść na obiad", "mogę wziąć dziś wolne?" (prośba, nie informacja).
+
+"request" — prośba do szefa o zgodę lub działanie których bot sam nie załatwi.
+  Przykłady: "czy mogę wziąć urlop w maju", "potrzebuję nowego monitora",
+  "chciałbym porozmawiać o podwyżce", "mam problem z dostępem do systemu",
+  "możemy się umówić na rozmowę?", "potrzebuję faktury za marzec".
+  Uwaga: "czy mogę iść na kupę/obiad/kawę" = NIE jest to prośba do szefa, to żart/casual.
+
+"chat" — wszystko inne: pytania do bota, żarty, rozmowa, krótkie odpowiedzi.
+
+Dla "absence" — wyciągnij daty i typy:
+Typy: absent / morning_only / afternoon_only / late_start / early_end / remote / partial
+Formaty dat: jutro, pojutrze, "w piątek", "5 marca", "05.03", "05.03.25",
+  zakresy: "05.03-23.03", "5-23 marca", "od 5 do 23 marca" → wygeneruj KAŻDY dzień roboczy (pomiń sob/niedz).
+  Rok domyślny gdy brak: {current_year}.
 
 Odpowiedz TYLKO JSON:
 {{
-  "is_request": true/false,
+  "type": "absence" | "request" | "chat",
+  "absence_has_dates": true/false,
+  "absence_entries": [{{"date": "YYYY-MM-DD", "type": "absent", "details": "opis pl"}}],
   "request_category": "urlop|zakup|dostep|spotkanie|problem|pytanie|inne",
   "request_summary": "Krótki opis prośby po polsku (max 1 zdanie)"
 }}"""
@@ -3565,7 +3554,7 @@ Odpowiedz TYLKO JSON:
     try:
         resp = anthropic.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=300,
+            max_tokens=600,
             messages=[{"role": "user", "content": prompt}]
         )
         raw = resp.content[0].text.strip()
@@ -3574,14 +3563,51 @@ Odpowiedz TYLKO JSON:
         if not m:
             return False
         data = json.loads(m.group())
+        msg_type = data.get("type", "chat")
 
-        if data.get("is_request"):
+        # ── NIEOBECNOŚĆ ──
+        if msg_type == "absence":
+            if not data.get("absence_has_dates", True):
+                # Sebol rozumie że to nieobecność, ale brak terminu → zapytaj
+                say("📅 Rozumiem, że będziesz niedostępny/a — kiedy dokładnie? Podaj termin (np. *'5-23 marca'* albo *'jutro'*) to od razu zapiszę. 👍")
+                return True
+
+            entries = data.get("absence_entries", [])
+            if not entries:
+                say("📅 Rozumiem, że będziesz niedostępny/a — kiedy dokładnie? Podaj termin to od razu zapiszę. 👍")
+                return True
+
+            saved_dates = save_availability_entry(user_id, user_name, entries)
+            if not saved_dates:
+                return False
+
+            if len(saved_dates) == 1:
+                date_fmt = datetime.strptime(saved_dates[0], '%Y-%m-%d').strftime('%A %d.%m')
+                say(f"✅ Zapisałem! *{date_fmt}* 👍")
+                entry = next((e for e in entries if e["date"] == saved_dates[0]), entries[0])
+                type_label = TYPE_LABELS_ABSENCE.get(entry.get("type", "absent"), "⚠️ Nieobecność")
+                notif = f"📅 *{user_name}* — {type_label} ({date_fmt})"
+                if entry.get("details"):
+                    notif += f"\n_{entry['details']}_"
+            else:
+                dates_fmt = ", ".join(datetime.strptime(d, '%Y-%m-%d').strftime('%d.%m') for d in saved_dates)
+                say(f"✅ Zapisałem! *{dates_fmt}* ({len(saved_dates)} dni) 👍")
+                notif = f"📅 *{user_name}* — nieobecny/a: {dates_fmt}"
+
+            try:
+                app.client.chat_postMessage(channel="C0AJ4HBS94G", text=notif)
+            except Exception as _e:
+                logger.error(f"❌ Błąd powiadomienia #zarzondpato: {_e}")
+            logger.info(f"📅 Availability: {user_name} → {saved_dates}")
+            return True
+
+        # ── PROŚBA ──
+        elif msg_type == "request":
             category = data.get("request_category", "inne")
             summary = data.get("request_summary", user_message[:100])
             req_id = save_request(user_id, user_name, category, summary, user_message)
             cat_label = REQUEST_CATEGORY_LABELS.get(category, "📌 Inne")
             say(f"✅ Zapisałem Twoją prośbę *#{req_id}* 👍\n_{summary}_")
-            # Powiadom #zarzondpato od razu
             try:
                 app.client.chat_postMessage(
                     channel="C0AJ4HBS94G",
@@ -3592,7 +3618,8 @@ Odpowiedz TYLKO JSON:
             logger.info(f"📋 Request #{req_id}: {user_name} → {category}: {summary}")
             return True
 
-        return False  # nie prośba → idzie do normalnego Claude chat
+        # ── CHAT — oddaj do normalnego handlera ──
+        return False
 
     except Exception as e:
         logger.error(f"❌ Błąd handle_employee_dm: {e}")
