@@ -3212,6 +3212,13 @@ ABSENCE_KEYWORDS = [
     "nie przyjdę", "nie przyjde", "spóźnię się", "spoznie sie",
     "przyjdę później", "przyjde pozniej", "późniejszy start",
     "tylko rano", "tylko po południu", "tylko popoludniu",
+    # wyjazdy / delegacje / nieobecności z innych powodów
+    "wyjazd", "wyjeżdżam", "wyjeżdżam", "wyjeżdżam", "wyjezdzam",
+    "delegacja", "delegacj", "konferencja", "konferencj",
+    "szkolenie", "szkoleni", "targi", "wyjazd służbowy",
+    "nie będzie mnie", "nie bedzie mnie", "mnie nie będzie", "mnie nie bedzie",
+    "jestem niedostępny", "jestem niedostepny", "niedostępna", "niedostepna",
+    "biorę wolne", "biore wolne", "wolny dzień", "wolna",
 ]
 
 def _load_availability():
@@ -3242,32 +3249,38 @@ def _parse_availability_with_claude(user_message, user_name):
     today_str = datetime.now().strftime('%Y-%m-%d')
     today_weekday = datetime.now().strftime('%A')
 
-    prompt = f"""Analizujesz wiadomość od pracownika polskiej agencji o jego dostępności.
+    prompt = f"""Analizujesz wiadomość od pracownika polskiej agencji o jego dostępności/nieobecności.
 
-Dzisiaj: {today_str} ({today_weekday})
+Dzisiaj: {today_str} ({today_weekday}), rok {datetime.now().year}
+
 Wiadomość od {user_name}: "{user_message}"
 
-Jeśli to wiadomość o nieobecności lub ograniczonej dostępności, wyciągnij info.
 Typy nieobecności:
-- "absent" = cały dzień nieobecny/a
+- "absent" = cały dzień nieobecny/a (wyjazd, urlop, L4, delegacja, konferencja itp.)
 - "morning_only" = tylko rano (do ~12:00)
 - "afternoon_only" = tylko po południu (od ~12:00)
-- "late_start" = późniejszy start (np. od 10-11:00)
+- "late_start" = późniejszy start
 - "early_end" = wcześniejsze wyjście
 - "remote" = praca zdalna (dostępny/a, inna lokalizacja)
 - "partial" = częściowo dostępny/a
 
-Daty: "jutro"=następny dzień, "pojutrze"=za 2 dni, "w piątek"=ten tydzień itp.
-Może być wiele dat (np. "wtorek i środa").
+FORMATY DAT które musisz obsłużyć:
+- "jutro", "pojutrze", "w piątek", "w przyszłym tygodniu"
+- "5 marca", "05.03", "05.03.25", "05.03.2025"
+- ZAKRES: "05.03-23.03", "5-23 marca", "od 5 do 23 marca", "od 05.03 do 23.03" → wygeneruj KAŻDY dzień roboczy z zakresu (pomiń soboty i niedziele)
+- Wiele dat: "wtorek i środa", "poniedziałek, wtorek"
+- Rok domyślny gdy brak: {datetime.now().year} (jeśli data już minęła → następny rok)
+
+WAŻNE: wyjazd, delegacja, konferencja, szkolenie = typ "absent".
 
 Odpowiedz TYLKO JSON:
 {{
   "is_availability": true/false,
   "entries": [
-    {{"date": "YYYY-MM-DD", "type": "absent", "details": "opis po polsku, np. urlop"}}
+    {{"date": "YYYY-MM-DD", "type": "absent", "details": "opis po polsku, np. wyjazd służbowy"}}
   ]
 }}
-Jeśli to nie wiadomość o dostępności: {{"is_availability": false, "entries": []}}"""
+Jeśli brak konkretnych dat (tylko ogólna info bez terminu): {{"is_availability": false, "entries": []}}"""
 
     try:
         resp = anthropic.messages.create(
@@ -3489,6 +3502,10 @@ def handle_employee_dm(user_id, user_name, user_message, say):
     # ── STAGE 1: ABSENCE — twarde słowa kluczowe, nie pytamy Claude czy to chat ──
     if any(kw in msg_lower for kw in ABSENCE_KEYWORDS):
         entries = _parse_availability_with_claude(user_message, user_name)
+        if not entries:
+            # Claude rozpoznał nieobecność ale nie wyciągnął dat → zapytaj o termin
+            say("📅 Widzę że będziesz niedostępny/a — podaj mi konkretny termin (np. *'5-23 marca'* albo *'jutro'*), to od razu zapiszę. 👍")
+            return True
         if entries:
             saved_dates = save_availability_entry(user_id, user_name, entries)
             if saved_dates:
