@@ -3479,14 +3479,31 @@ EMPLOYEE_MSG_KEYWORDS = ABSENCE_KEYWORDS + [
 
 def handle_employee_dm(user_id, user_name, user_message, say):
     """
-    Główny handler DM od pracownika (nie-Daniel).
-    Klasyfikuje wiadomość przez Claude jednym callem.
-    Zwraca True jeśli obsłużono (nieobecność lub prośba), False = zwykła rozmowa.
+    Główny handler DM od pracownika.
+    STAGE 1: jeśli pasuje ABSENCE_KEYWORDS → od razu parsuj jako nieobecność (bez pytania Claude co to jest)
+    STAGE 2: jeśli pasuje EMPLOYEE_MSG_KEYWORDS → zapytaj Claude czy to prośba
+    Zwraca True jeśli obsłużono, False = zwykła rozmowa → idzie do normalnego Claude chat
     """
     msg_lower = user_message.lower()
 
-    # Szybki pre-filtr — czy warto w ogóle pytać Claude?
-    if not any(kw in msg_lower for kw in EMPLOYEE_MSG_KEYWORDS):
+    # ── STAGE 1: ABSENCE — twarde słowa kluczowe, nie pytamy Claude czy to chat ──
+    if any(kw in msg_lower for kw in ABSENCE_KEYWORDS):
+        entries = _parse_availability_with_claude(user_message, user_name)
+        if entries:
+            saved_dates = save_availability_entry(user_id, user_name, entries)
+            if saved_dates:
+                if len(saved_dates) == 1:
+                    date_fmt = datetime.strptime(saved_dates[0], '%Y-%m-%d').strftime('%A %d.%m')
+                    say(f"✅ Zapisałem! *{date_fmt}* — Daniel dostanie info dziś o 17:00. 👍")
+                else:
+                    dates_fmt = ", ".join(datetime.strptime(d, '%Y-%m-%d').strftime('%d.%m') for d in saved_dates)
+                    say(f"✅ Zapisałem nieobecności: *{dates_fmt}* — Daniel dostanie info o 17:00. 👍")
+                logger.info(f"📅 Availability: {user_name} → {saved_dates}")
+                return True
+
+    # ── STAGE 2: REQUEST — słowa kluczowe próśb, pytamy Claude o klasyfikację ──
+    request_keywords = [kw for kw in EMPLOYEE_MSG_KEYWORDS if kw not in ABSENCE_KEYWORDS]
+    if not any(kw in msg_lower for kw in request_keywords):
         return False
 
     today_str = datetime.now().strftime('%Y-%m-%d')
@@ -3498,30 +3515,20 @@ Pracownik {user_name} napisał do bota Slack.
 Dzisiaj: {today_str} ({today_weekday})
 Wiadomość: "{user_message}"
 
-Sklasyfikuj wiadomość jako JEDEN z typów:
-1. "absence" — nieobecność lub ograniczona dostępność (jutro mnie nie będzie, urlop, L4, home office, tylko rano itd.)
-2. "request" — prośba do szefa której nie możesz sam obsłużyć (urlop do zatwierdzenia, zakup, dostęp, spotkanie, pytanie o decyzję, problem do rozwiązania, podwyżka itp.)
-3. "chat" — zwykła rozmowa z botem, pytanie ogólne, coś co bot może obsłużyć sam
-
-WAŻNE: jeśli jest i nieobecność i prośba w jednej wiadomości — wybierz "absence" (nieobecność jest ważniejsza).
+Czy to prośba do szefa której nie możesz sam obsłużyć?
+Przykłady próśb: urlop do zatwierdzenia, zakup sprzętu, dostęp do narzędzi, prośba o spotkanie, pytanie o decyzję, problem do rozwiązania, podwyżka.
 
 Odpowiedz TYLKO JSON:
 {{
-  "type": "absence" | "request" | "chat",
-  "absence_entries": [
-    {{"date": "YYYY-MM-DD", "type": "absent|morning_only|afternoon_only|late_start|early_end|remote|partial", "details": "opis po polsku"}}
-  ],
+  "is_request": true/false,
   "request_category": "urlop|zakup|dostep|spotkanie|problem|pytanie|inne",
-  "request_summary": "Krótki opis prośby po polsku (max 1 zdanie, konkretnie)"
-}}
-
-Pola absence_entries wypełnij tylko gdy type=absence, request_category/summary tylko gdy type=request.
-"""
+  "request_summary": "Krótki opis prośby po polsku (max 1 zdanie)"
+}}"""
 
     try:
         resp = anthropic.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=400,
+            max_tokens=300,
             messages=[{"role": "user", "content": prompt}]
         )
         raw = resp.content[0].text.strip()
@@ -3531,25 +3538,7 @@ Pola absence_entries wypełnij tylko gdy type=absence, request_category/summary 
             return False
         data = json.loads(m.group())
 
-        msg_type = data.get("type", "chat")
-
-        if msg_type == "absence":
-            entries = data.get("absence_entries", [])
-            if not entries:
-                return False
-            saved_dates = save_availability_entry(user_id, user_name, entries)
-            if not saved_dates:
-                return False
-            if len(saved_dates) == 1:
-                date_fmt = datetime.strptime(saved_dates[0], '%Y-%m-%d').strftime('%A %d.%m')
-                say(f"✅ Zapisałem! *{date_fmt}* — Daniel dostanie info dziś o 17:00. 👍")
-            else:
-                dates_fmt = ", ".join(datetime.strptime(d, '%Y-%m-%d').strftime('%d.%m') for d in saved_dates)
-                say(f"✅ Zapisałem nieobecności: *{dates_fmt}* — Daniel dostanie info o 17:00. 👍")
-            logger.info(f"📅 Availability: {user_name} → {saved_dates}")
-            return True
-
-        elif msg_type == "request":
+        if data.get("is_request"):
             category = data.get("request_category", "inne")
             summary = data.get("request_summary", user_message[:100])
             req_id = save_request(user_id, user_name, category, summary, user_message)
@@ -3560,8 +3549,7 @@ Pola absence_entries wypełnij tylko gdy type=absence, request_category/summary 
             logger.info(f"📋 Request #{req_id}: {user_name} → {category}: {summary}")
             return True
 
-        else:
-            return False  # "chat" → obsłuż normalnie przez Claude
+        return False  # nie prośba → idzie do normalnego Claude chat
 
     except Exception as e:
         logger.error(f"❌ Błąd handle_employee_dm: {e}")
