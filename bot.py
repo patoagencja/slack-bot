@@ -1426,7 +1426,7 @@ def handle_message_events(body, say, logger):
             return
 
     # === AVAILABILITY: pracownik pisze o nieobecności (tylko DM) ===
-    if event.get("channel_type") == "im" and user_id != "UTE1RN6SJ":
+    if event.get("channel_type") == "im":
         try:
             user_info = app.client.users_info(user=user_id)
             user_name = (user_info["user"].get("real_name")
