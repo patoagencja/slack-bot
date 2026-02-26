@@ -1524,11 +1524,13 @@ def check_conversion_history(client_name, platform, campaign_name, lookback_days
         return {"had_conversions": False, "total": 0, "alert_level": "WARNING"}
 
 
-def analyze_campaign_trends(campaigns_data, lookback_days=7, goal="conversion"):
+def analyze_campaign_trends(campaigns_data, lookback_days=7, goal="conversion",
+                            meta_benchmarks=None, google_benchmarks=None):
     """
     Claude analizuje kampanie holistycznie i decyduje co jest krytyczne, co wymaga uwagi,
     co jest top performerem. Zero hardcoded progów.
     goal: "conversion" lub "engagement" — kontekst dla Claude
+    meta_benchmarks / google_benchmarks: 30-dniowe średnie (dict z avg_ctr, avg_cpc itd.)
     Returns: dict z critical_alerts, warnings, top_performers (backward compat)
     """
     if not campaigns_data:
@@ -1553,8 +1555,9 @@ def analyze_campaign_trends(campaigns_data, lookback_days=7, goal="conversion"):
         reach = c.get("reach", 0) or 0
         impressions = c.get("impressions", 0) or 0
         clicks = c.get("clicks", 0) or 0
+        platform = c.get("platform", "meta")
 
-        campaigns_txt += f"- {name}: spend={spend:.0f}PLN ctr={ctr:.2f}% cpc={cpc:.2f}PLN"
+        campaigns_txt += f"- [{platform.upper()}] {name}: spend={spend:.0f}PLN ctr={ctr:.2f}% cpc={cpc:.2f}PLN"
         if goal == "conversion":
             campaigns_txt += f" roas={roas:.2f} conv={convs}"
         campaigns_txt += f" freq={freq:.1f} reach={reach:,} impr={impressions:,} clicks={clicks:,}\n"
@@ -1566,22 +1569,57 @@ def analyze_campaign_trends(campaigns_data, lookback_days=7, goal="conversion"):
         "Klient robi kampanie CONVERSION/E-COMMERCE. Ważne metryki: ROAS, konwersje, CPA, CTR."
     )
 
+    # Zbuduj sekcję benchmarków (30-dniowe średnie) jeśli dostępne
+    benchmarks_txt = ""
+    if meta_benchmarks:
+        b = meta_benchmarks
+        lines = []
+        if b.get("avg_ctr") is not None:
+            lines.append(f"CTR={b['avg_ctr']:.2f}%")
+        if b.get("avg_cpc") is not None:
+            lines.append(f"CPC={b['avg_cpc']:.2f}PLN")
+        if b.get("avg_roas") is not None:
+            lines.append(f"ROAS={b['avg_roas']:.2f}x")
+        if b.get("avg_frequency") is not None:
+            lines.append(f"freq={b['avg_frequency']:.1f}")
+        if lines:
+            period = b.get("period_days", 30)
+            benchmarks_txt += f"META (ostatnie {period} dni): {' | '.join(lines)}\n"
+    if google_benchmarks:
+        b = google_benchmarks
+        lines = []
+        if b.get("avg_ctr") is not None:
+            lines.append(f"CTR={b['avg_ctr']:.2f}%")
+        if b.get("avg_cpc") is not None:
+            lines.append(f"CPC={b['avg_cpc']:.2f}PLN")
+        if lines:
+            period = b.get("period_days", 30)
+            benchmarks_txt += f"GOOGLE (ostatnie {period} dni): {' | '.join(lines)}\n"
+
+    benchmark_section = ""
+    if benchmarks_txt:
+        benchmark_section = f"""
+Historyczne benchmarki (30-dniowe średnie dla tego klienta):
+{benchmarks_txt}
+Porównaj wyniki z wczoraj do tych benchmarków. Wyraźnie wskazuj odchylenia — np. "CTR 0.8% vs avg 2.1% — spadek o 62%".
+"""
+
     prompt = f"""Jesteś senior performance marketerem analizującym wyniki kampanii z wczoraj.
 
 Kontekst klienta: {goal_context}
-
+{benchmark_section}
 Dane kampanii (tylko te z min. 20 PLN spend):
 {campaigns_txt}
 
 Przeanalizuj CAŁOŚCIOWO. Nie stosuj sztywnych progów — oceniaj w kontekście:
-- czy coś jest podejrzanie złe względem innych kampanii?
+- czy coś jest podejrzanie złe względem innych kampanii LUB względem benchmarków historycznych?
 - czy coś wymaga działania TERAZ?
-- co działa świetnie?
+- co działa świetnie (też vs benchmark)?
 
 Zwróć TYLKO JSON (bez komentarzy):
 {{
   "critical_alerts": [
-    {{"campaign": "nazwa", "message": "konkretny problem z liczbami", "action": "co zrobić — 1 konkretne zdanie"}}
+    {{"campaign": "nazwa", "message": "konkretny problem z liczbami (podaj też benchmark jeśli dostępny)", "action": "co zrobić — 1 konkretne zdanie"}}
   ],
   "warnings": [
     {{"campaign": "nazwa", "message": "co warto sprawdzić i dlaczego"}}
@@ -2311,8 +2349,13 @@ def generate_daily_digest_dre():
                     "platform": "google",
                 })
 
-        # Analizuj trendy (z uwzględnieniem celu klienta)
-        analysis = analyze_campaign_trends(all_campaigns, goal=client_goal)
+        # Analizuj trendy (z uwzględnieniem celu klienta + historyczne benchmarki)
+        analysis = analyze_campaign_trends(
+            all_campaigns,
+            goal=client_goal,
+            meta_benchmarks=meta_benchmarks,
+            google_benchmarks=google_benchmarks,
+        )
 
         # Oblicz totals
         total_spend = sum(c.get("spend", 0) or c.get("cost", 0) for c in all_campaigns)
@@ -3474,9 +3517,11 @@ Wiadomość: "{user_message}"
 
 Zdecyduj co to jest. Możliwe typy:
 
-"absence" — pracownik informuje że będzie niedostępny lub ma ograniczoną dostępność.
-  Przykłady: "jutro mnie nie będzie", "mam wyjazd 5-20 marca", "w piątek tylko rano",
+"absence" — ktoś informuje o niedostępności (swojej lub innej osoby).
+  Przykłady własne: "jutro mnie nie będzie", "mam wyjazd 5-20 marca", "w piątek tylko rano",
   "jestem chory", "biorę urlop", "jadę na delegację", "home office w środę".
+  Przykłady o kimś innym: "Piotrek jedzie do Nowej Zelandii od 10 marca", "Kasia będzie na urlopie w przyszłym tygodniu",
+  "Marek nie przyjdzie w piątek", "Marta ma wyjazd 5-23 marca".
   NIE jest to nieobecność: "czy mogę iść na obiad", "mogę wziąć dziś wolne?" (prośba, nie informacja).
 
 "request" — prośba do szefa o zgodę lub działanie których bot sam nie załatwi.
@@ -3493,9 +3538,28 @@ Formaty dat: jutro, pojutrze, "w piątek", "5 marca", "05.03", "05.03.25",
   zakresy: "05.03-23.03", "5-23 marca", "od 5 do 23 marca" → wygeneruj KAŻDY dzień roboczy (pomiń sob/niedz).
   Rok domyślny gdy brak: {current_year}.
 
+KROK 1 — KTO JEST NIEOBECNY?
+Piszący to: "{user_name}"
+Przeczytaj wiadomość i zdecyduj: czy nieobecność dotyczy {user_name}, czy INNEJ osoby?
+
+Jeśli w wiadomości pojawia się INNE imię jako podmiot, lub nadawca mówi o kimś innym w 3. osobie:
+  → about_someone_else: true, absent_person_name: "to imię"
+
+Jeśli wiadomość jest o samym {user_name} (zaimki: mnie/mój/jadę/jestem/biorę itp.):
+  → about_someone_else: false, absent_person_name: null
+
+KONKRETNE PRZYKŁADY (nadawca = "Daniel"):
+  "Piotr wyjezdza do zelandi 1 marca do 15 wez to zapisz" → about_someone_else: true, absent_person_name: "Piotr"
+  "Kasia bedzie na urlopie w przyszlym tygodniu" → about_someone_else: true, absent_person_name: "Kasia"
+  "Marek nie przyjdzie w piatek zapisz to" → about_someone_else: true, absent_person_name: "Marek"
+  "jutro mnie nie bedzie" → about_someone_else: false, absent_person_name: null
+  "mam wyjazd 5-10 marca" → about_someone_else: false, absent_person_name: null
+
 Odpowiedz TYLKO JSON:
 {{
   "type": "absence" | "request" | "chat",
+  "about_someone_else": <WYMAGANE: true jeśli inna osoba, false jeśli sam piszący>,
+  "absent_person_name": <WYMAGANE: "Imie" jeśli about_someone_else=true, null jeśli false>,
   "absence_has_dates": true/false,
   "absence_entries": [{{"date": "YYYY-MM-DD", "type": "absent", "details": "opis pl"}}],
   "request_category": "urlop|zakup|dostep|spotkanie|problem|pytanie|inne",
@@ -3515,41 +3579,64 @@ Odpowiedz TYLKO JSON:
             return False
         data = json.loads(m.group())
         msg_type = data.get("type", "chat")
+        logger.info(f"🤖 DM classify [{user_name}]: type={msg_type} about_someone_else={data.get('about_someone_else')} absent_person={data.get('absent_person_name')}")
 
         # ── NIEOBECNOŚĆ ──
         if msg_type == "absence":
+            # Wykryj czy chodzi o kogoś innego
+            about_someone_else = data.get("about_someone_else", False)
+            absent_person_name = data.get("absent_person_name") or None
+
+            # Ustal kto jest nieobecny
+            if about_someone_else and absent_person_name:
+                # Daniel zgłasza nieobecność Piotrka itp.
+                absent_name = absent_person_name.strip()
+                absent_uid = f"reported_{absent_name.lower()}"  # placeholder — nie mamy real user_id
+                reporter_suffix = f" _(zgłoszone przez {user_name})_"
+                confirm_msg_prefix = f"✅ Zapisałem nieobecność *{absent_name}*!"
+            else:
+                absent_name = user_name
+                absent_uid = user_id
+                reporter_suffix = ""
+                confirm_msg_prefix = "✅ Zapisałem!"
+
             if not data.get("absence_has_dates", True):
-                # Sebol rozumie że to nieobecność, ale brak terminu → zapytaj
-                say("📅 Rozumiem, że będziesz niedostępny/a — kiedy dokładnie? Podaj termin (np. *'5-23 marca'* albo *'jutro'*) to od razu zapiszę. 👍")
+                if about_someone_else and absent_person_name:
+                    say(f"📅 Rozumiem, że *{absent_person_name}* będzie niedostępny/a — kiedy dokładnie? Podaj termin to od razu zapiszę. 👍")
+                else:
+                    say("📅 Rozumiem, że będziesz niedostępny/a — kiedy dokładnie? Podaj termin (np. *'5-23 marca'* albo *'jutro'*) to od razu zapiszę. 👍")
                 return True
 
             entries = data.get("absence_entries", [])
             if not entries:
-                say("📅 Rozumiem, że będziesz niedostępny/a — kiedy dokładnie? Podaj termin to od razu zapiszę. 👍")
+                if about_someone_else and absent_person_name:
+                    say(f"📅 Rozumiem, że *{absent_person_name}* będzie niedostępny/a — kiedy dokładnie? Podaj termin to od razu zapiszę. 👍")
+                else:
+                    say("📅 Rozumiem, że będziesz niedostępny/a — kiedy dokładnie? Podaj termin to od razu zapiszę. 👍")
                 return True
 
-            saved_dates = save_availability_entry(user_id, user_name, entries)
+            saved_dates = save_availability_entry(absent_uid, absent_name, entries)
             if not saved_dates:
                 return False
 
             if len(saved_dates) == 1:
                 date_fmt = datetime.strptime(saved_dates[0], '%Y-%m-%d').strftime('%A %d.%m')
-                say(f"✅ Zapisałem! *{date_fmt}* 👍")
+                say(f"{confirm_msg_prefix} *{date_fmt}* 👍")
                 entry = next((e for e in entries if e["date"] == saved_dates[0]), entries[0])
                 type_label = TYPE_LABELS_ABSENCE.get(entry.get("type", "absent"), "⚠️ Nieobecność")
-                notif = f"📅 *{user_name}* — {type_label} ({date_fmt})"
+                notif = f"📅 *{absent_name}* — {type_label} ({date_fmt}){reporter_suffix}"
                 if entry.get("details"):
                     notif += f"\n_{entry['details']}_"
             else:
                 dates_fmt = ", ".join(datetime.strptime(d, '%Y-%m-%d').strftime('%d.%m') for d in saved_dates)
-                say(f"✅ Zapisałem! *{dates_fmt}* ({len(saved_dates)} dni) 👍")
-                notif = f"📅 *{user_name}* — nieobecny/a: {dates_fmt}"
+                say(f"{confirm_msg_prefix} *{dates_fmt}* ({len(saved_dates)} dni) 👍")
+                notif = f"📅 *{absent_name}* — nieobecny/a: {dates_fmt}{reporter_suffix}"
 
             try:
                 app.client.chat_postMessage(channel="C0AJ4HBS94G", text=notif)
             except Exception as _e:
                 logger.error(f"❌ Błąd powiadomienia #zarzondpato: {_e}")
-            logger.info(f"📅 Availability: {user_name} → {saved_dates}")
+            logger.info(f"📅 Availability: {absent_name} → {saved_dates} (zgłoszone przez {user_name})")
             return True
 
         # ── PROŚBA ──
