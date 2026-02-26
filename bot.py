@@ -968,12 +968,33 @@ def handle_mention(event, say):
     user_message = event['text']
     user_message = ' '.join(user_message.split()[1:])  # Usuń wzmianke bota
 
-    # === AVAILABILITY QUERY: "kto jutro?" / "dostępność" ===
     msg_lower_m = user_message.lower()
+
+    # === "zamknij #N" — Daniel zamyka prośbę ===
+    import re as _re_m
+    close_match = _re_m.search(r'zamknij\s+#?(\d+)', msg_lower_m)
+    if close_match:
+        req_id = int(close_match.group(1))
+        closed = close_request(req_id)
+        if closed:
+            cat_label = REQUEST_CATEGORY_LABELS.get(closed.get("category", "inne"), "📌 Inne")
+            say(f"✅ Prośba *#{req_id}* zamknięta!\n"
+                f"_{closed['user_name']}_ — {cat_label}: {closed['summary']}")
+        else:
+            say(f"❌ Nie znalazłem otwartej prośby *#{req_id}*.")
+        return
+
+    # === "co czeka?" / "prośby" — lista otwartych próśb ===
+    if any(t in msg_lower_m for t in ["co czeka", "prośby", "prosby", "otwarte prośby",
+                                       "pending", "co jest otwarte", "lista próśb"]):
+        pending = get_pending_requests()
+        say(_format_requests_list(pending))
+        return
+
+    # === AVAILABILITY QUERY: "kto jutro?" / "dostępność" ===
     if any(t in msg_lower_m for t in ["kto jutro", "kto nie będzie", "kto nie bedzie",
                                        "dostępność", "dostepnosc", "nieobecności", "nieobecnosci",
                                        "kto jest jutro", "availability"]):
-        # Rozpoznaj datę: jutro / pojutrze / konkretny dzień
         if "pojutrze" in msg_lower_m:
             target = _next_workday(_next_workday())
         else:
@@ -1400,7 +1421,7 @@ def handle_message_events(body, say, logger):
                          or user_info["user"].get("name", user_id))
         except Exception:
             user_name = user_id
-        if handle_availability_dm(user_id, user_name, user_message, say):
+        if handle_employee_dm(user_id, user_name, user_message, say):
             return
 
     # Email summary - trigger działa wszędzie, wyniki zawsze idą na DM
@@ -3307,49 +3328,231 @@ def _format_availability_summary(entries, date_label):
     return msg
 
 def send_daily_team_availability():
-    """Wysyła Danielowi o 17:00 podsumowanie dostępności na następny dzień roboczy."""
+    """Wysyła Danielowi o 17:00: dostępność jutro + otwarte prośby teamu."""
     try:
         tomorrow = _next_workday()
         tomorrow_str = tomorrow.strftime('%Y-%m-%d')
         tomorrow_label = tomorrow.strftime('%A %d.%m.%Y')
 
-        entries = get_availability_for_date(tomorrow_str)
-        msg = _format_availability_summary(entries, tomorrow_label)
+        # --- Sekcja 1: Nieobecności jutro ---
+        abs_entries = get_availability_for_date(tomorrow_str)
+        abs_msg = _format_availability_summary(abs_entries, tomorrow_label)
 
-        app.client.chat_postMessage(channel="UTE1RN6SJ", text=msg)
-        logger.info(f"✅ Team availability wysłane do Daniela ({tomorrow_str})")
+        # --- Sekcja 2: Otwarte prośby ---
+        pending = get_pending_requests()
+        if pending:
+            req_msg = f"\n\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            req_msg += _format_requests_list(pending)
+        else:
+            req_msg = "\n\n━━━━━━━━━━━━━━━━━━━━━━\n\n✅ Brak otwartych próśb."
+
+        full_msg = abs_msg + req_msg
+        # Wysyłaj na kanał #zarzondpato
+        app.client.chat_postMessage(channel="C0AJ4HBS94G", text=full_msg)
+        logger.info(f"✅ Team summary wysłane na #zarzondpato (nieobecności: {len(abs_entries)}, prośby: {len(pending)})")
     except Exception as e:
         logger.error(f"❌ Błąd send_daily_team_availability: {e}")
 
-def handle_availability_dm(user_id, user_name, user_message, say):
+# ============================================
+# TEAM REQUESTS SYSTEM
+# Prośby pracowników które trafiają do Daniela
+# i zostają otwarte dopóki nie zostaną zamknięte
+# ============================================
+
+REQUESTS_FILE = "/tmp/team_requests.json"
+
+REQUEST_CATEGORY_LABELS = {
+    "urlop":     "🏖️ Urlop / czas wolny",
+    "zakup":     "🛒 Zakup / sprzęt",
+    "dostep":    "🔑 Dostęp / narzędzia",
+    "spotkanie": "📆 Spotkanie / rozmowa",
+    "problem":   "⚠️ Problem / zgłoszenie",
+    "pytanie":   "❓ Pytanie / decyzja",
+    "inne":      "📌 Inne",
+}
+
+def _load_requests():
+    try:
+        if os.path.exists(REQUESTS_FILE):
+            with open(REQUESTS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return []
+
+def _save_requests(requests):
+    try:
+        with open(REQUESTS_FILE, "w", encoding="utf-8") as f:
+            json.dump(requests, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"❌ Błąd zapisu requests: {e}")
+
+def _next_request_id():
+    requests = _load_requests()
+    if not requests:
+        return 1
+    return max(r.get("id", 0) for r in requests) + 1
+
+def save_request(user_id, user_name, category, summary, original_message):
+    """Zapisuje nową prośbę i zwraca jej ID."""
+    requests = _load_requests()
+    req_id = _next_request_id()
+    requests.append({
+        "id": req_id,
+        "user_id": user_id,
+        "user_name": user_name,
+        "category": category,
+        "summary": summary,
+        "original_message": original_message,
+        "status": "pending",
+        "created_at": datetime.now().isoformat(),
+        "closed_at": None,
+    })
+    _save_requests(requests)
+    return req_id
+
+def close_request(req_id):
+    """Zamknij prośbę po ID. Zwraca dict prośby lub None jeśli nie znaleziono."""
+    requests = _load_requests()
+    found = None
+    for r in requests:
+        if r.get("id") == req_id and r.get("status") == "pending":
+            r["status"] = "done"
+            r["closed_at"] = datetime.now().isoformat()
+            found = r
+            break
+    if found:
+        _save_requests(requests)
+    return found
+
+def get_pending_requests():
+    """Zwraca wszystkie otwarte prośby."""
+    return [r for r in _load_requests() if r.get("status") == "pending"]
+
+def _format_requests_list(requests):
+    """Formatuje listę próśb dla Daniela."""
+    if not requests:
+        return "✅ Brak otwartych próśb — wszystko załatwione!"
+    msg = f"📋 *Otwarte prośby teamu ({len(requests)}):*\n\n"
+    for r in requests:
+        cat_label = REQUEST_CATEGORY_LABELS.get(r.get("category", "inne"), "📌 Inne")
+        created = datetime.fromisoformat(r["created_at"]).strftime('%d.%m %H:%M')
+        msg += f"*#{r['id']}* — *{r['user_name']}* [{created}]\n"
+        msg += f"  {cat_label}: {r['summary']}\n\n"
+    msg += "_Zamknij: `@Sebol zamknij #N`_"
+    return msg
+
+
+# ============================================
+# UNIFIED EMPLOYEE DM HANDLER
+# Jeden Claude call → klasyfikuje: nieobecność / prośba / zwykła rozmowa
+# ============================================
+
+# Pre-filtr — czy wiadomość W OGÓLE może być nieobecnością lub prośbą?
+# Jeśli nie pasuje żaden keyword → od razu leci do zwykłego Claude chat
+EMPLOYEE_MSG_KEYWORDS = ABSENCE_KEYWORDS + [
+    "prośba", "prosba", "chciał", "chcialbym", "chciałabym", "chciałem",
+    "czy mogę", "czy moge", "czy możemy", "czy mozemy", "czy możesz",
+    "potrzebuję", "potrzebuje", "potrzebna", "potrzebny",
+    "chcę", "chce", "wnioskuję", "wniosek",
+    "urlop", "wolne", "zakup", "zamówić", "zamowic",
+    "dostęp", "dostep", "konto", "licencja",
+    "spotkanie", "porozmawiać", "porozmawiac", "umówić", "umowic",
+    "problem", "błąd", "blad", "nie działa", "nie dziala",
+    "pytanie", "zapytać", "zapytac", "decyzja",
+    "podwyżka", "podwyzka", "nadgodziny", "nadgodzin",
+    "faktura", "rachunek", "rozliczenie",
+]
+
+def handle_employee_dm(user_id, user_name, user_message, say):
     """
-    Obsługuje wiadomość o nieobecności od pracownika.
-    Zwraca True jeśli wiadomość była o dostępności (i została obsłużona).
+    Główny handler DM od pracownika (nie-Daniel).
+    Klasyfikuje wiadomość przez Claude jednym callem.
+    Zwraca True jeśli obsłużono (nieobecność lub prośba), False = zwykła rozmowa.
     """
-    # Szybki pre-filtr — czy w ogóle wygląda jak wiadomość o nieobecności?
     msg_lower = user_message.lower()
-    if not any(kw in msg_lower for kw in ABSENCE_KEYWORDS):
+
+    # Szybki pre-filtr — czy warto w ogóle pytać Claude?
+    if not any(kw in msg_lower for kw in EMPLOYEE_MSG_KEYWORDS):
         return False
 
-    # Sparsuj przez Claude
-    entries = _parse_availability_with_claude(user_message, user_name)
-    if not entries:
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    today_weekday = datetime.now().strftime('%A')
+
+    prompt = f"""Jesteś asystentem w polskiej agencji marketingowej.
+Pracownik {user_name} napisał do bota Slack.
+
+Dzisiaj: {today_str} ({today_weekday})
+Wiadomość: "{user_message}"
+
+Sklasyfikuj wiadomość jako JEDEN z typów:
+1. "absence" — nieobecność lub ograniczona dostępność (jutro mnie nie będzie, urlop, L4, home office, tylko rano itd.)
+2. "request" — prośba do szefa której nie możesz sam obsłużyć (urlop do zatwierdzenia, zakup, dostęp, spotkanie, pytanie o decyzję, problem do rozwiązania, podwyżka itp.)
+3. "chat" — zwykła rozmowa z botem, pytanie ogólne, coś co bot może obsłużyć sam
+
+WAŻNE: jeśli jest i nieobecność i prośba w jednej wiadomości — wybierz "absence" (nieobecność jest ważniejsza).
+
+Odpowiedz TYLKO JSON:
+{{
+  "type": "absence" | "request" | "chat",
+  "absence_entries": [
+    {{"date": "YYYY-MM-DD", "type": "absent|morning_only|afternoon_only|late_start|early_end|remote|partial", "details": "opis po polsku"}}
+  ],
+  "request_category": "urlop|zakup|dostep|spotkanie|problem|pytanie|inne",
+  "request_summary": "Krótki opis prośby po polsku (max 1 zdanie, konkretnie)"
+}}
+
+Pola absence_entries wypełnij tylko gdy type=absence, request_category/summary tylko gdy type=request.
+"""
+
+    try:
+        resp = anthropic.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = resp.content[0].text.strip()
+        import re as _re
+        m = _re.search(r'\{.*\}', raw, _re.DOTALL)
+        if not m:
+            return False
+        data = json.loads(m.group())
+
+        msg_type = data.get("type", "chat")
+
+        if msg_type == "absence":
+            entries = data.get("absence_entries", [])
+            if not entries:
+                return False
+            saved_dates = save_availability_entry(user_id, user_name, entries)
+            if not saved_dates:
+                return False
+            if len(saved_dates) == 1:
+                date_fmt = datetime.strptime(saved_dates[0], '%Y-%m-%d').strftime('%A %d.%m')
+                say(f"✅ Zapisałem! *{date_fmt}* — Daniel dostanie info dziś o 17:00. 👍")
+            else:
+                dates_fmt = ", ".join(datetime.strptime(d, '%Y-%m-%d').strftime('%d.%m') for d in saved_dates)
+                say(f"✅ Zapisałem nieobecności: *{dates_fmt}* — Daniel dostanie info o 17:00. 👍")
+            logger.info(f"📅 Availability: {user_name} → {saved_dates}")
+            return True
+
+        elif msg_type == "request":
+            category = data.get("request_category", "inne")
+            summary = data.get("request_summary", user_message[:100])
+            req_id = save_request(user_id, user_name, category, summary, user_message)
+            cat_label = REQUEST_CATEGORY_LABELS.get(category, "📌 Inne")
+            say(f"✅ Zapisałem Twoją prośbę *#{req_id}* — {cat_label}\n"
+                f"_{summary}_\n\n"
+                f"Daniel dostanie info dziś o 17:00. Jak tylko odpowie, wróci do Ciebie bezpośrednio. 👍")
+            logger.info(f"📋 Request #{req_id}: {user_name} → {category}: {summary}")
+            return True
+
+        else:
+            return False  # "chat" → obsłuż normalnie przez Claude
+
+    except Exception as e:
+        logger.error(f"❌ Błąd handle_employee_dm: {e}")
         return False
-
-    # Zapisz
-    saved_dates = save_availability_entry(user_id, user_name, entries)
-
-    # Potwierdź pracownikowi
-    if len(saved_dates) == 1:
-        date_obj = datetime.strptime(saved_dates[0], '%Y-%m-%d')
-        date_fmt = date_obj.strftime('%A %d.%m')
-        say(f"✅ Zapisałem! *{date_fmt}* — poinformuję Daniela dziś o 17:00. 👍")
-    else:
-        dates_fmt = ", ".join(datetime.strptime(d, '%Y-%m-%d').strftime('%d.%m') for d in saved_dates)
-        say(f"✅ Zapisałem nieobecności: *{dates_fmt}* — Daniel dostanie info o 17:00. 👍")
-
-    logger.info(f"📅 Availability zapisana: {user_name} ({user_id}) → {saved_dates}")
-    return True
 
 
 # ============================================
