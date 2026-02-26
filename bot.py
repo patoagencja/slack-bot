@@ -1534,6 +1534,12 @@ def analyze_campaign_trends(campaigns_data, lookback_days=7, goal="conversion"):
     if not campaigns_data:
         return {"critical_alerts": [], "warnings": [], "top_performers": [], "goal": goal}
 
+    # Odfiltruj kampanie bez wydatku — Claude ich nie widzi
+    campaigns_data = [c for c in campaigns_data
+                      if float(c.get("spend") or c.get("cost") or 0) >= 20]
+    if not campaigns_data:
+        return {"critical_alerts": [], "warnings": [], "top_performers": [], "goal": goal}
+
     # Przygotuj dane dla Claude — czytelna lista kampanii
     campaigns_txt = ""
     for c in campaigns_data:
