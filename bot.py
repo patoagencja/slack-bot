@@ -2156,18 +2156,31 @@ def generate_daily_digest_dre():
                 google_data_combined.extend(data["data"])
 
         # Połącz dane Meta + Google
-        all_campaigns = []
-        meta_campaigns = meta_data.get("data", [])
+        all_campaigns_raw = []
+        meta_campaigns_raw = meta_data.get("data", [])
 
-        if meta_campaigns:
-            all_campaigns.extend(meta_campaigns)
-        all_campaigns.extend(google_data_combined)
+        if meta_campaigns_raw:
+            all_campaigns_raw.extend(meta_campaigns_raw)
+        all_campaigns_raw.extend(google_data_combined)
 
-        if not all_campaigns:
+        if not all_campaigns_raw:
             return "📊 DRE - Daily Digest\n\n⚠️ Brak danych za wczoraj. Sprawdź czy kampanie są aktywne."
 
-        # === SAVE RESULTS TO HISTORY ===
-        for c in meta_campaigns:
+        # Filtruj kampanie z minimalnym spendem (>= 20 PLN)
+        MIN_SPEND_PLN = 20.0
+        meta_campaigns = [c for c in meta_campaigns_raw
+                          if float(c.get("spend", 0) or 0) >= MIN_SPEND_PLN]
+        google_data_combined = [c for c in google_data_combined
+                                if float(c.get("cost", c.get("spend", 0)) or 0) >= MIN_SPEND_PLN]
+        all_campaigns = meta_campaigns + google_data_combined
+
+        skipped_count = len(all_campaigns_raw) - len(all_campaigns)
+
+        if not all_campaigns:
+            return "📊 DRE - Daily Digest\n\n⚠️ Brak kampanii z spendem ≥ 20 PLN za wczoraj."
+
+        # === SAVE RESULTS TO HISTORY (zapisuj wszystkie, niezależnie od spędu) ===
+        for c in meta_campaigns_raw:
             name = c.get("campaign_name", "")
             if name:
                 save_campaign_results("dre", name, {
@@ -2181,7 +2194,8 @@ def generate_daily_digest_dre():
                     "clicks": c.get("clicks", 0),
                     "platform": "meta",
                 })
-        for c in google_data_combined:
+        google_data_raw = [c for c in all_campaigns_raw if c not in meta_campaigns_raw]
+        for c in google_data_raw:
             name = c.get("campaign_name", c.get("name", ""))
             if name:
                 save_campaign_results("dre", name, {
@@ -2204,10 +2218,11 @@ def generate_daily_digest_dre():
         total_clicks = sum(c.get("clicks", 0) for c in all_campaigns)
 
         # Zbuduj digest
+        skipped_note = f" _(+ {skipped_count} kampanii z <20 PLN pominięto)_" if skipped_count > 0 else ""
         digest = f"""🌅 **DRE - Daily Digest** ({yesterday})
 
 💰 **WCZORAJ:** {total_spend:.2f} PLN
-📊 **Aktywnych kampanii:** {len(all_campaigns)}
+📊 **Aktywnych kampanii:** {len(all_campaigns)}{skipped_note}
 🎯 **Conversions:** {total_conversions}
 👆 **Clicks:** {total_clicks:,}
 
@@ -3116,11 +3131,27 @@ Odpowiedz TYLKO w formacie JSON:
   "suggested_actions": ["Odpowiedz na email od X ws. wyceny"]
 }}"""
 
-        claude_response = anthropic.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1500,
-            messages=[{"role": "user", "content": claude_prompt}]
-        )
+        # Retry logic dla 529 Overloaded
+        import time as _time
+        claude_response = None
+        for _attempt in range(3):
+            try:
+                claude_response = anthropic.messages.create(
+                    model="claude-sonnet-4-20250514",
+                    max_tokens=1500,
+                    messages=[{"role": "user", "content": claude_prompt}]
+                )
+                break
+            except Exception as _api_err:
+                err_str = str(_api_err)
+                if _attempt < 2 and ("529" in err_str or "overloaded" in err_str.lower() or "529" in err_str):
+                    _wait = 40 * (2 ** _attempt)  # 40s, 80s
+                    logger.warning(f"⚠️ Claude API overloaded (próba {_attempt+1}/3) — czekam {_wait}s... ({_api_err})")
+                    _time.sleep(_wait)
+                else:
+                    raise
+        if claude_response is None:
+            raise Exception("Claude API niedostępne po 3 próbach")
 
         # Parse JSON z odpowiedzi Claude
         import re
