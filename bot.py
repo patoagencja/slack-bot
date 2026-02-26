@@ -3492,12 +3492,32 @@ def handle_employee_dm(user_id, user_name, user_message, say):
         if entries:
             saved_dates = save_availability_entry(user_id, user_name, entries)
             if saved_dates:
+                TYPE_LABELS = {
+                    "absent": "❌ Nieobecna/y cały dzień",
+                    "morning_only": "🌅 Tylko rano",
+                    "afternoon_only": "🌆 Tylko po południu",
+                    "late_start": "🕙 Późniejszy start",
+                    "early_end": "🏃 Wcześniejsze wyjście",
+                    "remote": "🏠 Praca zdalna",
+                    "partial": "⏰ Częściowo dostępna/y",
+                }
                 if len(saved_dates) == 1:
                     date_fmt = datetime.strptime(saved_dates[0], '%Y-%m-%d').strftime('%A %d.%m')
-                    say(f"✅ Zapisałem! *{date_fmt}* — Daniel dostanie info dziś o 17:00. 👍")
+                    say(f"✅ Zapisałem! *{date_fmt}* 👍")
+                    # Powiadom #zarzondpato od razu
+                    entry = next((e for e in entries if e["date"] == saved_dates[0]), entries[0])
+                    type_label = TYPE_LABELS.get(entry.get("type", "absent"), "⚠️ Nieobecność")
+                    notif = f"📅 *{user_name}* — {type_label} ({date_fmt})"
+                    if entry.get("details"):
+                        notif += f"\n_{entry['details']}_"
                 else:
                     dates_fmt = ", ".join(datetime.strptime(d, '%Y-%m-%d').strftime('%d.%m') for d in saved_dates)
-                    say(f"✅ Zapisałem nieobecności: *{dates_fmt}* — Daniel dostanie info o 17:00. 👍")
+                    say(f"✅ Zapisałem nieobecności: *{dates_fmt}* 👍")
+                    notif = f"📅 *{user_name}* — nieobecności: {dates_fmt}"
+                try:
+                    app.client.chat_postMessage(channel="C0AJ4HBS94G", text=notif)
+                except Exception as _e:
+                    logger.error(f"❌ Błąd powiadomienia #zarzondpato: {_e}")
                 logger.info(f"📅 Availability: {user_name} → {saved_dates}")
                 return True
 
@@ -3543,9 +3563,15 @@ Odpowiedz TYLKO JSON:
             summary = data.get("request_summary", user_message[:100])
             req_id = save_request(user_id, user_name, category, summary, user_message)
             cat_label = REQUEST_CATEGORY_LABELS.get(category, "📌 Inne")
-            say(f"✅ Zapisałem Twoją prośbę *#{req_id}* — {cat_label}\n"
-                f"_{summary}_\n\n"
-                f"Daniel dostanie info dziś o 17:00. Jak tylko odpowie, wróci do Ciebie bezpośrednio. 👍")
+            say(f"✅ Zapisałem Twoją prośbę *#{req_id}* 👍\n_{summary}_")
+            # Powiadom #zarzondpato od razu
+            try:
+                app.client.chat_postMessage(
+                    channel="C0AJ4HBS94G",
+                    text=f"📋 *Nowa prośba #{req_id}* — *{user_name}*\n{cat_label}: {summary}\n_Zamknij: `@Sebol zamknij #{req_id}`_"
+                )
+            except Exception as _e:
+                logger.error(f"❌ Błąd powiadomienia #zarzondpato: {_e}")
             logger.info(f"📋 Request #{req_id}: {user_name} → {category}: {summary}")
             return True
 
