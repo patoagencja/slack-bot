@@ -1552,13 +1552,23 @@ def _save_onboardings(data):
 # ── SEND DM HELPERS ───────────────────────────────────────────────────────────
 
 def _resolve_team_member(name_query):
-    """Dopasowuje imię (w różnych formach) do TEAM_MEMBERS."""
+    """Dopasowuje imię (w różnych formach fleksyjnych) do TEAM_MEMBERS.
+    Kolejność: 1) dokładny alias, 2) startswith w aliasach (np. 'piotr' → 'piotrek').
+    """
     q = name_query.lower().strip()
+    if not q:
+        return None
+    # 1. Dokładne dopasowanie do aliasów (w tym formy fleksyjne)
     for member in TEAM_MEMBERS:
-        if q == member["name"].lower():
+        aliases_lower = [a.lower() for a in member.get("aliases", [])]
+        if q in aliases_lower:
             return member
-        if q in [a.lower() for a in member.get("aliases", [])]:
-            return member
+    # 2. Prefix fallback: alias zaczyna się od q lub q zaczyna się od aliasu
+    for member in TEAM_MEMBERS:
+        aliases_lower = [a.lower() for a in member.get("aliases", [])]
+        for alias in aliases_lower:
+            if alias.startswith(q) or q.startswith(alias):
+                return member
     return None
 
 
@@ -4009,37 +4019,45 @@ TEAM_MEMBERS = [
         "name":     "Daniel",
         "role":     "CEO",
         "slack_id": "UTE1RN6SJ",
-        "aliases":  ["daniel", "danio", "dan"],
+        # mianownik: daniel | dopełniacz/biernik: daniela | zdrobnienia: danio, dan, daniego
+        "aliases":  ["daniel", "daniela", "danio", "dan", "daniego", "danka", "dankowi"],
     },
     {
         "name":     "Piotrek",
         "role":     "COO",
         "slack_id": "USZ1MSDUJ",
-        "aliases":  ["piotrek", "piotr", "piotruś", "pietrek"],
+        # mianownik: piotrek/piotr | dopełniacz/biernik: piotrka/piotra | inne: pietrek, piotruś
+        "aliases":  ["piotrek", "piotrka", "piotr", "piotra", "piotrkowi", "piotrowi",
+                     "piotruś", "pietrek", "pietrka", "pietrkowi"],
     },
     {
         "name":     "Paulina",
         "role":     "pracownik",
         "slack_id": "U05TASHT92S",
-        "aliases":  ["paulina", "paula"],
+        # mianownik: paulina | dopełniacz: pauliny | celownik: paulinie | biernik: paulinę | skróty: paula, pauli
+        "aliases":  ["paulina", "pauliny", "paulinie", "paulinę", "pauline",
+                     "paula", "pauli", "paulie"],
     },
     {
         "name":     "Magda",
         "role":     "pracownik",
         "slack_id": "U05ELG4FHMG",
-        "aliases":  ["magda", "magdalena"],
+        # mianownik: magda/magdalena | dopełniacz: magdy/magdaleny | celownik: magdzie/magdalenie
+        "aliases":  ["magda", "magdy", "magdzie", "magdalena", "magdaleny", "magdalenie"],
     },
     {
         "name":     "Ewa",
         "role":     "pracownik",
         "slack_id": "U03011HEDBR",
-        "aliases":  ["ewa", "ewka"],
+        # mianownik: ewa/ewka | dopełniacz: ewy/ewki | celownik: ewie/ewce
+        "aliases":  ["ewa", "ewy", "ewie", "ewka", "ewki", "ewce"],
     },
     {
         "name":     "Emka",
         "role":     "pracownik",
         "slack_id": "U07ML556LLU",
-        "aliases":  ["emka", "emma", "em", "emilia"],
+        # mianownik: emka/emilia/emma | dopełniacz: emki/emilii | celownik: emce/emilii
+        "aliases":  ["emka", "emki", "emce", "emma", "em", "emilia", "emilii", "emilię", "emilie"],
     },
 ]
 
