@@ -1858,6 +1858,17 @@ def handle_message_events(body, say, logger):
     if _handle_onboarding_done(event, say):
         return
 
+    # === KANAŁY (pub/priv): reaguj tylko na "seba" lub "sebol" bez @wzmianki ===
+    import re as _re_seba
+    if event.get("channel_type") in ("channel", "group"):
+        _seba_m = _re_seba.search(r'\b(seba|sebol)\b', user_message, _re_seba.IGNORECASE)
+        if not _seba_m:
+            return  # ignoruj — ktoś pisze do innych, nie do bota
+        # Usuń "seba"/"sebol" z wiadomości i traktuj jak @mention
+        _clean = _re_seba.sub("", user_message, count=1, flags=_re_seba.IGNORECASE).strip()
+        handle_mention({**event, "text": f"<@SEBOL> {_clean}"}, say)
+        return
+
     # Digest triggers - tylko w kanałach
     if any(t in text_lower for t in ["digest test", "test digest", "digest", "raport"]):
         if event.get("channel_type") != "im":
