@@ -970,8 +970,22 @@ def handle_mention(event, say):
 
     msg_lower_m = user_message.lower()
 
-    # === "zamknij #N" — Daniel zamyka prośbę ===
+    # === ADS COMMANDS: "ads health", "ads anomalies dre" itp. ===
     import re as _re_m
+    _ads_match = _re_m.search(
+        r'\bads\s+(health|anomalies|anomalie|pacing|winners|losers)\b(.*)',
+        msg_lower_m
+    )
+    if _ads_match:
+        _dispatch_ads_command(
+            _ads_match.group(1).strip(),
+            event.get("channel", ""),
+            _ads_match.group(2).strip(),
+            say,
+        )
+        return
+
+    # === "zamknij #N" — Daniel zamyka prośbę ===
     close_match = _re_m.search(r'zamknij\s+#?(\d+)', msg_lower_m)
     if close_match:
         req_id = int(close_match.group(1))
@@ -1389,6 +1403,22 @@ Pytanie → Direct answer → Context → Actionable next step
         say(text=f"Przepraszam, wystąpił błąd: {str(e)}", thread_ts=thread_ts)
 
 
+# ── /ads slash command ────────────────────────────────────────────────────────
+@app.command("/ads")
+def handle_ads_slash(ack, respond, command):
+    ack()
+    text       = (command.get("text") or "").strip()
+    channel_id = command.get("channel_id", "")
+    parts      = text.split(None, 1)   # ["health", "dre"] or ["health"]
+    if not parts:
+        known = " | ".join(f"`{k}`" for k in ["health", "anomalies", "pacing", "winners", "losers"])
+        respond(f"Użycie: `/ads [komenda] [klient]`\nKomendy: {known}")
+        return
+    subcmd     = parts[0]
+    extra_text = parts[1] if len(parts) > 1 else ""
+    _dispatch_ads_command(subcmd, channel_id, extra_text, respond)
+
+
 # Reaguj na wiadomości DM
 @app.event("message")
 def handle_message_events(body, say, logger):
@@ -1414,7 +1444,6 @@ def handle_message_events(body, say, logger):
     text_lower = user_message.lower()
 
     # Digest triggers - tylko w kanałach
-    CHANNEL_CLIENT_MAP = {"C05GPM4E9B8": "dre"}
     if any(t in text_lower for t in ["digest test", "test digest", "digest", "raport"]):
         if event.get("channel_type") != "im":
             channel_id = event.get("channel")
@@ -1424,6 +1453,21 @@ def handle_message_events(body, say, logger):
             else:
                 say("Dla którego klienta? Dostępne: `dre` (wpisz np. `digest test dre`)")
             return
+
+    # === ADS COMMANDS w DM i kanałach: "ads health", "ads anomalies dre" ===
+    import re as _re_dm
+    _ads_dm_match = _re_dm.search(
+        r'\bads\s+(health|anomalies|anomalie|pacing|winners|losers)\b(.*)',
+        text_lower
+    )
+    if _ads_dm_match:
+        _dispatch_ads_command(
+            _ads_dm_match.group(1).strip(),
+            event.get("channel", ""),
+            _ads_dm_match.group(2).strip(),
+            say,
+        )
+        return
 
     # === AVAILABILITY: pracownik pisze o nieobecności (tylko DM) ===
     if event.get("channel_type") == "im":
@@ -1770,6 +1814,270 @@ CLIENT_GOALS = {
     # conversion — mierzy ROAS, konwersje, CPA (domyślne dla reszty klientów)
     # "inny klient": "conversion",
 }
+
+# ── ADS COMMANDS CONFIG ───────────────────────────────────────────────────────
+# Konfiguracja klientów dla komend /ads health|anomalies|pacing|winners|losers
+AD_CLIENTS = {
+    "dre": {
+        "display_name":    "Drzwi DRE",
+        "meta_name":       "drzwi dre",
+        "google_accounts": ["dre", "dre 2024", "dre 2025"],
+        "goal":            "engagement",
+        "channel_id":      os.environ.get("DRE_CHANNEL_ID", "C05GPM4E9B8"),
+    },
+    # Następny klient:
+    # "klient2": {
+    #     "display_name": "Nazwa",
+    #     "meta_name": "nazwa meta",
+    #     "google_accounts": ["konto"],
+    #     "goal": "conversion",
+    #     "channel_id": "CXXXXXXXXX",
+    # },
+}
+
+# channel_id → klucz w AD_CLIENTS (auto-detect klienta z kanału)
+CHANNEL_CLIENT_MAP = {
+    os.environ.get("DRE_CHANNEL_ID", "C05GPM4E9B8"): "dre",
+}
+
+
+def _resolve_ads_client(channel_id, text):
+    """Zwraca (client_key, client_cfg). Najpierw szuka nazwy w tekście,
+    potem mapuje z kanału. Zwraca (None, None) jeśli nie znaleziono."""
+    text_lower = (text or "").strip().lower()
+    for key in AD_CLIENTS:
+        if key in text_lower:
+            return key, AD_CLIENTS[key]
+    if channel_id in CHANNEL_CLIENT_MAP:
+        key = CHANNEL_CLIENT_MAP[channel_id]
+        return key, AD_CLIENTS[key]
+    return None, None
+
+
+def _fetch_ads_data(client_cfg, date_from, date_to, min_spend=20.0):
+    """Pobiera dane Meta + Google dla klienta, zwraca listę kampanii (unified)."""
+    campaigns = []
+    try:
+        meta = meta_ads_tool(
+            client_name=client_cfg["meta_name"],
+            date_from=date_from, date_to=date_to,
+            level="campaign",
+            metrics=["campaign_name", "spend", "impressions", "clicks", "ctr",
+                     "cpc", "reach", "frequency", "purchase_roas", "conversions"],
+        )
+        for c in meta.get("data", []):
+            if float(c.get("spend", 0) or 0) >= min_spend:
+                c["platform"] = "meta"
+                campaigns.append(c)
+    except Exception as _e:
+        logger.error(f"_fetch_ads_data meta error: {_e}")
+
+    for account in client_cfg.get("google_accounts", []):
+        try:
+            gdata = google_ads_tool(
+                client_name=account,
+                date_from=date_from, date_to=date_to,
+                level="campaign",
+                metrics=["campaign.name", "metrics.impressions", "metrics.clicks",
+                         "metrics.cost_micros", "metrics.conversions",
+                         "metrics.ctr", "metrics.average_cpc"],
+            )
+            for c in gdata.get("data", []):
+                if float(c.get("cost", c.get("spend", 0)) or 0) >= min_spend:
+                    c["platform"] = "google"
+                    campaigns.append(c)
+        except Exception as _e:
+            logger.error(f"_fetch_ads_data google error ({account}): {_e}")
+
+    return campaigns
+
+
+# ── 5 ADS COMMAND FUNCTIONS ───────────────────────────────────────────────────
+
+def _ads_health(client_key, client_cfg):
+    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    today     = datetime.now().strftime('%Y-%m-%d')
+    campaigns = _fetch_ads_data(client_cfg, yesterday, today)
+    if not campaigns:
+        return f"⚠️ Brak danych za wczoraj dla *{client_cfg['display_name']}*"
+
+    bm  = get_client_benchmarks(client_cfg["meta_name"], "meta", 30)
+    bgoog = get_client_benchmarks(client_key, "google", 30)
+
+    total_spend  = sum(float(c.get("spend") or c.get("cost") or 0) for c in campaigns)
+    total_clicks = sum(int(c.get("clicks") or 0) for c in campaigns)
+    total_impr   = sum(int(c.get("impressions") or 0) for c in campaigns)
+    avg_ctr = (total_clicks / total_impr * 100) if total_impr else 0
+
+    b_ctr = (bm or {}).get("avg_ctr")
+    b_cpc = (bm or {}).get("avg_cpc")
+    avg_cpc_vals = [float(c.get("cpc") or c.get("average_cpc") or 0)
+                    for c in campaigns if c.get("cpc") or c.get("average_cpc")]
+    avg_cpc = sum(avg_cpc_vals) / len(avg_cpc_vals) if avg_cpc_vals else 0
+
+    def _vs(val, benchmark, higher_is_better=True):
+        if not benchmark or not val:
+            return ""
+        diff = (val - benchmark) / benchmark * 100
+        if not higher_is_better:
+            diff = -diff
+        return f" {'🟢' if diff > 10 else ('🔴' if diff < -10 else '✅')} vs avg {benchmark:.2f}"
+
+    n_alerts = len(analyze_campaign_trends(campaigns, goal=client_cfg["goal"],
+                                           meta_benchmarks=bm,
+                                           google_benchmarks=bgoog).get("critical_alerts", []))
+    status = "🟢 Zdrowe" if n_alerts == 0 else f"🔴 {n_alerts} alert{'y' if n_alerts > 1 else ''}"
+
+    return (
+        f"🏥 *Health — {client_cfg['display_name']}* ({yesterday})\n"
+        f"Status: *{status}*\n"
+        f"💰 Spend: *{total_spend:.0f} PLN* | 📈 Kampanie: *{len(campaigns)}*\n"
+        f"CTR: *{avg_ctr:.2f}%*{_vs(avg_ctr, b_ctr)} | "
+        f"CPC: *{avg_cpc:.2f} PLN*{_vs(avg_cpc, b_cpc, higher_is_better=False)}"
+    )
+
+
+def _ads_anomalies(client_key, client_cfg):
+    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    today     = datetime.now().strftime('%Y-%m-%d')
+    campaigns = _fetch_ads_data(client_cfg, yesterday, today)
+    if not campaigns:
+        return f"⚠️ Brak danych za wczoraj dla *{client_cfg['display_name']}*"
+
+    bm    = get_client_benchmarks(client_cfg["meta_name"], "meta", 30)
+    bgoog = get_client_benchmarks(client_key, "google", 30)
+    analysis = analyze_campaign_trends(campaigns, goal=client_cfg["goal"],
+                                       meta_benchmarks=bm, google_benchmarks=bgoog)
+
+    alerts   = analysis.get("critical_alerts", [])
+    warnings = analysis.get("warnings", [])
+
+    if not alerts and not warnings:
+        return f"✅ *Anomalie — {client_cfg['display_name']}* ({yesterday})\nBrak anomalii. Wszystko w normie."
+
+    msg = f"🔍 *Anomalie — {client_cfg['display_name']}* ({yesterday})\n"
+    if alerts:
+        msg += "\n*🔴 Krytyczne:*\n"
+        for a in alerts:
+            msg += f"• *{a['campaign']}* — {a['message']}\n"
+            if a.get("action"):
+                msg += f"  → {a['action']}\n"
+    if warnings:
+        msg += "\n*🟡 Do sprawdzenia:*\n"
+        for w in warnings:
+            msg += f"• *{w['campaign']}* — {w['message']}\n"
+    return msg
+
+
+def _ads_pacing(client_key, client_cfg):
+    now = datetime.now()
+    days_elapsed = now.day - 1
+    if days_elapsed < 1:
+        return "⚠️ Pacing niedostępny — pierwszy dzień miesiąca, brak danych MTD."
+
+    import calendar
+    days_in_month = calendar.monthrange(now.year, now.month)[1]
+    days_remaining = days_in_month - now.day + 1
+
+    first_of_month = now.replace(day=1).strftime('%Y-%m-%d')
+    yesterday      = (now - timedelta(days=1)).strftime('%Y-%m-%d')
+
+    campaigns_mtd = _fetch_ads_data(client_cfg, first_of_month, yesterday, min_spend=0)
+    total_mtd  = sum(float(c.get("spend") or c.get("cost") or 0) for c in campaigns_mtd)
+    daily_avg  = total_mtd / days_elapsed
+    projected  = total_mtd + daily_avg * days_remaining
+    pct_month  = (now.day - 1) / days_in_month * 100
+    pct_budget = (total_mtd / projected * 100) if projected else 0
+
+    pace_bar = "🟢" if abs(pct_month - pct_budget) < 10 else ("🔴" if pct_budget < pct_month - 15 else "🟡")
+
+    return (
+        f"📊 *Pacing — {client_cfg['display_name']}* ({now.strftime('%B %Y')})\n"
+        f"MTD: *{total_mtd:.0f} PLN* przez {days_elapsed} dni "
+        f"({pct_month:.0f}% miesiąca)\n"
+        f"Śr. dzienna: *{daily_avg:.0f} PLN/dzień*\n"
+        f"Projekcja: {pace_bar} *{projected:.0f} PLN* end-of-month "
+        f"(zostało {days_remaining} dni)"
+    )
+
+
+def _ads_winners(client_key, client_cfg):
+    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    today     = datetime.now().strftime('%Y-%m-%d')
+    campaigns = _fetch_ads_data(client_cfg, yesterday, today)
+    if not campaigns:
+        return f"⚠️ Brak danych za wczoraj dla *{client_cfg['display_name']}*"
+
+    analysis = analyze_campaign_trends(campaigns, goal=client_cfg["goal"])
+    tops = analysis.get("top_performers", [])
+
+    if not tops:
+        return f"🏆 *Winners — {client_cfg['display_name']}* ({yesterday})\n_Brak wyraźnych liderów wczoraj._"
+
+    msg = f"🏆 *Winners — {client_cfg['display_name']}* ({yesterday})\n"
+    for i, t in enumerate(tops[:3], 1):
+        msg += f"{i}. *{t['campaign']}*\n   {t.get('metrics_line', '')}\n"
+    return msg
+
+
+def _ads_losers(client_key, client_cfg):
+    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    today     = datetime.now().strftime('%Y-%m-%d')
+    campaigns = _fetch_ads_data(client_cfg, yesterday, today)
+    if not campaigns:
+        return f"⚠️ Brak danych za wczoraj dla *{client_cfg['display_name']}*"
+
+    bm    = get_client_benchmarks(client_cfg["meta_name"], "meta", 30)
+    bgoog = get_client_benchmarks(client_key, "google", 30)
+    analysis = analyze_campaign_trends(campaigns, goal=client_cfg["goal"],
+                                       meta_benchmarks=bm, google_benchmarks=bgoog)
+    losers = analysis.get("critical_alerts", []) + analysis.get("warnings", [])
+
+    if not losers:
+        return f"💀 *Losers — {client_cfg['display_name']}* ({yesterday})\n✅ Brak słabeuszy wczoraj."
+
+    msg = f"💀 *Losers — {client_cfg['display_name']}* ({yesterday})\n"
+    for l in losers[:3]:
+        msg += f"• *{l['campaign']}* — {l['message']}\n"
+        if l.get("action"):
+            msg += f"  → {l['action']}\n"
+    return msg
+
+
+_ADS_SUBCOMMANDS = {
+    "health":    _ads_health,
+    "anomalies": _ads_anomalies,
+    "anomalie":  _ads_anomalies,
+    "pacing":    _ads_pacing,
+    "winners":   _ads_winners,
+    "losers":    _ads_losers,
+}
+
+
+def _dispatch_ads_command(subcmd, channel_id, extra_text, respond_fn):
+    """Wspólna logika: rozwiązuje klienta i wywołuje właściwą funkcję."""
+    fn = _ADS_SUBCOMMANDS.get(subcmd.lower())
+    if not fn:
+        known = " | ".join(f"`{k}`" for k in ["health", "anomalies", "pacing", "winners", "losers"])
+        respond_fn(f"❓ Nieznana komenda: *{subcmd}*\nDostępne: {known}")
+        return
+
+    client_key, client_cfg = _resolve_ads_client(channel_id, extra_text)
+    if not client_cfg:
+        known_clients = ", ".join(f"`{k}`" for k in AD_CLIENTS)
+        respond_fn(
+            f"❓ Nie wiem jakiego klienta masz na myśli.\n"
+            f"Dostępni klienci: {known_clients}\n"
+            f"Przykład: `ads health dre` lub wpisz na kanale klienta."
+        )
+        return
+
+    try:
+        result = fn(client_key, client_cfg)
+        respond_fn(result)
+    except Exception as _e:
+        logger.error(f"Błąd ads cmd {subcmd}/{client_key}: {_e}")
+        respond_fn(f"❌ Błąd podczas pobierania danych: {_e}")
 
 
 def _load_history_raw():
