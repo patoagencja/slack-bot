@@ -1042,6 +1042,35 @@ def handle_mention(event, say):
 
     channel = event['channel']
     thread_ts = event.get('thread_ts', event['ts'])
+
+    # Wykryj czy to grupowy czat (kanał publiczny/prywatny) czy DM
+    channel_type  = event.get('channel_type', 'channel')
+    is_group_chat = channel_type in ('channel', 'group')
+
+    # W grupowym czacie pobierz historię ostatnich wiadomości jako kontekst
+    channel_history_ctx = ""
+    if is_group_chat:
+        try:
+            hist_res  = app.client.conversations_history(channel=channel, limit=15)
+            raw_msgs  = hist_res.get('messages', [])[::-1]  # chronologicznie
+            name_map  = {m['slack_id']: m['name'] for m in TEAM_MEMBERS}
+            lines = []
+            for m in raw_msgs:
+                if m.get('ts') == event['ts']:
+                    continue  # pomiń bieżącą wiadomość z @wzmianką
+                uid  = m.get('user', '')
+                name = name_map.get(uid, 'Bot' if not uid else uid)
+                text = (m.get('text') or '').strip()
+                if text:
+                    lines.append(f"{name}: {text}")
+            if lines:
+                channel_history_ctx = (
+                    "[Ostatnie wiadomości w tym czacie — czytaj jako kontekst rozmowy:]\n"
+                    + "\n".join(lines) + "\n"
+                )
+        except Exception as e:
+            logger.error(f"Błąd pobierania historii kanału: {e}")
+
     # Oblicz dzisiejszą datę dynamicznie
     from datetime import datetime
     today = datetime.now()
@@ -1101,6 +1130,15 @@ Lead gen: CTR 1-2% | CVR landing page >3%
 Alert → 🔴 Problem | Metryki | Impact | Root cause | Akcje (1-3 kroki z timeframe)
 Analiza → SPEND | PERFORMANCE (ROAS/Conv/CTR) | 🔥 Top performer | ⚠️ Needs attention | 💡 Next steps
 Pytanie → Direct answer → Context → Actionable next step
+
+{"# TRYB: GRUPOWY CZAT" if is_group_chat else ""}
+{"""Jesteś w grupowym czacie z kilkoma osobami z teamu. Zasady:
+- Zachowuj się jak uczestnik rozmowy, nie jak bot który się prezentuje
+- NIE wypisuj swoich możliwości, NIE zaczynaj od "mogę pomóc w..." — po prostu odpowiadaj
+- Czytaj historię czatu (podaną wyżej) żeby rozumieć kontekst rozmowy
+- Odpowiadaj naturalnie i bezpośrednio na to co jest pytane lub omawiane
+- Krótko gdy wystarczy; szczegółowo gdy ktoś prosi o analizę lub dane
+- Gdy pytają o kampanie/dane — wywołaj narzędzie i daj konkretne liczby""" if is_group_chat else ""}
 """
     
     
@@ -1297,8 +1335,13 @@ Pytanie → Direct answer → Context → Actionable next step
         # Pobierz historię konwersacji użytkownika (bez zapisywania jeszcze)
         history = get_conversation_history(user_id)
 
+        # W grupowym czacie dołącz historię kanału jako kontekst do wiadomości
+        contextual_message = (
+            (channel_history_ctx + user_message) if channel_history_ctx else user_message
+        )
+
         # Stwórz messages dla tego zapytania (bez modyfikowania globalnej historii)
-        messages = history + [{"role": "user", "content": user_message}]
+        messages = history + [{"role": "user", "content": contextual_message}]
         
         # Pętla dla tool use (Claude może wielokrotnie używać narzędzi)
         while True:
@@ -1401,13 +1444,21 @@ Pytanie → Direct answer → Context → Actionable next step
                 # Zapisz całą konwersację do historii (user + assistant)
                 save_message_to_history(user_id, "user", user_message)
                 save_message_to_history(user_id, "assistant", response_text)
-                
-                say(text=response_text, thread_ts=thread_ts)
+
+                # Grupowy czat — odpowiadaj bezpośrednio, bez tworzenia threada
+                # (chyba że ktoś już jest w threadzie)
+                if is_group_chat and not event.get('thread_ts'):
+                    say(text=response_text)
+                else:
+                    say(text=response_text, thread_ts=thread_ts)
                 break
-        
+
     except Exception as e:
         logger.error(f"Błąd: {e}")
-        say(text=f"Przepraszam, wystąpił błąd: {str(e)}", thread_ts=thread_ts)
+        if is_group_chat and not event.get('thread_ts'):
+            say(text=f"Przepraszam, wystąpił błąd: {str(e)}")
+        else:
+            say(text=f"Przepraszam, wystąpił błąd: {str(e)}", thread_ts=thread_ts)
 
 
 # ── /ads slash command ────────────────────────────────────────────────────────
