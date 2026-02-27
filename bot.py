@@ -1499,13 +1499,13 @@ def _render_onboarding_message(ob):
 
 def _find_onboarding_by_thread(thread_ts, channel_id):
     """Zwraca (key, ob) po thread_ts + channel_id.
-    Jeśli brak w pliku (np. po restarcie), próbuje odtworzyć ze Slacka."""
+    Jeśli brak w pliku (np. po restarcie), odtwarza z historii wątku."""
     data = _load_onboardings()
     for key, ob in data.items():
         if ob.get("message_ts") == thread_ts and ob.get("channel_id") == channel_id:
             return key, ob
-    # Nie znaleziono — spróbuj odtworzyć ze Slacka
-    return _recover_onboarding_from_slack(channel_id, thread_ts)
+    # Nie znaleziono — odtwórz z historii "done N" komend w wątku
+    return _recover_onboarding_from_thread(channel_id, thread_ts)
 
 
 @app.command("/onboard")
@@ -1582,40 +1582,54 @@ def _find_active_onboarding_in_channel(channel_id):
     return candidates[0]
 
 
-def _recover_onboarding_from_slack(channel_id, thread_ts):
-    """Gdy brak danych (np. po restarcie), próbuje odtworzyć onboarding
-    na podstawie wiadomości Slacka. Zwraca (key, ob) lub (None, None)."""
+def _recover_onboarding_from_thread(channel_id, thread_ts):
+    """Gdy brak danych po restarcie, odtwarza stan z historii wątku.
+    Czyta 'done N' komendy z odpowiedzi — niezawodne źródło prawdy."""
+    import re
     try:
-        result = app.client.conversations_history(
+        # 1. Pobierz wiadomość rodzica żeby wyciągnąć nazwę klienta
+        parent = app.client.conversations_history(
             channel=channel_id,
             latest=str(float(thread_ts) + 1),
             oldest=str(float(thread_ts) - 1),
-            limit=1,
-            inclusive=True,
+            limit=1, inclusive=True,
         )
-        messages = result.get("messages", [])
-        if not messages:
+        msgs = parent.get("messages", [])
+        if not msgs:
             return None, None
-        msg_text = messages[0].get("text", "")
-        # Sprawdź czy to wiadomość onboardingowa (zawiera "Onboarding:")
-        import re
-        m = re.search(r'Onboarding:\s*(.+)', msg_text)
+        msg_text = msgs[0].get("text", "")
+        m = re.search(r'Onboarding:\s*\*?(.+?)\*?\n', msg_text)
         if not m:
             return None, None
-        client_name = m.group(1).strip().rstrip("*").lstrip("*")
+        client_name = m.group(1).strip()
 
-        # Odtwórz stan na podstawie ✅ w tekście
-        items = []
-        for item_def in ONBOARDING_CHECKLIST:
-            pattern = rf'✅.*?\*{item_def["id"]}\.'
-            done = bool(re.search(pattern, msg_text))
-            items.append({
-                **item_def,
-                "done": done,
-                "done_by": None,
-                "done_at": None,
-            })
+        # 2. Pobierz wszystkie odpowiedzi w wątku
+        replies_result = app.client.conversations_replies(
+            channel=channel_id, ts=thread_ts, limit=200,
+        )
+        replies = replies_result.get("messages", [])[1:]  # pomiń rodzica
 
+        # 3. Odtwórz stan z "done N" komend (ignoruj wiadomości bota)
+        done_ids = set()
+        for reply in replies:
+            if reply.get("bot_id") or reply.get("subtype") == "bot_message":
+                continue
+            reply_text = reply.get("text", "").lower()
+            dm = re.search(r'\bdone\b(.*)', reply_text)
+            if not dm:
+                continue
+            after = dm.group(1)
+            if "all" in after:
+                done_ids = set(range(1, len(ONBOARDING_CHECKLIST) + 1))
+            else:
+                for n in re.findall(r'\d+', after):
+                    done_ids.add(int(n))
+
+        items = [
+            {**item_def, "done": item_def["id"] in done_ids,
+             "done_by": None, "done_at": None}
+            for item_def in ONBOARDING_CHECKLIST
+        ]
         ob = {
             "client_name": client_name,
             "created_at": datetime.now().isoformat(),
@@ -1629,10 +1643,10 @@ def _recover_onboarding_from_slack(channel_id, thread_ts):
         data = _load_onboardings()
         data[key] = ob
         _save_onboardings(data)
-        logger.info(f"🔄 Odtworzono onboarding {client_name} z Slacka (ts={thread_ts})")
+        logger.info(f"🔄 Recovery onboarding '{client_name}': {len(done_ids)} punktów done z wątku")
         return key, ob
     except Exception as e:
-        logger.error(f"Błąd recovery onboardingu: {e}")
+        logger.error(f"Błąd recovery onboardingu z wątku: {e}")
         return None, None
 
 
@@ -1680,8 +1694,7 @@ def _handle_onboarding_done(event, say):
     except Exception:
         user_name = user_id
 
-    data = _load_onboardings()
-    ob = data[key]
+    # Użyj ob z _find_onboarding_by_thread — nie przeładowuj (unika nadpisania recovery)
     changed = []
     for item in ob["items"]:
         if item["id"] in item_ids and not item["done"]:
@@ -1704,6 +1717,9 @@ def _handle_onboarding_done(event, say):
         ob["completed"] = True
         ob["completed_at"] = datetime.now().isoformat()
 
+    # Zapisz — używamy ob z pamięci (nie data[key] żeby nie nadpisać recovery)
+    data = _load_onboardings()
+    data[key] = ob
     _save_onboardings(data)
 
     # Zaktualizuj oryginalną wiadomość
