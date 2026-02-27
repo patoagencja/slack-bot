@@ -1854,6 +1854,16 @@ def _resolve_ads_client(channel_id, text):
     return None, None
 
 
+def _parse_period(text, default=7):
+    """Wyciąga liczbę dni z tekstu, np. '3d' → 3, '14d' → 14.
+    Jeśli brak, zwraca default (7)."""
+    import re
+    m = re.search(r'\b(\d+)d\b', (text or "").lower())
+    if m:
+        return max(1, min(int(m.group(1)), 90))
+    return default
+
+
 def _fetch_ads_data(client_cfg, date_from, date_to, min_spend=20.0):
     """Pobiera dane Meta + Google dla klienta, zwraca listę kampanii (unified)."""
     campaigns = []
@@ -1894,12 +1904,13 @@ def _fetch_ads_data(client_cfg, date_from, date_to, min_spend=20.0):
 
 # ── 5 ADS COMMAND FUNCTIONS ───────────────────────────────────────────────────
 
-def _ads_health(client_key, client_cfg):
-    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-    today     = datetime.now().strftime('%Y-%m-%d')
-    campaigns = _fetch_ads_data(client_cfg, yesterday, today)
+def _ads_health(client_key, client_cfg, days=7):
+    date_to   = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    date_from = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+    period_label = f"ostatnie {days}d ({date_from} — {date_to})"
+    campaigns = _fetch_ads_data(client_cfg, date_from, date_to)
     if not campaigns:
-        return f"⚠️ Brak danych za wczoraj dla *{client_cfg['display_name']}*"
+        return f"⚠️ Brak danych ({period_label}) dla *{client_cfg['display_name']}*"
 
     bm  = get_client_benchmarks(client_cfg["meta_name"], "meta", 30)
     bgoog = get_client_benchmarks(client_key, "google", 30)
@@ -1929,7 +1940,7 @@ def _ads_health(client_key, client_cfg):
     status = "🟢 Zdrowe" if n_alerts == 0 else f"🔴 {n_alerts} alert{'y' if n_alerts > 1 else ''}"
 
     return (
-        f"🏥 *Health — {client_cfg['display_name']}* ({yesterday})\n"
+        f"🏥 *Health — {client_cfg['display_name']}* ({period_label})\n"
         f"Status: *{status}*\n"
         f"💰 Spend: *{total_spend:.0f} PLN* | 📈 Kampanie: *{len(campaigns)}*\n"
         f"CTR: *{avg_ctr:.2f}%*{_vs(avg_ctr, b_ctr)} | "
@@ -1937,12 +1948,13 @@ def _ads_health(client_key, client_cfg):
     )
 
 
-def _ads_anomalies(client_key, client_cfg):
-    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-    today     = datetime.now().strftime('%Y-%m-%d')
-    campaigns = _fetch_ads_data(client_cfg, yesterday, today)
+def _ads_anomalies(client_key, client_cfg, days=7):
+    date_to   = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    date_from = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+    period_label = f"ostatnie {days}d ({date_from} — {date_to})"
+    campaigns = _fetch_ads_data(client_cfg, date_from, date_to)
     if not campaigns:
-        return f"⚠️ Brak danych za wczoraj dla *{client_cfg['display_name']}*"
+        return f"⚠️ Brak danych ({period_label}) dla *{client_cfg['display_name']}*"
 
     bm    = get_client_benchmarks(client_cfg["meta_name"], "meta", 30)
     bgoog = get_client_benchmarks(client_key, "google", 30)
@@ -1953,9 +1965,9 @@ def _ads_anomalies(client_key, client_cfg):
     warnings = analysis.get("warnings", [])
 
     if not alerts and not warnings:
-        return f"✅ *Anomalie — {client_cfg['display_name']}* ({yesterday})\nBrak anomalii. Wszystko w normie."
+        return f"✅ *Anomalie — {client_cfg['display_name']}* ({period_label})\nBrak anomalii. Wszystko w normie."
 
-    msg = f"🔍 *Anomalie — {client_cfg['display_name']}* ({yesterday})\n"
+    msg = f"🔍 *Anomalie — {client_cfg['display_name']}* ({period_label})\n"
     if alerts:
         msg += "\n*🔴 Krytyczne:*\n"
         for a in alerts:
@@ -2001,31 +2013,33 @@ def _ads_pacing(client_key, client_cfg):
     )
 
 
-def _ads_winners(client_key, client_cfg):
-    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-    today     = datetime.now().strftime('%Y-%m-%d')
-    campaigns = _fetch_ads_data(client_cfg, yesterday, today)
+def _ads_winners(client_key, client_cfg, days=7):
+    date_to   = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    date_from = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+    period_label = f"ostatnie {days}d ({date_from} — {date_to})"
+    campaigns = _fetch_ads_data(client_cfg, date_from, date_to)
     if not campaigns:
-        return f"⚠️ Brak danych za wczoraj dla *{client_cfg['display_name']}*"
+        return f"⚠️ Brak danych ({period_label}) dla *{client_cfg['display_name']}*"
 
     analysis = analyze_campaign_trends(campaigns, goal=client_cfg["goal"])
     tops = analysis.get("top_performers", [])
 
     if not tops:
-        return f"🏆 *Winners — {client_cfg['display_name']}* ({yesterday})\n_Brak wyraźnych liderów wczoraj._"
+        return f"🏆 *Winners — {client_cfg['display_name']}* ({period_label})\n_Brak wyraźnych liderów._"
 
-    msg = f"🏆 *Winners — {client_cfg['display_name']}* ({yesterday})\n"
+    msg = f"🏆 *Winners — {client_cfg['display_name']}* ({period_label})\n"
     for i, t in enumerate(tops[:3], 1):
         msg += f"{i}. *{t['campaign']}*\n   {t.get('metrics_line', '')}\n"
     return msg
 
 
-def _ads_losers(client_key, client_cfg):
-    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-    today     = datetime.now().strftime('%Y-%m-%d')
-    campaigns = _fetch_ads_data(client_cfg, yesterday, today)
+def _ads_losers(client_key, client_cfg, days=7):
+    date_to   = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    date_from = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+    period_label = f"ostatnie {days}d ({date_from} — {date_to})"
+    campaigns = _fetch_ads_data(client_cfg, date_from, date_to)
     if not campaigns:
-        return f"⚠️ Brak danych za wczoraj dla *{client_cfg['display_name']}*"
+        return f"⚠️ Brak danych ({period_label}) dla *{client_cfg['display_name']}*"
 
     bm    = get_client_benchmarks(client_cfg["meta_name"], "meta", 30)
     bgoog = get_client_benchmarks(client_key, "google", 30)
@@ -2034,9 +2048,9 @@ def _ads_losers(client_key, client_cfg):
     losers = analysis.get("critical_alerts", []) + analysis.get("warnings", [])
 
     if not losers:
-        return f"💀 *Losers — {client_cfg['display_name']}* ({yesterday})\n✅ Brak słabeuszy wczoraj."
+        return f"💀 *Losers — {client_cfg['display_name']}* ({period_label})\n✅ Brak słabeuszy w tym okresie."
 
-    msg = f"💀 *Losers — {client_cfg['display_name']}* ({yesterday})\n"
+    msg = f"💀 *Losers — {client_cfg['display_name']}* ({period_label})\n"
     for l in losers[:3]:
         msg += f"• *{l['campaign']}* — {l['message']}\n"
         if l.get("action"):
@@ -2068,12 +2082,20 @@ def _dispatch_ads_command(subcmd, channel_id, extra_text, respond_fn):
         respond_fn(
             f"❓ Nie wiem jakiego klienta masz na myśli.\n"
             f"Dostępni klienci: {known_clients}\n"
-            f"Przykład: `ads health dre` lub wpisz na kanale klienta."
+            f"Przykład: `/ads health dre` lub `/ads health dre 14d` (domyślnie 7 dni)"
         )
         return
 
+    # Parsuj opcjonalny okres, np. "dre 3d" → days=3, "dre 14d" → days=14
+    days = _parse_period(extra_text, default=7)
+
     try:
-        result = fn(client_key, client_cfg)
+        import inspect
+        sig = inspect.signature(fn)
+        if "days" in sig.parameters:
+            result = fn(client_key, client_cfg, days=days)
+        else:
+            result = fn(client_key, client_cfg)
         respond_fn(result)
     except Exception as _e:
         logger.error(f"Błąd ads cmd {subcmd}/{client_key}: {_e}")
