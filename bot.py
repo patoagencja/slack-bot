@@ -970,6 +970,12 @@ def handle_mention(event, say):
 
     msg_lower_m = user_message.lower()
 
+    # === ONBOARDING: @Sebol done N w wątku onboardingowym ===
+    import re as _re_ob
+    if _re_ob.search(r'\bdone\b', msg_lower_m):
+        if _handle_onboarding_done(event, say):
+            return
+
     # === ADS COMMANDS: "ads health", "ads anomalies dre" itp. ===
     import re as _re_m
     _ads_match = _re_m.search(
@@ -1492,12 +1498,14 @@ def _render_onboarding_message(ob):
 
 
 def _find_onboarding_by_thread(thread_ts, channel_id):
-    """Zwraca (key, ob) po thread_ts + channel_id lub (None, None)."""
+    """Zwraca (key, ob) po thread_ts + channel_id.
+    Jeśli brak w pliku (np. po restarcie), próbuje odtworzyć ze Slacka."""
     data = _load_onboardings()
     for key, ob in data.items():
         if ob.get("message_ts") == thread_ts and ob.get("channel_id") == channel_id:
             return key, ob
-    return None, None
+    # Nie znaleziono — spróbuj odtworzyć ze Slacka
+    return _recover_onboarding_from_slack(channel_id, thread_ts)
 
 
 @app.command("/onboard")
@@ -1570,9 +1578,62 @@ def _find_active_onboarding_in_channel(channel_id):
     ]
     if not candidates:
         return None, None
-    # Zwróć najnowszy
     candidates.sort(key=lambda x: x[1].get("created_at", ""), reverse=True)
     return candidates[0]
+
+
+def _recover_onboarding_from_slack(channel_id, thread_ts):
+    """Gdy brak danych (np. po restarcie), próbuje odtworzyć onboarding
+    na podstawie wiadomości Slacka. Zwraca (key, ob) lub (None, None)."""
+    try:
+        result = app.client.conversations_history(
+            channel=channel_id,
+            latest=str(float(thread_ts) + 1),
+            oldest=str(float(thread_ts) - 1),
+            limit=1,
+            inclusive=True,
+        )
+        messages = result.get("messages", [])
+        if not messages:
+            return None, None
+        msg_text = messages[0].get("text", "")
+        # Sprawdź czy to wiadomość onboardingowa (zawiera "Onboarding:")
+        import re
+        m = re.search(r'Onboarding:\s*(.+)', msg_text)
+        if not m:
+            return None, None
+        client_name = m.group(1).strip().rstrip("*").lstrip("*")
+
+        # Odtwórz stan na podstawie ✅ w tekście
+        items = []
+        for item_def in ONBOARDING_CHECKLIST:
+            pattern = rf'✅.*?\*{item_def["id"]}\.'
+            done = bool(re.search(pattern, msg_text))
+            items.append({
+                **item_def,
+                "done": done,
+                "done_by": None,
+                "done_at": None,
+            })
+
+        ob = {
+            "client_name": client_name,
+            "created_at": datetime.now().isoformat(),
+            "created_by": "recovered",
+            "channel_id": channel_id,
+            "message_ts": thread_ts,
+            "completed": all(i["done"] for i in items),
+            "items": items,
+        }
+        key = _onboarding_key(client_name)
+        data = _load_onboardings()
+        data[key] = ob
+        _save_onboardings(data)
+        logger.info(f"🔄 Odtworzono onboarding {client_name} z Slacka (ts={thread_ts})")
+        return key, ob
+    except Exception as e:
+        logger.error(f"Błąd recovery onboardingu: {e}")
+        return None, None
 
 
 def _handle_onboarding_done(event, say):
