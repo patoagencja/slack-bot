@@ -3196,6 +3196,71 @@ def send_weekly_reports():
 
 AVAILABILITY_FILE = os.path.join(os.path.dirname(__file__), "data", "team_availability.json")
 
+# ── TEAM MEMBERS ──────────────────────────────────────────────────────────────
+# Wszyscy pracownicy agencji Pato — Slack ID, role, aliasy imion
+TEAM_MEMBERS = [
+    {
+        "name":     "Daniel",
+        "role":     "CEO",
+        "slack_id": "UTE1RN6SJ",
+        "aliases":  ["daniel", "danio", "dan"],
+    },
+    {
+        "name":     "Piotrek",
+        "role":     "COO",
+        "slack_id": "USZ1MSDUJ",
+        "aliases":  ["piotrek", "piotr", "piotruś", "pietrek"],
+    },
+    {
+        "name":     "Paulina",
+        "role":     "pracownik",
+        "slack_id": "U05TASHT92S",
+        "aliases":  ["paulina", "paula"],
+    },
+    {
+        "name":     "Magda",
+        "role":     "pracownik",
+        "slack_id": "U05ELG4FHMG",
+        "aliases":  ["magda", "magdalena"],
+    },
+    {
+        "name":     "Ewa",
+        "role":     "pracownik",
+        "slack_id": "U03011HEDBR",
+        "aliases":  ["ewa", "ewka"],
+    },
+    {
+        "name":     "Emka",
+        "role":     "pracownik",
+        "slack_id": "U07ML556LLU",
+        "aliases":  ["emka", "emma", "em", "emilia"],
+    },
+]
+
+def find_team_member(name_hint):
+    """Szuka osoby w teamie po imieniu/aliasie (case-insensitive).
+    Zwraca dict z name/role/slack_id lub None."""
+    if not name_hint:
+        return None
+    needle = name_hint.lower().strip()
+    # 1. dokładny alias
+    for m in TEAM_MEMBERS:
+        if needle in m["aliases"]:
+            return m
+    # 2. startswith (np. "piotr" → "piotrek")
+    for m in TEAM_MEMBERS:
+        for alias in m["aliases"]:
+            if alias.startswith(needle) or needle.startswith(alias):
+                return m
+    return None
+
+def get_team_context_str():
+    """Zwraca opis teamu dla promptów Claude."""
+    lines = []
+    for m in TEAM_MEMBERS:
+        lines.append(f"  - {m['name']} ({m['role']})")
+    return "\n".join(lines)
+
 # Szybki pre-filtr (słowa kluczowe PL) zanim wywołamy Claude
 ABSENCE_KEYWORDS = [
     "nie będzie", "nie bedzie", "nie ma mnie", "nie będę", "nie bede",
@@ -3327,25 +3392,44 @@ def _next_workday(from_date=None):
     return d
 
 def _format_availability_summary(entries, date_label):
-    """Formatuje czytelne podsumowanie dla Daniela."""
+    """Formatuje czytelne podsumowanie dla Daniela — pokazuje cały team."""
     TYPE_LABELS = {
-        "absent":           "❌ Nieobecna/y cały dzień",
+        "absent":           "❌ Nieobecna/y",
         "morning_only":     "🌅 Tylko rano",
         "afternoon_only":   "🌆 Tylko po południu",
         "late_start":       "🕙 Późniejszy start",
         "early_end":        "🏃 Wcześniejsze wyjście",
-        "remote":           "🏠 Praca zdalna",
-        "partial":          "⏰ Częściowo dostępna/y",
+        "remote":           "🏠 Zdalnie",
+        "partial":          "⏰ Częściowo",
     }
-    if not entries:
-        return f"✅ *{date_label}* — wszyscy w biurze, żadnych nieobecności 🎉"
+
+    # Zbierz kto jest nieobecny (po Slack ID)
+    absent_ids = {e["user_id"]: e for e in entries}
+
+    absent_lines = []
+    present_names = []
+
+    for m in TEAM_MEMBERS:
+        if m["slack_id"] in absent_ids:
+            e = absent_ids[m["slack_id"]]
+            label = TYPE_LABELS.get(e.get("type", "absent"), "⚠️ Ograniczona dostępność")
+            line = f"• *{m['name']}* ({m['role']}) — {label}"
+            if e.get("details"):
+                line += f"\n  _{e['details']}_"
+            absent_lines.append(line)
+        else:
+            present_names.append(f"{m['name']}")
 
     msg = f"📅 *Dostępność teamu — {date_label}:*\n\n"
-    for e in entries:
-        type_label = TYPE_LABELS.get(e["type"], "⚠️ Ograniczona dostępność")
-        msg += f"• *{e['user_name']}* — {type_label}\n"
-        if e.get("details"):
-            msg += f"  _{e['details']}_\n"
+
+    if absent_lines:
+        msg += "\n".join(absent_lines) + "\n"
+    else:
+        msg += "✅ Wszyscy w biurze!\n"
+
+    if present_names:
+        msg += f"\n✅ *W pracy:* {', '.join(present_names)}"
+
     return msg
 
 def send_daily_team_availability():
@@ -3511,14 +3595,19 @@ def handle_employee_dm(user_id, user_name, user_message, say):
     today_weekday = datetime.now().strftime('%A')
     current_year = datetime.now().year
 
-    prompt = f"""Przetwórz wiadomość od pracownika agencji marketingowej.
+    team_ctx = get_team_context_str()
+
+    prompt = f"""Przetwórz wiadomość od pracownika agencji marketingowej Pato.
 
 NADAWCA: {user_name}
 WIADOMOŚĆ: "{user_message}"
 DZIŚ: {today_str} ({today_weekday}), rok {current_year}
 
+ZESPÓŁ PATO (wszyscy pracownicy):
+{team_ctx}
+
 ═══ KROK 1: KTO JEST NIEOBECNY? ═══
-Przeczytaj wiadomość. Czy nieobecność dotyczy {user_name} (piszącego), czy INNEJ osoby?
+Przeczytaj wiadomość. Czy nieobecność dotyczy {user_name} (piszącego), czy INNEJ osoby z teamu?
 
 Przykłady (nadawca = "Daniel"):
   "Paulina wyjezdza 1-8 marca"           → absent_person: "Paulina"
@@ -3571,8 +3660,14 @@ Odpowiedz TYLKO JSON:
         if msg_type == "absence":
             # Ustal kto jest nieobecny: Claude podał imię → inna osoba, null → sam nadawca
             if absent_person:
-                absent_name = absent_person
-                absent_uid = f"reported_{absent_name.lower()}"
+                # Spróbuj dopasować do prawdziwego pracownika (żeby mieć Slack ID)
+                member = find_team_member(absent_person)
+                if member:
+                    absent_name = member["name"]
+                    absent_uid  = member["slack_id"]
+                else:
+                    absent_name = absent_person
+                    absent_uid  = f"reported_{absent_name.lower()}"
                 reporter_suffix = f" _(zgłoszone przez {user_name})_"
                 confirm_msg_prefix = f"✅ Zapisałem nieobecność *{absent_name}*!"
                 no_date_msg = f"📅 Rozumiem, że *{absent_name}* będzie niedostępny/a — kiedy dokładnie? Podaj termin to od razu zapiszę. 👍"
