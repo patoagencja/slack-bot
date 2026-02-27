@@ -1876,7 +1876,7 @@ def handle_message_events(body, say, logger):
         if not _seba_m:
             return  # ignoruj — ktoś pisze do innych, nie do bota
         logger.info(f"SEBA TRIGGER → {user_message!r}")
-        _clean = _re_seba.sub("", user_message, count=1, flags=_re_seba.IGNORECASE).strip()
+        _clean = _re_seba.sub(r'\b(seba|sebol)\b', "", user_message, count=1, flags=_re_seba.IGNORECASE).strip()
         handle_mention({**event, "text": f"<@SEBOL> {_clean}"}, say)
         return
 
