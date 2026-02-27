@@ -1549,7 +1549,7 @@ def _render_onboarding_message(ob):
     return "\n".join(lines)
 
 
-def _find_onboarding_by_thread(thread_ts, channel_id):
+def _find_onboarding_by_thread(thread_ts, channel_id, current_ts=None):
     """Zwraca (key, ob) po thread_ts + channel_id.
     Jeśli brak w pliku (np. po restarcie), odtwarza z historii wątku."""
     data = _load_onboardings()
@@ -1557,7 +1557,8 @@ def _find_onboarding_by_thread(thread_ts, channel_id):
         if ob.get("message_ts") == thread_ts and ob.get("channel_id") == channel_id:
             return key, ob
     # Nie znaleziono — odtwórz z historii "done N" komend w wątku
-    return _recover_onboarding_from_thread(channel_id, thread_ts)
+    # current_ts wyklucza bieżącą wiadomość z recovery (żeby jej nie aplikować podwójnie)
+    return _recover_onboarding_from_thread(channel_id, thread_ts, exclude_ts=current_ts)
 
 
 @app.command("/onboard")
@@ -1634,9 +1635,10 @@ def _find_active_onboarding_in_channel(channel_id):
     return candidates[0]
 
 
-def _recover_onboarding_from_thread(channel_id, thread_ts):
+def _recover_onboarding_from_thread(channel_id, thread_ts, exclude_ts=None):
     """Gdy brak danych po restarcie, odtwarza stan z historii wątku.
-    Czyta 'done N' komendy z odpowiedzi — niezawodne źródło prawdy."""
+    Czyta 'done N' komendy z odpowiedzi — niezawodne źródło prawdy.
+    exclude_ts: pomiń tę wiadomość (aktualnie przetwarzana, by nie aplikować podwójnie)."""
     import re
     try:
         # 1. Pobierz wiadomość rodzica żeby wyciągnąć nazwę klienta
@@ -1661,10 +1663,14 @@ def _recover_onboarding_from_thread(channel_id, thread_ts):
         )
         replies = replies_result.get("messages", [])[1:]  # pomiń rodzica
 
-        # 3. Odtwórz stan z "done N" komend (ignoruj wiadomości bota)
+        # 3. Odtwórz stan z "done N" komend (ignoruj wiadomości bota i bieżącą wiadomość)
         done_ids = set()
         for reply in replies:
+            # Pomiń wiadomości bota
             if reply.get("bot_id") or reply.get("subtype") == "bot_message":
+                continue
+            # Pomiń bieżącą wiadomość — będzie przetworzona przez _handle_onboarding_done
+            if exclude_ts and reply.get("ts") == exclude_ts:
                 continue
             reply_text = reply.get("text", "").lower()
             dm = re.search(r'\bdone\b(.*)', reply_text)
@@ -1715,7 +1721,7 @@ def _handle_onboarding_done(event, say):
 
     # Szukaj onboardingu: najpierw po thread_ts, potem po aktywnym w kanale
     if thread_ts:
-        key, ob = _find_onboarding_by_thread(thread_ts, channel_id)
+        key, ob = _find_onboarding_by_thread(thread_ts, channel_id, current_ts=event.get("ts"))
     else:
         key, ob = None, None
 
