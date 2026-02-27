@@ -1558,6 +1558,9 @@ def handle_onboard_slash(ack, respond, command, client):
         respond(f"❌ Nie udało się stworzyć onboardingu: {e}")
 
 
+logger.info("✅ /onboard handler zarejestrowany")
+
+
 def _handle_onboarding_done(event, say):
     """Obsługuje 'done N' w wątkach onboardingowych. Zwraca True jeśli obsłużono."""
     import re
