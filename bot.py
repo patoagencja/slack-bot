@@ -1659,11 +1659,14 @@ def _handle_onboarding_done(event, say):
     if not ob:
         return False
 
-    # Parsuj numery: "done 1 2 3" lub "done 1,2,3" lub "done all"
-    if "all" in text:
+    # Parsuj numery tylko z fragmentu PO słowie "done"
+    # (żeby nie łapać cyfr z @wzmianki bota np. <@A09XXXXX>)
+    after_done = re.search(r'\bdone\b(.*)', text)
+    after_done_text = after_done.group(1) if after_done else ""
+    if "all" in after_done_text:
         item_ids = [i["id"] for i in ob["items"] if not i["done"]]
     else:
-        item_ids = list(map(int, re.findall(r'\d+', text)))
+        item_ids = list(map(int, re.findall(r'\d+', after_done_text)))
 
     if not item_ids:
         return False
