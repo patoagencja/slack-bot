@@ -3194,7 +3194,7 @@ def send_weekly_reports():
 # Sebol zapisuje i codziennie o 17:00 informuje Daniela
 # ============================================
 
-AVAILABILITY_FILE = "/tmp/team_availability.json"
+AVAILABILITY_FILE = os.path.join(os.path.dirname(__file__), "data", "team_availability.json")
 
 # Szybki pre-filtr (słowa kluczowe PL) zanim wywołamy Claude
 ABSENCE_KEYWORDS = [
@@ -3228,6 +3228,7 @@ def _load_availability():
 def _save_availability(entries):
     """Zapisz nieobecności do pliku JSON, czyść starsze niż 60 dni."""
     try:
+        os.makedirs(os.path.dirname(AVAILABILITY_FILE), exist_ok=True)
         cutoff = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')
         entries = [e for e in entries if e.get("date", "2000-01-01") >= cutoff]
         with open(AVAILABILITY_FILE, "w", encoding="utf-8") as f:
@@ -3379,7 +3380,7 @@ def send_daily_team_availability():
 # i zostają otwarte dopóki nie zostaną zamknięte
 # ============================================
 
-REQUESTS_FILE = "/tmp/team_requests.json"
+REQUESTS_FILE = os.path.join(os.path.dirname(__file__), "data", "team_requests.json")
 
 REQUEST_CATEGORY_LABELS = {
     "urlop":     "🏖️ Urlop / czas wolny",
@@ -3402,6 +3403,7 @@ def _load_requests():
 
 def _save_requests(requests):
     try:
+        os.makedirs(os.path.dirname(REQUESTS_FILE), exist_ok=True)
         with open(REQUESTS_FILE, "w", encoding="utf-8") as f:
             json.dump(requests, f, ensure_ascii=False, indent=2)
     except Exception as e:

@@ -1,0 +1,10 @@
+# Dane runtime (nieobecności, prośby) — nie commituj
+data/team_availability.json
+data/team_requests.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
