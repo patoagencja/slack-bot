@@ -3705,30 +3705,33 @@ def daily_email_summary_slack():
             for i, e in enumerate(today_emails)
         ])
 
-        claude_prompt = f"""Kategoryzujesz emaile dla Daniela Koszuka, właściciela agencji marketingowej Pato.
+        claude_prompt = f"""Filtrujesz skrzynkę Daniela Koszuka, właściciela agencji marketingowej Pato.
 
-Newslettery i mailingi masowe zostały już odfiltrowane — te {len(today_emails)} emaili to potencjalnie ważna korespondencja.
+Newslettery zostały już odfiltrowane. Spośród {len(today_emails)} emaili wyciągnij TYLKO te które są naprawdę istotne.
 
-Dla każdego emaila przypisz kategorię:
-- IMPORTANT: bezpośrednia korespondencja od klienta/partnera/dostawcy, faktura, oferta, pytanie wymagające odpowiedzi Daniela
-- ADMIN: automatyczne potwierdzenia, powiadomienia systemowe, raporty cykliczne — NIE wymagają odpowiedzi
-- SPAM: niechciane, nieistotne
+IMPORTANT — email trafia tutaj TYLKO gdy:
+- Znany klient, partner lub dostawca pisze bezpośrednio do Daniela
+- Faktura, płatność lub umowa wymagająca uwagi
+- Pytanie lub sprawa która czeka na osobistą odpowiedź Daniela
+- Reklamacja lub pilna sprawa od realnej osoby
 
-ZASADA: Oznacz IMPORTANT TYLKO jeśli Daniel MUSI coś z tym zrobić. Automatyczne powiadomienia i potwierdzenia = ADMIN.
+POMIŃ (oznacz jako SKIP) wszystko inne, w szczególności:
+- Formularze kontaktowe ze strony www ("nowe zapytanie", "kontakt ze strony", "formularz")
+- Cold sales / outreach — nieznane firmy lub osoby oferujące swoje usługi, "chciałbym przedstawić", "mamy dla Ciebie propozycję", "szukamy partnerów"
+- Automatyczne powiadomienia systemowe, potwierdzenia, alerty platform
+- Faktury lub raporty które tylko informują, nie wymagają działania
+- Ogłoszenia, eventy, webinary, zaproszenia do konferencji
 
-Dla każdego IMPORTANT: napisz 1-2 zdania po polsku co chce nadawca i jakiej akcji wymaga.
-Zaproponuj max 3 konkretne sugerowane akcje tylko dla IMPORTANT emaili.
+Dla każdego IMPORTANT napisz 1 zdanie po polsku: kto pisze i czego konkretnie potrzebuje.
 
 Emaile:
 {emails_for_claude}
 
 Odpowiedz TYLKO w formacie JSON:
 {{
-  "categorized": [
-    {{"index": 0, "category": "IMPORTANT", "summary": "Klient pyta o wycenę kampanii Q2. Wymaga odpowiedzi.", "from": "...", "subject": "..."}},
-    {{"index": 1, "category": "ADMIN", "summary": null, "from": "...", "subject": "..."}}
-  ],
-  "suggested_actions": ["Odpowiedz na email od X ws. wyceny"]
+  "important": [
+    {{"index": 0, "from": "Jan Kowalski <jan@firma.pl>", "subject": "Wycena kampanii Q2", "summary": "Klient prosi o wycenę kampanii na Q2, deadline odpowiedzi do piątku."}}
+  ]
 }}"""
 
         # Retry logic dla 529 Overloaded
@@ -3757,77 +3760,48 @@ Odpowiedz TYLKO w formacie JSON:
         import re
         raw_text = claude_response.content[0].text
         json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
-        categorized_data = json.loads(json_match.group()) if json_match else {"categorized": [], "suggested_actions": []}
+        parsed = json.loads(json_match.group()) if json_match else {"important": []}
 
-        categorized = categorized_data.get("categorized", [])
-        suggested_actions = categorized_data.get("suggested_actions", [])
+        important = parsed.get("important", [])
 
-        # 6. Zlicz kategorie
-        important = [c for c in categorized if c.get("category") == "IMPORTANT"]
-        marketing = [c for c in categorized if c.get("category") == "MARKETING"]
-        admin = [c for c in categorized if c.get("category") == "ADMIN"]
-        spam = [c for c in categorized if c.get("category") == "SPAM"]
-
-        # Oznacz które IMPORTANT nie mają odpowiedzi
+        # Oznacz które IMPORTANT nie mają odpowiedzi z poprzednich dni
         for em in important:
             subj = _normalize_subject(em.get("subject", ""))
             if subj in unreplied_map:
                 em["unreplied"] = True
                 em["days_waiting"] = unreplied_map[subj].get("days_waiting", 0)
 
-        # 7. Zbuduj wiadomość Slack
-        msg = f"📧 *Email Summary - {today_str}*\n\n"
-        msg += f"📥 *OTRZYMANE DZISIAJ:* {len(today_emails)} ważnych emaili"
-        if newsletter_count:
-            msg += f" _(+ {newsletter_count} newsletterów pominięto)_"
-        msg += "\n"
-
-        # Sekcja URGENT (bez odpowiedzi z poprzednich dni)
+        # Emaile bez odpowiedzi z poprzednich dni (nie dzisiejsze)
         old_unreplied = [e for e in unreplied if e.get('days_waiting', 0) > 0]
+
+        # ── Zbuduj wiadomość ──────────────────────────────────────────────────
+        msg = f"📧 *Emaile - {today_str}*\n"
+
+        # Sekcja: czekające bez odpowiedzi
         if old_unreplied:
-            msg += "\n━━━━━━━━━━━━━━━━━━━━━━\n"
-            msg += f"\n🚨 *URGENT - BEZ ODPOWIEDZI (ostatnie 3 dni):*\n\n"
+            msg += f"\n⏰ *Czekają na odpowiedź:*\n"
             for em in old_unreplied[:5]:
                 days = em.get('days_waiting', '?')
-                msg += f"⏰ *{em['subject']}*\n"
-                msg += f"   Od: {em['from']} | Czeka: *{days} {'dzień' if days == 1 else 'dni'}*\n\n"
+                msg += f"• *{em['subject']}* — {em['from']} _(+{days}d)_\n"
 
-        msg += "\n━━━━━━━━━━━━━━━━━━━━━━\n"
-
+        # Sekcja: ważne dzisiejsze
         if important:
-            msg += f"\n🔴 *WAŻNE (wymagają odpowiedzi):*\n\n"
-            for i, em in enumerate(important, 1):
+            msg += f"\n📬 *Dzisiaj ({len(important)}):*\n"
+            for em in important:
                 idx = em.get("index", 0)
                 raw = today_emails[idx] if idx < len(today_emails) else {}
                 sender = em.get("from", raw.get("from", "?"))
                 subject = em.get("subject", raw.get("subject", "?"))
-                summary = em.get("summary") or ""
-                unreplied_flag = " ⏰ *brak odpowiedzi*" if em.get("unreplied") else ""
-                msg += f"{i}. *Od:* {sender}{unreplied_flag}\n"
-                msg += f"   *Temat:* {subject}\n"
+                summary = em.get("summary", "")
+                wait_flag = f" ⏰ _{em['days_waiting']}d bez odp._" if em.get("unreplied") else ""
+                msg += f"• *{subject}*{wait_flag}\n"
+                msg += f"  {sender}\n"
                 if summary:
-                    msg += f"   *Podsumowanie:* {summary}\n"
-                msg += "\n"
+                    msg += f"  _{summary}_\n"
         else:
-            msg += "\n✅ *Brak ważnych emaili dzisiaj*\n"
-
-        msg += "━━━━━━━━━━━━━━━━━━━━━━\n"
-        msg += "\n📊 *POZOSTAŁE:*\n"
-        if marketing:
-            msg += f"- Marketing/newslettery: {len(marketing)} emaili\n"
-        if admin:
-            msg += f"- Faktury/admin: {len(admin)} emaili\n"
-        if spam:
-            msg += f"- Spam/low priority: {len(spam)} emaili\n"
-
-        if suggested_actions:
-            msg += "\n━━━━━━━━━━━━━━━━━━━━━━\n"
-            msg += "\n💡 *SUGEROWANE AKCJE:*\n"
-            for action in suggested_actions[:3]:
-                msg += f"- {action}\n"
-
-        msg += "\n━━━━━━━━━━━━━━━━━━━━━━\n"
-        msg += "Miłego wieczoru! 🌆"
+            msg += "\n✅ *Brak istotnych emaili dzisiaj*\n"
+            if newsletter_count:
+                msg += f"_(pominięto {newsletter_count} newsletterów/spamu)_\n"
 
         # 7. Wyślij DM
         app.client.chat_postMessage(
