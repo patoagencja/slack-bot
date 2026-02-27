@@ -1501,7 +1501,7 @@ def _find_onboarding_by_thread(thread_ts, channel_id):
 
 
 @app.command("/onboard")
-def handle_onboard_slash(ack, respond, command, client):
+def handle_onboard_slash(ack, respond, command):
     ack()
     text       = (command.get("text") or "").strip()
     channel_id = command.get("channel_id", "")
@@ -1548,7 +1548,7 @@ def handle_onboard_slash(ack, respond, command, client):
     # Wyślij wiadomość do kanału
     try:
         msg_text = _render_onboarding_message(ob)
-        result = client.chat_postMessage(channel=channel_id, text=msg_text)
+        result = app.client.chat_postMessage(channel=channel_id, text=msg_text)
         ob["message_ts"] = result["ts"]
         data[key] = ob
         _save_onboardings(data)
