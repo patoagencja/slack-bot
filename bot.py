@@ -1492,7 +1492,7 @@ def _render_onboarding_message(ob):
         lines.append("\n🎉 *Onboarding zakończony! Klient gotowy do działania.* 🎉")
     else:
         remaining = [str(i["id"]) for i in items if not i["done"]]
-        lines.append(f"\n_Wpisz `done {remaining[0]}` (lub np. `done 1 2 3`) w tym wątku aby oznaczyć zadanie._")
+        lines.append(f"\n_Aby oznaczyć jako gotowe, odpowiedz w tym wątku: `@Sebol done {remaining[0]}` lub np. `@Sebol done 1 2 3`_")
 
     return "\n".join(lines)
 
@@ -4494,7 +4494,7 @@ def check_stale_onboardings():
             f"⏰ *Onboarding {ob['client_name']}* trwa już *{days_open} dni* "
             f"({done_count}/{total} punktów ukończonych).\n"
             f"Pozostało: {remaining_preview}\n"
-            f"_Przejdź do wątku i wpisz `done [numer]` aby oznaczyć jako gotowe._"
+            f"_Przejdź do wątku i wpisz `@Sebol done [numer]` aby oznaczyć jako gotowe._"
         )
 
         try:
