@@ -1756,7 +1756,12 @@ def _handle_onboarding_done(event, say):
 def handle_message_events(body, say, logger):
     logger.info(body)
     event = body["event"]
-    
+
+    # Grupowe DM (mpim) — odpowiadamy TYLKO przez @Sebol (app_mention handler).
+    # Jeśli ktoś pisze cokolwiek w grupie bez wzmianki, bot milczy.
+    if event.get("channel_type") == "mpim":
+        return
+
     if event.get("channel_type") == "im" and event.get("user") in checkin_responses:
         user_id_ci  = event["user"]
         user_msg_ci = (event.get("text") or "").strip()
