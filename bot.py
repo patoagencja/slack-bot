@@ -1860,11 +1860,22 @@ def handle_message_events(body, say, logger):
 
     # === KANAŁY (pub/priv): reaguj tylko na "seba" lub "sebol" bez @wzmianki ===
     import re as _re_seba
-    if event.get("channel_type") in ("channel", "group"):
+    _ch_type = event.get("channel_type") or ""
+    _ch_id   = event.get("channel", "")
+    # Fallback: wywnioskuj z ID kanału gdy channel_type brak
+    if not _ch_type:
+        if _ch_id.startswith("C"):
+            _ch_type = "channel"
+        elif _ch_id.startswith("G"):
+            _ch_type = "group"
+    logger.info(f"MSG EVENT → channel_type={_ch_type!r} ch={_ch_id} text={user_message[:60]!r}")
+    if _ch_type in ("channel", "group"):
+        if user_message.startswith("<@"):
+            return  # @wzmianka — obsługuje app_mention, pomijamy
         _seba_m = _re_seba.search(r'\b(seba|sebol)\b', user_message, _re_seba.IGNORECASE)
         if not _seba_m:
             return  # ignoruj — ktoś pisze do innych, nie do bota
-        # Usuń "seba"/"sebol" z wiadomości i traktuj jak @mention
+        logger.info(f"SEBA TRIGGER → {user_message!r}")
         _clean = _re_seba.sub("", user_message, count=1, flags=_re_seba.IGNORECASE).strip()
         handle_mention({**event, "text": f"<@SEBOL> {_clean}"}, say)
         return
