@@ -1561,18 +1561,40 @@ def handle_onboard_slash(ack, respond, command):
 logger.info("✅ /onboard handler zarejestrowany")
 
 
+def _find_active_onboarding_in_channel(channel_id):
+    """Zwraca (key, ob) dla aktywnego onboardingu w danym kanale (najnowszy)."""
+    data = _load_onboardings()
+    candidates = [
+        (k, o) for k, o in data.items()
+        if o.get("channel_id") == channel_id and not o.get("completed")
+    ]
+    if not candidates:
+        return None, None
+    # Zwróć najnowszy
+    candidates.sort(key=lambda x: x[1].get("created_at", ""), reverse=True)
+    return candidates[0]
+
+
 def _handle_onboarding_done(event, say):
-    """Obsługuje 'done N' w wątkach onboardingowych. Zwraca True jeśli obsłużono."""
+    """Obsługuje 'done N' — działa zarówno w wątku jak i w kanale."""
     import re
     text = (event.get("text") or "").strip().lower()
     thread_ts = event.get("thread_ts")
     channel_id = event.get("channel")
     user_id = event.get("user")
 
-    if not thread_ts or not re.search(r'\bdone\b', text):
+    if not re.search(r'\bdone\b', text):
         return False
 
-    key, ob = _find_onboarding_by_thread(thread_ts, channel_id)
+    # Szukaj onboardingu: najpierw po thread_ts, potem po aktywnym w kanale
+    if thread_ts:
+        key, ob = _find_onboarding_by_thread(thread_ts, channel_id)
+    else:
+        key, ob = None, None
+
+    if not ob:
+        key, ob = _find_active_onboarding_in_channel(channel_id)
+
     if not ob:
         return False
 
@@ -1605,7 +1627,11 @@ def _handle_onboarding_done(event, say):
             changed.append(item)
 
     if not changed:
-        say("ℹ️ Te punkty były już odhaczone.")
+        app.client.chat_postMessage(
+            channel=channel_id,
+            thread_ts=ob["message_ts"],
+            text="ℹ️ Te punkty były już odhaczone.",
+        )
         return True
 
     # Sprawdź czy wszystko gotowe
@@ -1627,14 +1653,20 @@ def _handle_onboarding_done(event, say):
     except Exception as e:
         logger.error(f"Błąd update onboarding msg: {e}")
 
-    # Odpowiedz w wątku
+    # Odpowiedz zawsze w wątku onboardingu (nie tam gdzie napisano "done")
     names = ", ".join(f"*{i['id']}. {i['name']}*" for i in changed)
     if all_done:
-        say(f"🎉 *{ob['client_name']}* — onboarding 100% ukończony! Super robota!")
+        reply = f"🎉 *{ob['client_name']}* — onboarding 100% ukończony! Super robota!"
     else:
         remaining = sum(1 for i in ob["items"] if not i["done"])
-        say(f"✅ Odhaczone: {names}\nZostało jeszcze: *{remaining}* punkt{'y' if 2 <= remaining <= 4 else 'ów' if remaining != 1 else ''}")
+        plural = 'y' if 2 <= remaining <= 4 else ('ów' if remaining != 1 else '')
+        reply = f"✅ Odhaczone: {names}\nZostało jeszcze: *{remaining}* punkt{plural}"
 
+    app.client.chat_postMessage(
+        channel=channel_id,
+        thread_ts=ob["message_ts"],
+        text=reply,
+    )
     return True
 
 
