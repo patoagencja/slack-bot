@@ -1026,6 +1026,39 @@ def handle_mention(event, say):
         say(_format_availability_summary(entries, target_label))
         return
 
+    # === NAPISZ DO: "napisz do Magdy: ..." / "napisz do Emki: ... o 15:00" ===
+    if re.search(r'\bnapisz\s+do\b', msg_lower_m):
+        _dm_commands = _parse_send_dm_commands(user_message)
+        if _dm_commands:
+            _dm_results = []
+            for _cmd in _dm_commands:
+                _member = _resolve_team_member(_cmd["name"])
+                if not _member:
+                    _dm_results.append(f"❌ Nie znam osoby *{_cmd['name']}*")
+                    continue
+                if _cmd["time"]:
+                    _ts = _parse_schedule_time(_cmd["time"])
+                    try:
+                        app.client.chat_scheduleMessage(
+                            channel=_member["slack_id"],
+                            text=_cmd["message"],
+                            post_at=_ts,
+                        )
+                        _dm_results.append(f"✅ Zaplanowano do *{_member['name']}* o {_cmd['time']}: _{_cmd['message']}_")
+                    except Exception as _e:
+                        _dm_results.append(f"❌ Błąd planowania do {_member['name']}: {_e}")
+                else:
+                    try:
+                        app.client.chat_postMessage(
+                            channel=_member["slack_id"],
+                            text=_cmd["message"],
+                        )
+                        _dm_results.append(f"✅ Wysłano do *{_member['name']}*: _{_cmd['message']}_")
+                    except Exception as _e:
+                        _dm_results.append(f"❌ Błąd wysyłania do {_member['name']}: {_e}")
+            say("\n".join(_dm_results))
+            return
+
     # Email trigger - wyniki zawsze na DM, nie w kanale
     if any(t in user_message.lower() for t in ["test email", "email test", "email summary"]):
         say("📧 Uruchamiam Email Summary... wyślę Ci to na DM.")
@@ -1514,6 +1547,63 @@ def _save_onboardings(data):
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.error(f"_save_onboardings error: {e}")
+
+
+# ── SEND DM HELPERS ───────────────────────────────────────────────────────────
+
+def _resolve_team_member(name_query):
+    """Dopasowuje imię (w różnych formach) do TEAM_MEMBERS."""
+    q = name_query.lower().strip()
+    for member in TEAM_MEMBERS:
+        if q == member["name"].lower():
+            return member
+        if q in [a.lower() for a in member.get("aliases", [])]:
+            return member
+    return None
+
+
+def _parse_send_dm_commands(text):
+    """Parsuje 'napisz do X: treść [o HH:MM]' — obsługuje wiele naraz.
+    Zwraca listę {'name': str, 'message': str, 'time': str|None}."""
+    import re
+    results = []
+    # Podziel na segmenty zaczynające się od "napisz do"
+    parts = re.split(r'\bnapisz\s+do\b', text, flags=re.IGNORECASE)
+    for part in parts[1:]:
+        part = part.strip()
+        if not part:
+            continue
+        # Wyciągnij czas "o HH:MM" z końca
+        time_m = re.search(r'\bo\s+(\d{1,2}:\d{2})\s*$', part, re.IGNORECASE)
+        time_str = time_m.group(1) if time_m else None
+        if time_m:
+            part = part[:time_m.start()].strip()
+        # Usuń końcowe "i" (łącznik między komendami)
+        part = re.sub(r'\s+i\s*$', '', part, flags=re.IGNORECASE).strip()
+        # Wyciągnij imię i treść — "Imię: treść" lub "Imię treść"
+        colon_m = re.match(r'(\w+)\s*[:\-]\s*(.*)', part, re.DOTALL)
+        if colon_m:
+            name = colon_m.group(1)
+            message = colon_m.group(2).strip()
+        else:
+            words = part.split(None, 1)
+            if len(words) < 2:
+                continue
+            name, message = words[0], words[1].strip()
+        if message:
+            results.append({"name": name, "message": message, "time": time_str})
+    return results
+
+
+def _parse_schedule_time(time_str):
+    """Konwertuje 'HH:MM' na Unix timestamp (dziś lub jutro jeśli już minęło)."""
+    h, m = map(int, time_str.split(":"))
+    tz = pytz.timezone("Europe/Warsaw")
+    now = datetime.now(tz)
+    target = now.replace(hour=h, minute=m, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return int(target.timestamp())
 
 
 def _onboarding_key(client_name):
