@@ -1419,6 +1419,222 @@ def handle_ads_slash(ack, respond, command):
     _dispatch_ads_command(subcmd, channel_id, extra_text, respond)
 
 
+# ── /onboard slash command ─────────────────────────────────────────────────────
+
+ONBOARDING_FILE = os.path.join(os.path.dirname(__file__), "data", "onboardings.json")
+
+ONBOARDING_CHECKLIST = [
+    {"id": 1,  "emoji": "📋", "name": "Brief klienta — cele, KPI, grupa docelowa"},
+    {"id": 2,  "emoji": "💰", "name": "Budżet miesięczny potwierdzony"},
+    {"id": 3,  "emoji": "🔷", "name": "Pixel Meta zainstalowany i zweryfikowany"},
+    {"id": 4,  "emoji": "🔷", "name": "Dostęp do konta Meta Ads"},
+    {"id": 5,  "emoji": "🟡", "name": "Google Tag Manager zainstalowany"},
+    {"id": 6,  "emoji": "🟡", "name": "Dostęp do konta Google Ads"},
+    {"id": 7,  "emoji": "🟡", "name": "Google Analytics 4 — cele i konwersje"},
+    {"id": 8,  "emoji": "🎨", "name": "Materiały kreatywne od klienta dostarczone"},
+    {"id": 9,  "emoji": "✍️",  "name": "Copy i treści zatwierdzone"},
+    {"id": 10, "emoji": "🚀", "name": "Pierwsze kampanie uruchomione"},
+    {"id": 11, "emoji": "📊", "name": "Raportowanie / dashboard skonfigurowany"},
+    {"id": 12, "emoji": "✉️",  "name": "Email powitalny do klienta wysłany"},
+]
+
+
+def _load_onboardings():
+    try:
+        if os.path.exists(ONBOARDING_FILE):
+            with open(ONBOARDING_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def _save_onboardings(data):
+    try:
+        os.makedirs(os.path.dirname(ONBOARDING_FILE), exist_ok=True)
+        with open(ONBOARDING_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"_save_onboardings error: {e}")
+
+
+def _onboarding_key(client_name):
+    return client_name.lower().replace(" ", "_")
+
+
+def _render_onboarding_message(ob):
+    """Buduje wiadomość Slack z aktualnym stanem checklisty."""
+    items = ob["items"]
+    done_count = sum(1 for i in items if i["done"])
+    total = len(items)
+    pct = int(done_count / total * 100)
+
+    bar_filled = int(pct / 10)
+    progress_bar = "█" * bar_filled + "░" * (10 - bar_filled)
+
+    lines = [f"🚀 *Onboarding: {ob['client_name']}*",
+             f"Postęp: [{progress_bar}] *{done_count}/{total}* ({pct}%)\n"]
+
+    for item in items:
+        check = "✅" if item["done"] else "⬜"
+        done_info = ""
+        if item["done"] and item.get("done_by"):
+            done_info = f" _{item['done_by']}_"
+        lines.append(f"{check} *{item['id']}.* {item['emoji']} {item['name']}{done_info}")
+
+    if done_count == total:
+        lines.append("\n🎉 *Onboarding zakończony! Klient gotowy do działania.* 🎉")
+    else:
+        remaining = [str(i["id"]) for i in items if not i["done"]]
+        lines.append(f"\n_Wpisz `done {remaining[0]}` (lub np. `done 1 2 3`) w tym wątku aby oznaczyć zadanie._")
+
+    return "\n".join(lines)
+
+
+def _find_onboarding_by_thread(thread_ts, channel_id):
+    """Zwraca (key, ob) po thread_ts + channel_id lub (None, None)."""
+    data = _load_onboardings()
+    for key, ob in data.items():
+        if ob.get("message_ts") == thread_ts and ob.get("channel_id") == channel_id:
+            return key, ob
+    return None, None
+
+
+@app.command("/onboard")
+def handle_onboard_slash(ack, respond, command, client):
+    ack()
+    text       = (command.get("text") or "").strip()
+    channel_id = command.get("channel_id", "")
+    user_id    = command.get("user_id", "")
+
+    if not text:
+        respond("Użycie: `/onboard [nazwa klienta]`\nPrzykład: `/onboard DRE`")
+        return
+
+    client_name = text.strip()
+    key = _onboarding_key(client_name)
+
+    data = _load_onboardings()
+    if key in data and not data[key].get("completed"):
+        respond(
+            f"⚠️ Onboarding *{client_name}* już istnieje i jest w toku.\n"
+            f"Idź do wątku: przeskocz do <#{data[key]['channel_id']}>"
+        )
+        return
+
+    # Pobierz imię inicjatora
+    try:
+        ui = app.client.users_info(user=user_id)
+        initiator = (ui["user"].get("real_name")
+                     or ui["user"].get("profile", {}).get("display_name")
+                     or "ktoś")
+    except Exception:
+        initiator = "ktoś"
+
+    # Zbuduj onboarding object
+    ob = {
+        "client_name": client_name,
+        "created_at": datetime.now().isoformat(),
+        "created_by": initiator,
+        "channel_id": channel_id,
+        "message_ts": None,
+        "completed": False,
+        "items": [
+            {**item, "done": False, "done_by": None, "done_at": None}
+            for item in ONBOARDING_CHECKLIST
+        ],
+    }
+
+    # Wyślij wiadomość do kanału
+    try:
+        msg_text = _render_onboarding_message(ob)
+        result = client.chat_postMessage(channel=channel_id, text=msg_text)
+        ob["message_ts"] = result["ts"]
+        data[key] = ob
+        _save_onboardings(data)
+        logger.info(f"✅ Onboarding {client_name} stworzony przez {initiator}, ts={ob['message_ts']}")
+    except Exception as e:
+        logger.error(f"Błąd tworzenia onboardingu: {e}")
+        respond(f"❌ Nie udało się stworzyć onboardingu: {e}")
+
+
+def _handle_onboarding_done(event, say):
+    """Obsługuje 'done N' w wątkach onboardingowych. Zwraca True jeśli obsłużono."""
+    import re
+    text = (event.get("text") or "").strip().lower()
+    thread_ts = event.get("thread_ts")
+    channel_id = event.get("channel")
+    user_id = event.get("user")
+
+    if not thread_ts or not re.search(r'\bdone\b', text):
+        return False
+
+    key, ob = _find_onboarding_by_thread(thread_ts, channel_id)
+    if not ob:
+        return False
+
+    # Parsuj numery: "done 1 2 3" lub "done 1,2,3" lub "done all"
+    if "all" in text:
+        item_ids = [i["id"] for i in ob["items"] if not i["done"]]
+    else:
+        item_ids = list(map(int, re.findall(r'\d+', text)))
+
+    if not item_ids:
+        return False
+
+    # Pobierz imię użytkownika
+    try:
+        ui = app.client.users_info(user=user_id)
+        user_name = (ui["user"].get("real_name")
+                     or ui["user"].get("profile", {}).get("display_name")
+                     or user_id)
+    except Exception:
+        user_name = user_id
+
+    data = _load_onboardings()
+    ob = data[key]
+    changed = []
+    for item in ob["items"]:
+        if item["id"] in item_ids and not item["done"]:
+            item["done"] = True
+            item["done_by"] = user_name
+            item["done_at"] = datetime.now().isoformat()
+            changed.append(item)
+
+    if not changed:
+        say("ℹ️ Te punkty były już odhaczone.")
+        return True
+
+    # Sprawdź czy wszystko gotowe
+    all_done = all(i["done"] for i in ob["items"])
+    if all_done:
+        ob["completed"] = True
+        ob["completed_at"] = datetime.now().isoformat()
+
+    _save_onboardings(data)
+
+    # Zaktualizuj oryginalną wiadomość
+    new_text = _render_onboarding_message(ob)
+    try:
+        app.client.chat_update(
+            channel=channel_id,
+            ts=ob["message_ts"],
+            text=new_text,
+        )
+    except Exception as e:
+        logger.error(f"Błąd update onboarding msg: {e}")
+
+    # Odpowiedz w wątku
+    names = ", ".join(f"*{i['id']}. {i['name']}*" for i in changed)
+    if all_done:
+        say(f"🎉 *{ob['client_name']}* — onboarding 100% ukończony! Super robota!")
+    else:
+        remaining = sum(1 for i in ob["items"] if not i["done"])
+        say(f"✅ Odhaczone: {names}\nZostało jeszcze: *{remaining}* punkt{'y' if 2 <= remaining <= 4 else 'ów' if remaining != 1 else ''}")
+
+    return True
+
+
 # Reaguj na wiadomości DM
 @app.event("message")
 def handle_message_events(body, say, logger):
@@ -1442,6 +1658,10 @@ def handle_message_events(body, say, logger):
 
     # --- Manual triggers (obsługuj przed Claude) ---
     text_lower = user_message.lower()
+
+    # === ONBOARDING: "done N" w wątku onboardingowym ===
+    if _handle_onboarding_done(event, say):
+        return
 
     # Digest triggers - tylko w kanałach
     if any(t in text_lower for t in ["digest test", "test digest", "digest", "raport"]):
@@ -4151,6 +4371,50 @@ Odpowiedz TYLKO w formacie JSON:
             pass
 
 
+def check_stale_onboardings():
+    """Codziennie rano: pinguje kanał jeśli onboarding trwa >3 dni i nie jest ukończony."""
+    data = _load_onboardings()
+    if not data:
+        return
+
+    now = datetime.now()
+    for key, ob in data.items():
+        if ob.get("completed"):
+            continue
+
+        created = datetime.fromisoformat(ob["created_at"])
+        days_open = (now - created).days
+        if days_open < 3:
+            continue
+
+        done_count = sum(1 for i in ob["items"] if i["done"])
+        total = len(ob["items"])
+        remaining_items = [f"`{i['id']}. {i['name']}`" for i in ob["items"] if not i["done"]]
+        remaining_preview = ", ".join(remaining_items[:3])
+        if len(remaining_items) > 3:
+            remaining_preview += f" + {len(remaining_items) - 3} więcej"
+
+        msg = (
+            f"⏰ *Onboarding {ob['client_name']}* trwa już *{days_open} dni* "
+            f"({done_count}/{total} punktów ukończonych).\n"
+            f"Pozostało: {remaining_preview}\n"
+            f"_Przejdź do wątku i wpisz `done [numer]` aby oznaczyć jako gotowe._"
+        )
+
+        try:
+            channel_id = ob.get("channel_id")
+            thread_ts = ob.get("message_ts")
+            if channel_id and thread_ts:
+                app.client.chat_postMessage(
+                    channel=channel_id,
+                    thread_ts=thread_ts,
+                    text=msg,
+                )
+                logger.info(f"⏰ Onboarding reminder: {ob['client_name']} ({days_open}d)")
+        except Exception as e:
+            logger.error(f"Błąd onboarding reminder {key}: {e}")
+
+
 # Scheduler
 scheduler = BackgroundScheduler(timezone=pytz.timezone('Europe/Warsaw'))
 scheduler.add_job(daily_summaries, 'cron', hour=16, minute=0)
@@ -4164,6 +4428,8 @@ scheduler.add_job(weekly_learnings_dre, 'cron', day_of_week='mon,thu', hour=8, m
 scheduler.add_job(daily_email_summary_slack, 'cron', hour=16, minute=0, id='daily_email_summary')
 # Team availability: podsumowanie jutrzejszej dostępności, pn-pt o 17:00
 scheduler.add_job(send_daily_team_availability, 'cron', day_of_week='mon-fri', hour=17, minute=0, id='team_availability')
+# Onboarding: codziennie rano sprawdź czy są zaległe onboardingi (>3 dni bez ukończenia)
+scheduler.add_job(check_stale_onboardings, 'cron', hour=9, minute=30, id='stale_onboardings')
 scheduler.start()
 
 print(f"✅ Scheduler załadowany! Jobs: {len(scheduler.get_jobs())}")
