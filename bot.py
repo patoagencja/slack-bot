@@ -1808,11 +1808,6 @@ def handle_message_events(body, say, logger):
     logger.info(body)
     event = body["event"]
 
-    # Grupowe DM (mpim) — odpowiadamy TYLKO przez @Sebol (app_mention handler).
-    # Jeśli ktoś pisze cokolwiek w grupie bez wzmianki, bot milczy.
-    if event.get("channel_type") == "mpim":
-        return
-
     if event.get("channel_type") == "im" and event.get("user") in checkin_responses:
         user_id_ci  = event["user"]
         user_msg_ci = (event.get("text") or "").strip()
@@ -1869,7 +1864,7 @@ def handle_message_events(body, say, logger):
         elif _ch_id.startswith("G"):
             _ch_type = "group"
     logger.info(f"MSG EVENT → channel_type={_ch_type!r} ch={_ch_id} text={user_message[:60]!r}")
-    if _ch_type in ("channel", "group"):
+    if _ch_type in ("channel", "group", "mpim"):
         if user_message.startswith("<@"):
             return  # @wzmianka — obsługuje app_mention, pomijamy
         _seba_m = _re_seba.search(r'\b(seba|sebol)\b', user_message, _re_seba.IGNORECASE)
