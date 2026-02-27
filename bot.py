@@ -2363,162 +2363,58 @@ def generate_daily_digest_dre():
         total_impressions = sum(c.get("impressions", 0) for c in all_campaigns)
         total_reach = sum(c.get("reach", 0) for c in all_campaigns)
 
-        # Zbuduj digest
-        skipped_note = f" _(+ {skipped_count} kampanii z <20 PLN pominięto)_" if skipped_count > 0 else ""
+        # ── 1. TL;DR ──────────────────────────────────────────────────────────
+        n_alerts = len(analysis.get("critical_alerts", []))
+        alert_note = f" | 🔴 {n_alerts} alert{'y' if n_alerts > 1 else ''}" if n_alerts else " | ✅ bez alertów"
+        skipped_note = f" (+{skipped_count} <20PLN)" if skipped_count > 0 else ""
 
-        if client_goal == "engagement":
-            goal_line = f"👁️ **Impressions:** {total_impressions:,}\n👥 **Reach:** {total_reach:,}"
-        else:
-            total_conversions = sum(c.get("conversions", 0) for c in all_campaigns)
-            goal_line = f"🎯 **Conversions:** {total_conversions}"
+        digest = (
+            f"📊 *DRE {yesterday}* | "
+            f"💰 {total_spend:.0f} PLN | "
+            f"📈 {len(all_campaigns)} kampanii{skipped_note}"
+            f"{alert_note}\n"
+        )
 
-        digest = f"""🌅 **DRE - Daily Digest** ({yesterday})
-
-💰 **WCZORAJ:** {total_spend:.2f} PLN
-📊 **Aktywnych kampanii:** {len(all_campaigns)}{skipped_note}
-{goal_line}
-👆 **Clicks:** {total_clicks:,}
-
-━━━━━━━━━━━━━━━━━━━━━━
-"""
-
-        # === META - szczegóły kampanii z benchmarkami ===
-        if meta_campaigns and meta_benchmarks:
-            digest += "\n📘 **META ADS - Kampanie vs 30-dni benchmark:**\n\n"
-            for c in meta_campaigns:
-                name = c.get("campaign_name", "?")
-                spend = c.get("spend", 0)
-                ctr = c.get("ctr")
-                cpc = c.get("cpc")
-                roas = c.get("purchase_roas")
-                freq = c.get("frequency")
-                reach = c.get("reach", 0)
-                impressions = c.get("impressions", 0)
-                convs = c.get("conversions", 0)
-
-                if client_goal == "engagement":
-                    # Engagement: pokaż reach/impressions zamiast konwersji
-                    digest += f"**{name}**  💰 {spend:.2f} PLN | 👥 {reach:,} reach\n"
-                else:
-                    digest += f"**{name}**  💰 {spend:.2f} PLN | 🎯 {convs} conv\n"
-
-                if ctr is not None:
-                    digest += f"  - CTR: {ctr:.2f}%{_benchmark_flag(ctr, meta_benchmarks.get('avg_ctr'), higher_is_better=True)}\n"
-                if cpc is not None:
-                    digest += f"  - CPC: {cpc:.2f} PLN{_benchmark_flag(cpc, meta_benchmarks.get('avg_cpc'), higher_is_better=False)}\n"
-                if client_goal == "engagement":
-                    # Engagement: pokaż impressions i frequency zamiast ROAS
-                    if impressions:
-                        digest += f"  - Impressions: {impressions:,}\n"
-                    if freq is not None:
-                        freq_warn = " ⚠️ ad fatigue!" if freq > 4 else (" 👀 obserwuj" if freq > 2.5 else "")
-                        digest += f"  - Frequency: {freq:.1f}{freq_warn}{_benchmark_flag(freq, meta_benchmarks.get('avg_frequency'), higher_is_better=False)}\n"
-                else:
-                    # Conversion: pokaż ROAS i frequency
-                    if roas is not None:
-                        digest += f"  - ROAS: {roas:.2f}x{_benchmark_flag(roas, meta_benchmarks.get('avg_roas'), higher_is_better=True)}\n"
-                    if freq is not None:
-                        digest += f"  - Freq: {freq:.1f}{_benchmark_flag(freq, meta_benchmarks.get('avg_frequency'), higher_is_better=False)}\n"
-                digest += "\n"
-            digest += "━━━━━━━━━━━━━━━━━━━━━━\n"
-
-        # === GOOGLE - szczegóły kampanii z benchmarkami ===
-        if google_data_combined and google_benchmarks:
-            digest += "\n🔵 **GOOGLE ADS - Kampanie vs 30-dni benchmark:**\n\n"
-            for c in google_data_combined:
-                name = c.get("campaign_name", c.get("name", "?"))
-                spend = c.get("cost", c.get("spend", 0))
-                ctr = c.get("ctr")
-                cpc = c.get("cpc")
-                convs = c.get("conversions", 0)
-                clicks = c.get("clicks", 0)
-
-                if client_goal == "engagement":
-                    digest += f"**{name}**  💰 {spend:.2f} PLN | 👆 {clicks:,} clicks\n"
-                else:
-                    digest += f"**{name}**  💰 {spend:.2f} PLN | 🎯 {convs} conv\n"
-
-                if ctr is not None:
-                    digest += f"  - CTR: {ctr:.2f}%{_benchmark_flag(ctr, google_benchmarks.get('avg_ctr'), higher_is_better=True)}\n"
-                if cpc is not None:
-                    digest += f"  - CPC: {cpc:.2f} PLN{_benchmark_flag(cpc, google_benchmarks.get('avg_cpc'), higher_is_better=False)}\n"
-                digest += "\n"
-            digest += "━━━━━━━━━━━━━━━━━━━━━━\n"
-
-        # CRITICAL ALERTS
-        if analysis["critical_alerts"]:
-            digest += "\n🔴 **CRITICAL - WYMAGA AKCJI:**\n\n"
+        # ── 2. AKCJA WYMAGANA ──────────────────────────────────────────────────
+        if analysis.get("critical_alerts"):
+            digest += "\n*🔴 AKCJA WYMAGANA:*\n"
             for alert in analysis["critical_alerts"]:
-                digest += f"**{alert['campaign']}**\n"
-                digest += f"⚠️ {alert['message']}\n"
+                digest += f"• *{alert['campaign']}* — {alert['message']}\n"
                 if alert.get("action"):
-                    digest += f"💡 {alert['action']}\n"
-                digest += "\n"
-            digest += "━━━━━━━━━━━━━━━━━━━━━━\n"
+                    digest += f"  → {alert['action']}\n"
 
-        if analysis["warnings"]:
-            digest += "\n🟡 **DO OBEJRZENIA:**\n\n"
-            for w in analysis["warnings"]:
-                digest += f"• **{w['campaign']}** — {w['message']}\n"
-            digest += "\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        # ── 3. TOP PERFORMER ───────────────────────────────────────────────────
+        tops = analysis.get("top_performers", [])
+        if tops:
+            top = tops[0]
+            digest += f"\n*🟢 TOP:* {top['campaign']} — {top.get('metrics_line', '')}\n"
 
-        if analysis["top_performers"]:
-            digest += "\n🟢 **TOP PERFORMERS:**\n\n"
-            for i, top in enumerate(analysis["top_performers"], 1):
-                digest += f"{i}. **{top['campaign']}**\n"
-                digest += f"   {top.get('metrics_line', '')}\n"
-            digest += "\n"
+        # ── 4. EKSPERYMENT TYGODNIA ────────────────────────────────────────────
+        try:
+            experiments = suggest_experiments("dre", all_campaigns)
+            if experiments:
+                exp = experiments[0]
+                digest += (
+                    f"\n*🧪 EKSPERYMENT:* {exp['experiment']}\n"
+                    f"  _{exp.get('reason', '')} | expected: {exp.get('expected', '')}_\n"
+                )
+        except Exception as _e:
+            logger.error(f"Błąd suggest_experiments w digest: {_e}")
 
-        if not analysis["critical_alerts"] and not analysis["warnings"]:
-            digest += "\n✅ **Wszystko OK!** Żadnych critical issues.\n"
-
-        # Benchmark footer
-        if meta_benchmarks:
-            digest += f"\n_📊 Benchmarki z ostatnich {meta_benchmarks['period_days']} dni ({meta_benchmarks['campaign_count']} kampanii Meta)_\n"
-
-        # === SMART RECOMMENDATIONS (AI-learned) ===
+        # Zapisz predykcje w tle (nie wyświetlaj)
         try:
             patterns = analyze_patterns("dre")
             recs = generate_smart_recommendations("dre", all_campaigns, patterns)
-            experiments = suggest_experiments("dre", all_campaigns)
-
-            if recs or experiments:
-                digest += "\n━━━━━━━━━━━━━━━━━━━━━━\n"
-                digest += "\n🧠 **SMART RECOMMENDATIONS (AI-learned):**\n\n"
-
-                shown = 0
-                for rec in recs[:4]:
-                    label = _confidence_label(rec["confidence"])
-                    if not label:
-                        continue
-                    shown += 1
-                    digest += f"{shown}. {rec['urgency']} **{rec['campaign']}** – {rec['action']}\n"
-                    digest += f"   Dlaczego: {rec['reason']}\n"
-                    digest += f"   Historia: {rec['evidence']}\n"
-                    digest += f"   Expected: {rec['expected_impact']}\n"
-                    digest += f"   Confidence: **{label}**\n\n"
-
-                    # Save prediction for accuracy tracking
+            for rec in recs[:4]:
+                if _confidence_label(rec["confidence"]):
                     _save_prediction(
                         "dre", rec["campaign"], rec["action"],
                         rec.get("predicted_metric", "ctr"),
                         rec.get("predicted_change_pct", 20.0),
                         rec["confidence"],
                     )
-
-                if experiments:
-                    digest += "💡 **EKSPERYMENTY DO PRZETESTOWANIA:**\n\n"
-                    for exp in experiments:
-                        digest += f"🧪 **{exp['experiment']}**\n"
-                        digest += f"   Dlaczego: {exp['reason']}\n"
-                        digest += f"   Expected: {exp['expected']}\n"
-                        digest += f"   Budget: {exp['budget']}\n\n"
-
-                if not recs and not experiments:
-                    digest += "_Brak rekomendacji – za mało danych historycznych. Bot uczy się z każdym dniem._\n"
-
-        except Exception as e:
-            logger.error(f"Błąd smart recommendations w digest: {e}")
+        except Exception as _e:
+            logger.error(f"Błąd predictions w digest: {_e}")
 
         return digest
 
