@@ -1045,7 +1045,7 @@ def handle_mention(event, say):
 
     # Wykryj czy to grupowy czat (kanał publiczny/prywatny) czy DM
     channel_type  = event.get('channel_type', 'channel')
-    is_group_chat = channel_type in ('channel', 'group')
+    is_group_chat = channel_type in ('channel', 'group', 'mpim')
 
     # W grupowym czacie pobierz historię ostatnich wiadomości jako kontekst
     channel_history_ctx = ""
