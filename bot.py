@@ -2021,6 +2021,41 @@ def handle_message_events(body, say, logger):
             say("✅ Dzięki! Zapisałem Twoją odpowiedź na standup.")
             return
 
+        # === NAPISZ DO: "napisz do X: treść" w DM do bota ===
+        import re as _re_dm2
+        if _re_dm2.search(r'\bnapisz\s+do\b', user_message, _re_dm2.IGNORECASE):
+            _dm_cmds = _parse_send_dm_commands(user_message)
+            if _dm_cmds:
+                _dm_results = []
+                for _cmd in _dm_cmds:
+                    _member = _resolve_team_member(_cmd["name"])
+                    if not _member:
+                        _dm_results.append(f"❌ Nie znam osoby *{_cmd['name']}*")
+                        continue
+                    if _cmd["time"]:
+                        try:
+                            _ts = _parse_schedule_time(_cmd["time"])
+                            app.client.chat_scheduleMessage(
+                                channel=_member["slack_id"],
+                                text=_cmd["message"],
+                                post_at=_ts,
+                            )
+                            _dm_results.append(f"✅ Zaplanowano do *{_member['name']}* o {_cmd['time']}: _{_cmd['message']}_")
+                        except Exception as _e:
+                            _dm_results.append(f"❌ Błąd planowania do {_member['name']}: {_e}")
+                    else:
+                        try:
+                            app.client.chat_postMessage(
+                                channel=_member["slack_id"],
+                                text=_cmd["message"],
+                            )
+                            _dm_results.append(f"✅ Wysłano do *{_member['name']}*: _{_cmd['message']}_")
+                        except Exception as _e:
+                            _dm_results.append(f"❌ Błąd wysyłania do {_member['name']}: {_e}")
+                if _dm_results:
+                    say("\n".join(_dm_results))
+                    return
+
         if handle_employee_dm(user_id, user_name, user_message, say):
             return
 
