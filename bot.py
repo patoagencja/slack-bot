@@ -769,21 +769,136 @@ def handle_message_events(body, say, logger):
             logger.error(f"Błąd test email trigger: {e}")
         return
 
+    # ── Fetch last 100 messages from Slack DM for conversation context ──────────
     try:
-        history = get_conversation_history(user_id)
-        save_message_to_history(user_id, "user", user_message)
-
-        message = anthropic.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1000,
-            messages=get_conversation_history(user_id)
+        _hist = app.client.conversations_history(
+            channel=event.get("channel"), limit=100,
         )
+        _raw = _hist.get("messages", [])[::-1]      # odwróć: najstarsze pierwsze
+        _dm_msgs: list[dict] = []
+        for _m in _raw:
+            if _m.get("ts") == event.get("ts"):
+                continue                             # pomiń aktualną wiadomość
+            _t = (_m.get("text") or "").strip()
+            if not _t:
+                continue
+            _role = "assistant" if (_m.get("bot_id") or _m.get("subtype") == "bot_message") else "user"
+            _dm_msgs.append({"role": _role, "content": _t})
+        _dm_msgs.append({"role": "user", "content": user_message})
+        # Scal consecutive same-role (Anthropic wymaga naprzemiennych ról)
+        _merged: list[dict] = []
+        for _m in _dm_msgs:
+            if _merged and _merged[-1]["role"] == _m["role"]:
+                _merged[-1]["content"] += "\n" + _m["content"]
+            else:
+                _merged.append(dict(_m))
+        while _merged and _merged[0]["role"] != "user":
+            _merged.pop(0)
+        if not _merged:
+            _merged = [{"role": "user", "content": user_message}]
+    except Exception:
+        _merged = [{"role": "user", "content": user_message}]
 
-        response_text = message.content[0].text
-        save_message_to_history(user_id, "assistant", response_text)
+    _today_dm = datetime.now()
+    _dm_system = (
+        f"Dzisiaj: {_today_dm.strftime('%d %B %Y')} ({_today_dm.strftime('%Y-%m-%d')}).\n\n"
+        "Jesteś Sebol — asystent agencji marketingowej Pato. Rozmawiasz z pracownikiem przez DM na Slacku.\n"
+        "NIE jesteś Claude od Anthropic — jesteś Seblem, botem stworzonym dla agencji Pato.\n"
+        "Pomagasz z kampaniami (Meta Ads / Google Ads), emailami, teamem, raportami i codzienną pracą agencji.\n\n"
+        "Klienci Meta: 'instax/fuji', 'zbiorcze', 'drzwi dre'. Google: 'dre', 'dre 2024', 'dre 2025', 'm2', 'pato'.\n"
+        "Benchmarki Meta: ROAS >3.0, CTR 1.5-2.5%, CPC 3-8 PLN. Google Search: CTR 2-5%, CPC 2-10 PLN.\n\n"
+        "Mów po polsku. Bądź bezpośredni i konkretny — podawaj liczby, nie ogólniki. "
+        "Emoji: 📊 💰 🚀 ⚠️ ✅"
+    )
+    _dm_tools = [
+        {
+            "name": "get_meta_ads_data",
+            "description": "Pobiera statystyki z Meta Ads (Facebook/Instagram). Użyj gdy pytają o kampanie, spend, ROAS, CTR, konwersje.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "client_name":   {"type": "string"},
+                    "date_from":     {"type": "string"},
+                    "date_to":       {"type": "string"},
+                    "level":         {"type": "string", "enum": ["campaign", "adset", "ad"]},
+                    "campaign_name": {"type": "string"},
+                    "metrics":       {"type": "array", "items": {"type": "string"}},
+                    "breakdown":     {"type": "string"},
+                    "limit":         {"type": "integer"},
+                },
+                "required": [],
+            },
+        },
+        {
+            "name": "get_google_ads_data",
+            "description": "Pobiera statystyki z Google Ads. Użyj gdy pytają o kampanie Google, search, display.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "client_name":   {"type": "string"},
+                    "date_from":     {"type": "string"},
+                    "date_to":       {"type": "string"},
+                    "level":         {"type": "string", "enum": ["campaign", "adgroup", "ad"]},
+                    "campaign_name": {"type": "string"},
+                    "metrics":       {"type": "array", "items": {"type": "string"}},
+                    "limit":         {"type": "integer"},
+                },
+                "required": [],
+            },
+        },
+        {
+            "name": "manage_email",
+            "description": "Zarządza emailami — czyta, wysyła, przeszukuje skrzynkę.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "action":  {"type": "string", "enum": ["read", "send", "search"]},
+                    "limit":   {"type": "integer"},
+                    "to":      {"type": "string"},
+                    "subject": {"type": "string"},
+                    "body":    {"type": "string"},
+                    "query":   {"type": "string"},
+                },
+                "required": ["action"],
+            },
+        },
+    ]
+
+    try:
+        _resp = anthropic.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=2000,
+            system=_dm_system,
+            tools=_dm_tools,
+            messages=_merged,
+        )
+        while _resp.stop_reason == "tool_use":
+            _tb = next(b for b in _resp.content if b.type == "tool_use")
+            if _tb.name == "get_meta_ads_data":
+                _tr = meta_ads_tool(**{k: v for k, v in _tb.input.items() if v is not None})
+            elif _tb.name == "get_google_ads_data":
+                _tr = google_ads_tool(**{k: v for k, v in _tb.input.items() if v is not None})
+            elif _tb.name == "manage_email":
+                _inp = {k: v for k, v in _tb.input.items() if v is not None and k != "user_id"}
+                _tr  = email_tool(user_id=user_id, **_inp)
+            else:
+                _tr = {"error": "Nieznane narzędzie"}
+            _merged.append({"role": "assistant", "content": _resp.content})
+            _merged.append({"role": "user", "content": [{"type": "tool_result", "tool_use_id": _tb.id, "content": str(_tr)}]})
+            _resp = anthropic.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=2000,
+                system=_dm_system,
+                tools=_dm_tools,
+                messages=_merged,
+            )
+        response_text = next(
+            (b.text for b in _resp.content if hasattr(b, "text")),
+            "Przepraszam, nie mogłem wygenerować odpowiedzi.",
+        )
         say(text=response_text)
-
     except Exception as e:
+        logger.error(f"Błąd DM handler: {e}")
         say(text=f"Przepraszam, wystąpił błąd: {str(e)}")
 
 
