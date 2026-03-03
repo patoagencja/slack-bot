@@ -1,12 +1,14 @@
 """Budget alerts + weekly summary formatting."""
 import os
 import logging
+import requests
 import pytz
 from datetime import datetime
 
 import _ctx
 from tools.meta_ads import meta_ads_tool
 from tools.google_ads import google_ads_tool
+from tools.campaign_creator import get_meta_account_id
 from jobs.performance_analysis import analyze_campaign_trends
 
 logger = logging.getLogger(__name__)
@@ -90,6 +92,27 @@ def mark_alert_sent(alert_key):
     sent_alerts[alert_key] = datetime.now()
 
 
+def _get_meta_campaign_budgets(account_id: str) -> dict:
+    """Pobiera daily_budget aktywnych kampanii z Graph API. Zwraca {campaign_name: daily_budget_PLN}."""
+    token = os.environ.get("META_ACCESS_TOKEN", "")
+    try:
+        resp = requests.get(
+            f"https://graph.facebook.com/v19.0/{account_id}/campaigns",
+            params={
+                "access_token": token,
+                "fields": "name,daily_budget",
+                "effective_status": '["ACTIVE","PAUSED"]',
+                "limit": 100,
+            },
+            timeout=15,
+        )
+        data = resp.json().get("data", [])
+        return {c["name"]: int(c.get("daily_budget", 0)) / 100 for c in data if c.get("daily_budget")}
+    except Exception as e:
+        logger.warning(f"_get_meta_campaign_budgets error: {e}")
+        return {}
+
+
 def check_budget_alerts():
     """
     Sprawdza budget pace dla wszystkich klientów i wysyła alerty.
@@ -117,23 +140,22 @@ def check_budget_alerts():
             if not channel_id:
                 continue
             try:
+                account_id = get_meta_account_id(client_name)
+                budgets = _get_meta_campaign_budgets(account_id) if account_id else {}
                 data = meta_ads_tool(
                     client_name=client_name,
                     date_from=today,
                     date_to=today,
                     level="campaign",
-                    metrics=["campaign_name", "spend", "budget_remaining"]
+                    metrics=["campaign_name", "spend"]
                 )
                 for campaign in data.get("data", []):
                     spend = float(campaign.get("spend", 0))
-                    remaining = campaign.get("budget_remaining")
-                    if spend < 10 or remaining is None:
-                        continue
-                    total_budget = spend + float(remaining)
-                    if total_budget <= 0:
-                        continue
-                    pace = (spend / total_budget) / max(day_progress, 0.01)
                     campaign_name = campaign.get("campaign_name", "Unknown")
+                    daily_budget = budgets.get(campaign_name)
+                    if spend < 10 or not daily_budget or daily_budget <= 0:
+                        continue
+                    pace = (spend / daily_budget) / max(day_progress, 0.01)
                     base_key = f"meta_{client_name}_{campaign_name}_{today}"
 
                     if pace > 1.5 and should_send_alert(base_key + "_crit"):
@@ -178,27 +200,27 @@ def check_budget_status(client_name, platform):
 
     try:
         if platform == "meta":
+            account_id = get_meta_account_id(client_name)
+            budgets = _get_meta_campaign_budgets(account_id) if account_id else {}
             data = meta_ads_tool(
                 client_name=client_name,
                 date_from=today,
                 date_to=today,
                 level="campaign",
-                metrics=["campaign_name", "spend", "budget_remaining"]
+                metrics=["campaign_name", "spend"]
             )
             for campaign in data.get("data", []):
                 spend = float(campaign.get("spend", 0))
-                remaining = campaign.get("budget_remaining")
-                if spend < 1 or remaining is None:
+                campaign_name = campaign.get("campaign_name", "Unknown")
+                daily_budget = budgets.get(campaign_name)
+                if spend < 1 or not daily_budget or daily_budget <= 0:
                     continue
-                total = spend + float(remaining)
-                if total <= 0:
-                    continue
-                pct = (spend / total) * 100
+                pct = (spend / daily_budget) * 100
                 if pct >= 80:
                     alerts.append({
-                        "campaign": campaign.get("campaign_name", "Unknown"),
+                        "campaign": campaign_name,
                         "spend": spend,
-                        "total": total,
+                        "total": daily_budget,
                         "pct": pct
                     })
 

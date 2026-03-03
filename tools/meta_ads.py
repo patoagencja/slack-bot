@@ -120,8 +120,7 @@ def meta_ads_tool(date_from=None, date_to=None, level="campaign", campaign_name=
                          'cpm', 'reach', 'frequency', 'conversions', 'cost_per_conversion',
                          'purchase_roas', 'actions', 'action_values'],
             'adset':    ['campaign_name', 'adset_name', 'spend', 'impressions', 'clicks',
-                         'ctr', 'cpc', 'cpm', 'reach', 'conversions', 'cost_per_conversion',
-                         'budget_remaining', 'budget_rebalance_flag'],
+                         'ctr', 'cpc', 'cpm', 'reach', 'conversions', 'cost_per_conversion'],
             'ad':       ['campaign_name', 'adset_name', 'ad_name', 'spend', 'impressions',
                          'clicks', 'ctr', 'cpc', 'cpm', 'reach', 'conversions',
                          'inline_link_clicks', 'inline_link_click_ctr'],
@@ -152,7 +151,7 @@ def meta_ads_tool(date_from=None, date_to=None, level="campaign", campaign_name=
                 if value is not None:
                     if metric in ['spend', 'cpc', 'cpm', 'ctr', 'frequency',
                                   'cost_per_conversion', 'purchase_roas',
-                                  'budget_remaining', 'inline_link_click_ctr']:
+                                  'inline_link_click_ctr']:
                         item[metric] = float(value)
                     elif metric in ['impressions', 'clicks', 'reach',
                                     'conversions', 'inline_link_clicks']:
