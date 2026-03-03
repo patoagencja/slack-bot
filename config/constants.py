@@ -3,6 +3,7 @@ All project-wide constants for Sebol bot.
 No imports from other project modules — safe to import from anywhere.
 """
 import os
+import json
 
 # Base directory = slack-bot/  (one level up from config/)
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -170,20 +171,32 @@ REQUEST_CATEGORY_LABELS = {
 MAX_DAILY_BUDGET = 2000   # PLN/dzień — limit bezpieczeństwa
 MAX_TOTAL_BUDGET = 10000  # PLN total — limit bezpieczeństwa
 
-# Meta Ads Account IDs (format: "act_XXXXXXXXX")
+# Parsuj META_AD_ACCOUNT_ID (JSON dict jak w innych narzędziach bota)
+# Format: '{"drzwi dre": "act_824677501944646", "zbiorcze": "act_206751433757184"}'
+_meta_ad_account_raw = os.environ.get("META_AD_ACCOUNT_ID", "{}")
+try:
+    _meta_ad_map = json.loads(_meta_ad_account_raw)
+except Exception:
+    _meta_ad_map = {}
+
+# Meta Ads Account IDs — wspiera klucze "dre" i "drzwi dre" (aliasy)
 META_ACCOUNT_IDS = {
-    "dre":    os.environ.get("DRE_META_ACCOUNT_ID", ""),
-    "instax": os.environ.get("INSTAX_META_ACCOUNT_ID", ""),
-    "m2":     os.environ.get("M2_META_ACCOUNT_ID", ""),
-    "pato":   os.environ.get("PATO_META_ACCOUNT_ID", ""),
+    "dre":              _meta_ad_map.get("drzwi dre") or os.environ.get("DRE_META_ACCOUNT_ID", ""),
+    "drzwi dre":        _meta_ad_map.get("drzwi dre") or os.environ.get("DRE_META_ACCOUNT_ID", ""),
+    "instax":           _meta_ad_map.get("instax")    or os.environ.get("INSTAX_META_ACCOUNT_ID", ""),
+    "zbiorcze":         _meta_ad_map.get("zbiorcze")  or os.environ.get("ZBIORCZE_META_ACCOUNT_ID", ""),
+    "kampanie zbiorcze":_meta_ad_map.get("kampanie zbiorcze") or _meta_ad_map.get("zbiorcze", ""),
+    "m2":               _meta_ad_map.get("m2")        or os.environ.get("M2_META_ACCOUNT_ID", ""),
+    "pato":             _meta_ad_map.get("pato")       or os.environ.get("PATO_META_ACCOUNT_ID", ""),
 }
 
 # Meta Page IDs per klient
 META_PAGE_IDS = {
-    "dre":    os.environ.get("DRE_META_PAGE_ID", ""),
-    "instax": os.environ.get("INSTAX_META_PAGE_ID", ""),
-    "m2":     os.environ.get("M2_META_PAGE_ID", ""),
-    "pato":   os.environ.get("PATO_META_PAGE_ID", ""),
+    "dre":       os.environ.get("DRE_META_PAGE_ID", ""),
+    "drzwi dre": os.environ.get("DRE_META_PAGE_ID", ""),
+    "instax":    os.environ.get("INSTAX_META_PAGE_ID", ""),
+    "m2":        os.environ.get("M2_META_PAGE_ID", ""),
+    "pato":      os.environ.get("PATO_META_PAGE_ID", ""),
 }
 
 # Polskie miasta → Facebook Location IDs
