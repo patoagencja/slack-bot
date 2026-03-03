@@ -242,12 +242,23 @@ POLISH_CITIES_FB_IDS = {
 
 # Przyjazne nazwy celów kampanii
 OBJECTIVE_FRIENDLY = {
-    "TRAFFIC":          "🔗 Ruch na stronę",
+    # Nowe nazwy Meta API v19+
+    "OUTCOME_TRAFFIC":       "🔗 Ruch na stronę",
+    "OUTCOME_ENGAGEMENT":    "💬 Zaangażowanie",
+    "OUTCOME_LEADS":         "📋 Pozyskiwanie leadów",
+    "OUTCOME_SALES":         "🎯 Sprzedaż / konwersje",
+    "OUTCOME_AWARENESS":     "🌟 Świadomość marki",
+    "OUTCOME_APP_PROMOTION": "📱 Promocja aplikacji",
+    # Nadal akceptowane przez API
     "CONVERSIONS":      "🎯 Konwersje",
     "REACH":            "👥 Zasięg",
     "BRAND_AWARENESS":  "🌟 Świadomość marki",
     "LEAD_GENERATION":  "📋 Pozyskiwanie leadów",
-    "APP_INSTALLS":     "📱 Instalacje aplikacji",
-    "ENGAGEMENT":       "💬 Zaangażowanie",
     "VIDEO_VIEWS":      "▶️ Wyświetlenia video",
+    "POST_ENGAGEMENT":  "💬 Zaangażowanie (post)",
+    "LINK_CLICKS":      "🔗 Kliknięcia w link",
+    # Legacy
+    "TRAFFIC":          "🔗 Ruch na stronę",
+    "ENGAGEMENT":       "💬 Zaangażowanie",
+    "APP_INSTALLS":     "📱 Instalacje aplikacji",
 }

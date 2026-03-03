@@ -163,7 +163,7 @@ Zwróć dokładnie ten JSON (null gdy brak danych):
 {{
   "client_name": "dre|instax|m2|pato",
   "campaign_name": "nazwa kampanii",
-  "objective": "TRAFFIC|CONVERSIONS|REACH|BRAND_AWARENESS|LEAD_GENERATION|VIDEO_VIEWS|ENGAGEMENT",
+  "objective": "OUTCOME_TRAFFIC|OUTCOME_ENGAGEMENT|OUTCOME_LEADS|OUTCOME_SALES|OUTCOME_AWARENESS|CONVERSIONS|REACH|BRAND_AWARENESS|LEAD_GENERATION|VIDEO_VIEWS",
   "daily_budget": liczba_PLN,
   "website_url": "https://...",
   "ad_copy": "tekst reklamy",
@@ -183,7 +183,7 @@ Zasady mapowania:
 - "dre"/"drzwi" → client_name="dre"
 - "instax"/"fuji"/"fujifilm" → client_name="instax"
 - "m2"/"nieruchomości" → client_name="m2"
-- cel "traffic"/"ruch" → TRAFFIC | "konwersje" → CONVERSIONS | "zasięg" → REACH
+- cel "traffic"/"ruch" → OUTCOME_TRAFFIC | "konwersje"/"sprzedaż" → OUTCOME_SALES | "zasięg" → REACH | "zaangażowanie" → OUTCOME_ENGAGEMENT | "leady" → OUTCOME_LEADS
 - start_date domyślnie jutro ({tomorrow})
 - Odpowiedz TYLKO JSON."""
 
@@ -204,7 +204,7 @@ Zasady mapowania:
         params = json.loads(text)
 
         # Defaults
-        params.setdefault("objective",      "TRAFFIC")
+        params.setdefault("objective",      "OUTCOME_TRAFFIC")
         params.setdefault("daily_budget",   100)
         params.setdefault("call_to_action", "LEARN_MORE")
         params.setdefault("website_url",    "https://patoagencja.com")
@@ -224,7 +224,7 @@ Zasady mapowania:
         return {
             "client_name":    None,
             "campaign_name":  "Nowa kampania",
-            "objective":      "TRAFFIC",
+            "objective":      "OUTCOME_TRAFFIC",
             "daily_budget":   100,
             "website_url":    "https://patoagencja.com",
             "ad_copy":        "",
@@ -377,18 +377,31 @@ def create_campaign_draft(
     creatives: lista {'type': 'image'|'video', 'hash': str, 'id': str}
     Returns: {'campaign_id', 'adset_id', 'ad_ids', 'params', 'account_id'}
     """
-    objective = campaign_params.get("objective", "TRAFFIC")
+    objective = campaign_params.get("objective", "OUTCOME_TRAFFIC")
     page_id   = META_PAGE_IDS.get((campaign_params.get("client_name") or "").lower(), "")
 
+    # Normalize legacy objective names → Meta API v19 names
+    _legacy_obj_map = {
+        "TRAFFIC":     "OUTCOME_TRAFFIC",
+        "ENGAGEMENT":  "OUTCOME_ENGAGEMENT",
+        "APP_INSTALLS":"OUTCOME_APP_PROMOTION",
+    }
+    objective = _legacy_obj_map.get(objective, objective)
+
     opt_goal_map = {
-        "TRAFFIC":          "LINK_CLICKS",
-        "CONVERSIONS":      "OFFSITE_CONVERSIONS",
-        "REACH":            "REACH",
-        "BRAND_AWARENESS":  "BRAND_AWARENESS",
-        "LEAD_GENERATION":  "LEAD_GENERATION",
-        "APP_INSTALLS":     "APP_INSTALLS",
-        "VIDEO_VIEWS":      "THRUPLAY",
-        "ENGAGEMENT":       "POST_ENGAGEMENT",
+        "OUTCOME_TRAFFIC":       "LINK_CLICKS",
+        "OUTCOME_ENGAGEMENT":    "POST_ENGAGEMENT",
+        "OUTCOME_LEADS":         "LEAD_GENERATION",
+        "OUTCOME_SALES":         "OFFSITE_CONVERSIONS",
+        "OUTCOME_AWARENESS":     "REACH",
+        "OUTCOME_APP_PROMOTION": "APP_INSTALLS",
+        "CONVERSIONS":           "OFFSITE_CONVERSIONS",
+        "REACH":                 "REACH",
+        "BRAND_AWARENESS":       "BRAND_AWARENESS",
+        "LEAD_GENERATION":       "LEAD_GENERATION",
+        "VIDEO_VIEWS":           "THRUPLAY",
+        "POST_ENGAGEMENT":       "POST_ENGAGEMENT",
+        "LINK_CLICKS":           "LINK_CLICKS",
     }
     optimization_goal = opt_goal_map.get(objective, "LINK_CLICKS")
 
