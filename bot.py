@@ -1073,6 +1073,29 @@ def handle_mention(event, say):
             logger.error(f"Błąd email trigger w mention: {e}")
         return
 
+    # === NIEOBECNOŚCI / PROŚBY via @mention lub seba/sebol w kanałach ===
+    # handle_employee_dm obsługuje faktyczny zapis do pliku JSON.
+    # Bez tego Claude AI tylko UDAJE że zapisał — dane nigdy nie trafiają do bazy.
+    _mention_uid = event.get('user', '')
+    if _mention_uid and any(kw in msg_lower_m for kw in EMPLOYEE_MSG_KEYWORDS):
+        # Znajdź imię: najpierw TEAM_MEMBERS (szybko, bez API), potem Slack API
+        _mention_name = next(
+            (m['name'] for m in TEAM_MEMBERS if m['slack_id'] == _mention_uid), None
+        )
+        if not _mention_name:
+            try:
+                _ui = app.client.users_info(user=_mention_uid)
+                _mention_name = (
+                    _ui['user'].get('real_name')
+                    or _ui['user'].get('profile', {}).get('display_name')
+                    or _ui['user'].get('name', _mention_uid)
+                )
+            except Exception:
+                _mention_name = _mention_uid
+        logger.info(f"MENTION ABSENCE CHECK → uid={_mention_uid} name={_mention_name!r}")
+        if handle_employee_dm(_mention_uid, _mention_name, user_message, say):
+            return  # nieobecność lub prośba — obsłużone i zapisane
+
     channel = event['channel']
     thread_ts = event.get('thread_ts', event['ts'])
 
