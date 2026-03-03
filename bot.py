@@ -829,8 +829,64 @@ def handle_message_events(body, say, logger):
                     say("\n".join(_dm_results))
                     return
 
-        if handle_employee_dm(user_id, user_name, user_message, say):
+        # === CAMPAIGN in DM: sprawdź zanim handle_employee_dm połknie request ===
+        _dm_text_l = user_message.lower()
+        _dm_camp_kws = [
+            'stwórz kampanię', 'stworz kampanie', 'zrób kampanię', 'zrob kampanie',
+            'nową kampanię', 'nowa kampania', 'utwórz kampanię', 'utworz kampanie',
+            'create campaign', 'nowa kampan',
+        ]
+        _dm_approve_m = re.search(r'(zatwierdź|zatwierdz|uruchom)\s+kampanię\s+(\d+)', _dm_text_l)
+        _dm_cancel_m  = re.search(r'(anuluj|usuń|usun|skasuj)\s+kampanię\s+(\d+)', _dm_text_l)
+        _dm_has_files = bool(event.get('files'))
+
+        if _dm_approve_m:
+            _camp_id = _dm_approve_m.group(2)
+            say(text=f"🚀 Uruchamiam kampanię `{_camp_id}`...")
+            say(text=approve_and_launch_campaign(_camp_id))
             return
+
+        if _dm_cancel_m:
+            _camp_id = _dm_cancel_m.group(2)
+            say(text=cancel_campaign_draft(_camp_id))
+            return
+
+        if _dm_has_files or any(kw in _dm_text_l for kw in _dm_camp_kws):
+            say(text="⏳ Przetwarzam... zaraz wrócę z preview.")
+            try:
+                _file_ids = [f['id'] for f in event.get('files', [])]
+                _cfiles   = download_slack_files(_file_ids) if _file_ids else []
+                _cparams  = parse_campaign_request(user_message, _cfiles)
+                _cerrors  = validate_campaign_params(_cparams)
+                if _cerrors:
+                    say(text="❌ Nie mogę stworzyć kampanii:\n" + "\n".join(f"• {e}" for e in _cerrors))
+                    return
+                _account_id = get_meta_account_id(_cparams['client_name'])
+                _creatives  = []
+                if _cfiles:
+                    say(text=f"🎨 Uploaduję {len(_cfiles)} kreacji do Meta...")
+                    for _fname, _fdata, _ftype in _cfiles:
+                        try:
+                            _cr = upload_creative_to_meta(_account_id, _fdata, _ftype, _fname)
+                            _creatives.append(_cr)
+                        except Exception as _ce:
+                            say(text=f"⚠️ Nie udało się uploadować `{_fname}`: {_ce}")
+                _targeting = build_meta_targeting(_cparams.get('targeting') or {})
+                say(text="📋 Tworzę szkic kampanii w Meta Ads...")
+                _draft_ids = create_campaign_draft(_account_id, _cparams, _creatives, _targeting)
+                _preview   = generate_campaign_preview(
+                    _cparams, _cparams.get('targeting') or {}, len(_creatives), _draft_ids,
+                )
+                say(text=_preview)
+            except Exception as _ce:
+                logger.error(f"Campaign creation DM error: {_ce}")
+                say(text=f"❌ Błąd tworzenia kampanii: {str(_ce)}")
+            return
+
+        # Guard: tylko jeśli message zawiera znane employee keywords
+        if any(kw in _dm_text_l for kw in EMPLOYEE_MSG_KEYWORDS):
+            if handle_employee_dm(user_id, user_name, user_message, say):
+                return
 
     # Email summary trigger — wyniki zawsze na DM
     if any(t in text_lower for t in ["test email", "email test", "email summary"]):
