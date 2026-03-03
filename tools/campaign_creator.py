@@ -419,13 +419,12 @@ def create_campaign_draft(
         )
         body = resp.json()
         if "error" in body:
-            raise FacebookRequestError(
-                "Call was not successful",
-                {"method": "POST", "path": f"{_api_url}/{endpoint}"},
-                resp.status_code,
-                resp.headers,
-                body,
+            err = body["error"]
+            msg = (
+                f"Meta API /{endpoint} [{err.get('code')}/{err.get('error_subcode','')}] "
+                f"{err.get('message')} | {err.get('error_user_msg', '')}"
             )
+            raise Exception(msg)
         return body
 
     # ── A: Create Campaign ────────────────────────────────────────────────────
@@ -476,7 +475,7 @@ def create_campaign_draft(
                         "image_hash":     creative["hash"],
                         "link":           website,
                         "message":        ad_copy,
-                        "call_to_action": {"type": cta},
+                        "call_to_action": {"type": cta, "value": {"link": website}},
                     }
                 }
             else:  # video
@@ -507,8 +506,6 @@ def create_campaign_draft(
             ad_ids.append(ad_body["id"])
             logger.info(f"Ad {i+1} created: {ad_body['id']}")
 
-        except FacebookRequestError as e:
-            logger.error(f"Ad {i+1} creation Meta error: {e.api_error_message()}")
         except Exception as e:
             logger.error(f"Ad {i+1} creation error: {e}")
 
