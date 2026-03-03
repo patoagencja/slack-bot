@@ -407,37 +407,59 @@ def create_campaign_draft(
     }
     optimization_goal = opt_goal_map.get(objective, "LINK_CLICKS")
 
+    _token   = os.environ.get("META_ACCESS_TOKEN", "")
+    _api_url = f"https://graph.facebook.com/v19.0/{account_id}"
+
+    def _graph_post(endpoint: str, data: dict) -> dict:
+        resp = requests.post(
+            f"{_api_url}/{endpoint}",
+            params={"access_token": _token},
+            json=data,
+            timeout=30,
+        )
+        body = resp.json()
+        if "error" in body:
+            raise FacebookRequestError(
+                "Call was not successful",
+                {"method": "POST", "path": f"{_api_url}/{endpoint}"},
+                resp.status_code,
+                resp.headers,
+                body,
+            )
+        return body
+
     # ── A: Create Campaign ────────────────────────────────────────────────────
-    campaign = Campaign(parent_id=account_id)
-    campaign.update({
-        Campaign.Field.name:                 campaign_params["campaign_name"],
-        Campaign.Field.objective:            objective,
-        Campaign.Field.status:               "PAUSED",
-        Campaign.Field.special_ad_categories: [],
+    camp_body = _graph_post("campaigns", {
+        "name":                          campaign_params["campaign_name"],
+        "objective":                     objective,
+        "status":                        "PAUSED",
+        "special_ad_categories":         [],
+        "is_adset_budget_sharing_enabled": False,
     })
-    campaign.remote_create(params={"is_adset_budget_sharing_enabled": False})
-    campaign_id = campaign["id"]
+    campaign_id = camp_body["id"]
     logger.info(f"Campaign draft created: {campaign_id} ({campaign_params['campaign_name']})")
 
     # ── B: Create AdSet ───────────────────────────────────────────────────────
-    adset_data = {
-        AdSet.Field.name:              f"{campaign_params['campaign_name']} - AdSet 1",
-        AdSet.Field.campaign_id:       campaign_id,
-        AdSet.Field.daily_budget:      int(float(campaign_params["daily_budget"]) * 100),  # grosze
-        AdSet.Field.billing_event:     "IMPRESSIONS",
-        AdSet.Field.optimization_goal: optimization_goal,
-        AdSet.Field.bid_strategy:      "LOWEST_COST_WITHOUT_CAP",
-        AdSet.Field.targeting:         targeting,
-        AdSet.Field.status:            "PAUSED",
-        AdSet.Field.start_time:        campaign_params["start_date"],
+    targeting_with_auto = {
+        **targeting,
+        "targeting_automation": {"advantage_audience": 0},
+    }
+    adset_body_data = {
+        "name":              f"{campaign_params['campaign_name']} - AdSet 1",
+        "campaign_id":       campaign_id,
+        "daily_budget":      int(float(campaign_params["daily_budget"]) * 100),
+        "billing_event":     "IMPRESSIONS",
+        "optimization_goal": optimization_goal,
+        "bid_strategy":      "LOWEST_COST_WITHOUT_CAP",
+        "targeting":         targeting_with_auto,
+        "status":            "PAUSED",
+        "start_time":        campaign_params["start_date"],
     }
     if campaign_params.get("end_date"):
-        adset_data[AdSet.Field.end_time] = campaign_params["end_date"]
+        adset_body_data["end_time"] = campaign_params["end_date"]
 
-    adset = AdSet(parent_id=account_id)
-    adset.update(adset_data)
-    adset.remote_create()
-    adset_id = adset["id"]
+    adset_body = _graph_post("adsets", adset_body_data)
+    adset_id   = adset_body["id"]
     logger.info(f"AdSet created: {adset_id}")
 
     # ── C: Create Ads (jedna reklama na kreację) ───────────────────────────────
