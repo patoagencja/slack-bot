@@ -203,12 +203,14 @@ Zasady mapowania:
 
         params = json.loads(text)
 
-        # Defaults
-        params.setdefault("objective",      "OUTCOME_TRAFFIC")
-        params.setdefault("daily_budget",   100)
-        params.setdefault("call_to_action", "LEARN_MORE")
-        params.setdefault("website_url",    "https://patoagencja.com")
-        params.setdefault("start_date",     tomorrow)
+        # Defaults — użyj or aby zastąpić też None (nie tylko brak klucza)
+        client = (params.get("client_name") or "kampania").upper()
+        params["objective"]      = params.get("objective")      or "OUTCOME_TRAFFIC"
+        params["campaign_name"]  = params.get("campaign_name")  or f"{client} – {today}"
+        params["daily_budget"]   = params.get("daily_budget")   or 100
+        params["call_to_action"] = params.get("call_to_action") or "LEARN_MORE"
+        params["website_url"]    = params.get("website_url")    or "https://patoagencja.com"
+        params["start_date"]     = params.get("start_date")     or tomorrow
 
         if not params.get("targeting"):
             params["targeting"] = {
