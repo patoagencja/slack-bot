@@ -467,34 +467,57 @@ def create_campaign_draft(
     ad_copy   = campaign_params.get("ad_copy", "")
     cta       = campaign_params.get("call_to_action", "LEARN_MORE")
 
+    def _get_existing_page_post(pid: str):
+        try:
+            resp = requests.get(
+                f"https://graph.facebook.com/v19.0/{pid}/posts",
+                params={"access_token": _token, "fields": "id", "limit": 5},
+                timeout=15,
+            )
+            data = resp.json().get("data", [])
+            if data:
+                return data[0]["id"]
+        except Exception as e:
+            logger.warning(f"_get_existing_page_post error: {e}")
+        return None
+
+    existing_post_id = _get_existing_page_post(page_id) if page_id else None
+    if existing_post_id:
+        logger.info(f"Using existing page post: {existing_post_id}")
+
     for i, creative in enumerate(creatives):
         try:
-            if creative["type"] == "image":
-                story_spec = {
-                    "link_data": {
-                        "image_hash":     creative["hash"],
-                        "link":           website,
-                        "message":        ad_copy,
-                        "call_to_action": {"type": cta, "value": {"link": website}},
-                    }
+            if existing_post_id:
+                creative_payload = {
+                    "name":            f"{campaign_params['campaign_name']} - Creative {i+1}",
+                    "object_story_id": existing_post_id,
                 }
-            else:  # video
-                story_spec = {
-                    "video_data": {
-                        "video_id":       creative["id"],
-                        "title":          campaign_params["campaign_name"],
-                        "message":        ad_copy,
-                        "call_to_action": {"type": cta, "value": {"link": website}},
+            else:
+                if creative["type"] == "image":
+                    story_spec = {
+                        "link_data": {
+                            "image_hash":     creative["hash"],
+                            "link":           website,
+                            "message":        ad_copy,
+                            "call_to_action": {"type": cta, "value": {"link": website}},
+                        }
                     }
+                else:  # video
+                    story_spec = {
+                        "video_data": {
+                            "video_id":       creative["id"],
+                            "title":          campaign_params["campaign_name"],
+                            "message":        ad_copy,
+                            "call_to_action": {"type": cta, "value": {"link": website}},
+                        }
+                    }
+                if page_id:
+                    story_spec["page_id"] = page_id
+                creative_payload = {
+                    "name":              f"{campaign_params['campaign_name']} - Creative {i+1}",
+                    "object_story_spec": story_spec,
                 }
 
-            if page_id:
-                story_spec["page_id"] = page_id
-
-            creative_payload = {
-                "name":              f"{campaign_params['campaign_name']} - Creative {i+1}",
-                "object_story_spec": story_spec,
-            }
             logger.info(f"AdCreative payload: {json.dumps(creative_payload, ensure_ascii=False)}")
             creative_body = _graph_post("adcreatives", creative_payload)
             creative_id = creative_body["id"]
