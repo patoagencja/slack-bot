@@ -414,9 +414,8 @@ def create_campaign_draft(
         Campaign.Field.objective:            objective,
         Campaign.Field.status:               "PAUSED",
         Campaign.Field.special_ad_categories: [],
-        "is_adset_budget_sharing_enabled":   False,
     })
-    campaign.remote_create()
+    campaign.remote_create(params={"is_adset_budget_sharing_enabled": False})
     campaign_id = campaign["id"]
     logger.info(f"Campaign draft created: {campaign_id} ({campaign_params['campaign_name']})")
 
