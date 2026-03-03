@@ -7,3 +7,5 @@ facebook-business==19.0.0
 imapclient
 pyzmail36
 google-ads==29.1.0
+Pillow
+requests

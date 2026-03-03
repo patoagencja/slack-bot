@@ -163,3 +163,78 @@ REQUEST_CATEGORY_LABELS = {
     "pytanie":   "❓ Pytanie / decyzja",
     "inne":      "📌 Inne",
 }
+
+
+# ── CAMPAIGN CREATOR ────────────────────────────────────────────────────────────
+
+MAX_DAILY_BUDGET = 2000   # PLN/dzień — limit bezpieczeństwa
+MAX_TOTAL_BUDGET = 10000  # PLN total — limit bezpieczeństwa
+
+# Meta Ads Account IDs (format: "act_XXXXXXXXX")
+META_ACCOUNT_IDS = {
+    "dre":    os.environ.get("DRE_META_ACCOUNT_ID", ""),
+    "instax": os.environ.get("INSTAX_META_ACCOUNT_ID", ""),
+    "m2":     os.environ.get("M2_META_ACCOUNT_ID", ""),
+    "pato":   os.environ.get("PATO_META_ACCOUNT_ID", ""),
+}
+
+# Meta Page IDs per klient
+META_PAGE_IDS = {
+    "dre":    os.environ.get("DRE_META_PAGE_ID", ""),
+    "instax": os.environ.get("INSTAX_META_PAGE_ID", ""),
+    "m2":     os.environ.get("M2_META_PAGE_ID", ""),
+    "pato":   os.environ.get("PATO_META_PAGE_ID", ""),
+}
+
+# Polskie miasta → Facebook Location IDs
+POLISH_CITIES_FB_IDS = {
+    "warszawa":      {"key": "2430536", "name": "Warsaw",        "country": "PL"},
+    "warsaw":        {"key": "2430536", "name": "Warsaw",        "country": "PL"},
+    "kraków":        {"key": "2520876", "name": "Kraków",        "country": "PL"},
+    "krakow":        {"key": "2520876", "name": "Kraków",        "country": "PL"},
+    "wrocław":       {"key": "2520930", "name": "Wrocław",       "country": "PL"},
+    "wroclaw":       {"key": "2520930", "name": "Wrocław",       "country": "PL"},
+    "poznań":        {"key": "2520729", "name": "Poznań",        "country": "PL"},
+    "poznan":        {"key": "2520729", "name": "Poznań",        "country": "PL"},
+    "gdańsk":        {"key": "2520657", "name": "Gdańsk",        "country": "PL"},
+    "gdansk":        {"key": "2520657", "name": "Gdańsk",        "country": "PL"},
+    "łódź":          {"key": "2520694", "name": "Łódź",          "country": "PL"},
+    "lodz":          {"key": "2520694", "name": "Łódź",          "country": "PL"},
+    "katowice":      {"key": "2520684", "name": "Katowice",      "country": "PL"},
+    "szczecin":      {"key": "2520744", "name": "Szczecin",      "country": "PL"},
+    "bydgoszcz":     {"key": "2520626", "name": "Bydgoszcz",     "country": "PL"},
+    "lublin":        {"key": "2520695", "name": "Lublin",        "country": "PL"},
+    "białystok":     {"key": "2520607", "name": "Białystok",     "country": "PL"},
+    "bialystok":     {"key": "2520607", "name": "Białystok",     "country": "PL"},
+    "gdynia":        {"key": "2520660", "name": "Gdynia",        "country": "PL"},
+    "częstochowa":   {"key": "2520639", "name": "Częstochowa",   "country": "PL"},
+    "czestochowa":   {"key": "2520639", "name": "Częstochowa",   "country": "PL"},
+    "rzeszów":       {"key": "2520738", "name": "Rzeszów",       "country": "PL"},
+    "rzeszow":       {"key": "2520738", "name": "Rzeszów",       "country": "PL"},
+    "toruń":         {"key": "2520756", "name": "Toruń",         "country": "PL"},
+    "torun":         {"key": "2520756", "name": "Toruń",         "country": "PL"},
+    "sosnowiec":     {"key": "2520746", "name": "Sosnowiec",     "country": "PL"},
+    "kielce":        {"key": "2520686", "name": "Kielce",        "country": "PL"},
+    "radom":         {"key": "2520733", "name": "Radom",         "country": "PL"},
+    "gliwice":       {"key": "2520662", "name": "Gliwice",       "country": "PL"},
+    "zabrze":        {"key": "2520769", "name": "Zabrze",        "country": "PL"},
+    "olsztyn":       {"key": "2520718", "name": "Olsztyn",       "country": "PL"},
+    "bielsko-biała": {"key": "2520610", "name": "Bielsko-Biała", "country": "PL"},
+    "bielsko-biala": {"key": "2520610", "name": "Bielsko-Biała", "country": "PL"},
+    "opole":         {"key": "2520720", "name": "Opole",         "country": "PL"},
+    "zielona góra":  {"key": "2520773", "name": "Zielona Góra",  "country": "PL"},
+    "zielona gora":  {"key": "2520773", "name": "Zielona Góra",  "country": "PL"},
+    "trójmiasto":    {"key": "2520657", "name": "Gdańsk",        "country": "PL"},  # fallback do Gdańska
+}
+
+# Przyjazne nazwy celów kampanii
+OBJECTIVE_FRIENDLY = {
+    "TRAFFIC":          "🔗 Ruch na stronę",
+    "CONVERSIONS":      "🎯 Konwersje",
+    "REACH":            "👥 Zasięg",
+    "BRAND_AWARENESS":  "🌟 Świadomość marki",
+    "LEAD_GENERATION":  "📋 Pozyskiwanie leadów",
+    "APP_INSTALLS":     "📱 Instalacje aplikacji",
+    "ENGAGEMENT":       "💬 Zaangażowanie",
+    "VIDEO_VIEWS":      "▶️ Wyświetlenia video",
+}

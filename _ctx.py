@@ -13,3 +13,6 @@ checkin_responses = {}
 
 # Claude conversation history per user: user_id → [{"role": ..., "content": ...}]
 conversation_history = {}
+
+# Campaign drafts pending approval: campaign_id → {campaign_id, adset_id, ad_ids, params, account_id}
+campaign_drafts = {}

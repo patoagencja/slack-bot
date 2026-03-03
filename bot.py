@@ -41,6 +41,12 @@ from jobs.standup import (
 from jobs.onboarding import (
     _handle_onboarding_done, check_stale_onboardings, handle_onboard_slash,
 )
+from tools.campaign_creator import (
+    download_slack_files, upload_creative_to_meta, parse_campaign_request,
+    build_meta_targeting, create_campaign_draft, generate_campaign_preview,
+    approve_and_launch_campaign, cancel_campaign_draft, validate_campaign_params,
+    get_meta_account_id,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -303,6 +309,78 @@ def handle_mention(event, say):
 
     channel   = event['channel']
     thread_ts = event.get('thread_ts', event['ts'])
+
+    # === CAMPAIGN: zatwierdź kampanię {id} ===
+    _approve_m = re.search(r'(zatwierdź|zatwierdz|uruchom)\s+kampanię\s+(\d+)', msg_lower_m)
+    if _approve_m:
+        _camp_id = _approve_m.group(2)
+        say(text=f"🚀 Uruchamiam kampanię `{_camp_id}`...", thread_ts=thread_ts)
+        say(text=approve_and_launch_campaign(_camp_id), thread_ts=thread_ts)
+        return
+
+    # === CAMPAIGN: anuluj kampanię {id} ===
+    _cancel_m = re.search(r'(anuluj|usuń|usun|skasuj)\s+kampanię\s+(\d+)', msg_lower_m)
+    if _cancel_m:
+        _camp_id = _cancel_m.group(2)
+        say(text=cancel_campaign_draft(_camp_id), thread_ts=thread_ts)
+        return
+
+    # === CAMPAIGN CREATION: stwórz/zrób kampanię lub upload kreacji ===
+    _has_files       = bool(event.get('files'))
+    _campaign_create_kws = [
+        'stwórz kampanię', 'stworz kampanie', 'zrób kampanię', 'zrob kampanie',
+        'nową kampanię', 'nowa kampania', 'utwórz kampanię', 'utworz kampanie',
+        'create campaign', 'nowa kampan',
+    ]
+    if _has_files or any(kw in msg_lower_m for kw in _campaign_create_kws):
+        say(text="⏳ Przetwarzam... zaraz wrócę z preview.", thread_ts=thread_ts)
+        try:
+            # 1. Download files
+            _file_ids = [f['id'] for f in event.get('files', [])]
+            _cfiles   = download_slack_files(_file_ids) if _file_ids else []
+
+            # 2. Parse request with Claude
+            _cparams = parse_campaign_request(user_message, _cfiles)
+
+            # 3. Validate
+            _cerrors = validate_campaign_params(_cparams)
+            if _cerrors:
+                say(
+                    text="❌ Nie mogę stworzyć kampanii:\n" + "\n".join(f"• {e}" for e in _cerrors),
+                    thread_ts=thread_ts,
+                )
+                return
+
+            _account_id = get_meta_account_id(_cparams['client_name'])
+
+            # 4. Upload creatives (jeśli są)
+            _creatives = []
+            if _cfiles:
+                say(text=f"🎨 Uploaduję {len(_cfiles)} kreacji do Meta...", thread_ts=thread_ts)
+                for _fname, _fdata, _ftype in _cfiles:
+                    try:
+                        _cr = upload_creative_to_meta(_account_id, _fdata, _ftype, _fname)
+                        _creatives.append(_cr)
+                    except Exception as _ce:
+                        say(text=f"⚠️ Nie udało się uploadować `{_fname}`: {_ce}", thread_ts=thread_ts)
+
+            # 5. Build targeting
+            _targeting = build_meta_targeting(_cparams.get('targeting') or {})
+
+            # 6. Create campaign draft (PAUSED)
+            say(text="📋 Tworzę szkic kampanii w Meta Ads...", thread_ts=thread_ts)
+            _draft_ids = create_campaign_draft(_account_id, _cparams, _creatives, _targeting)
+
+            # 7. Send preview
+            _preview = generate_campaign_preview(
+                _cparams, _cparams.get('targeting') or {}, len(_creatives), _draft_ids,
+            )
+            say(text=_preview, thread_ts=thread_ts)
+
+        except Exception as _ce:
+            logger.error(f"Campaign creation error: {_ce}")
+            say(text=f"❌ Błąd tworzenia kampanii: {str(_ce)}", thread_ts=thread_ts)
+        return
 
     channel_type  = event.get('channel_type', 'channel')
     is_group_chat = channel_type in ('channel', 'group', 'mpim')
