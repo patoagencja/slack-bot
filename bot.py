@@ -3039,12 +3039,13 @@ def generate_smart_recommendations(client, current_campaigns, patterns=None):
                 "predicted_change_pct": 60.0,
             })
 
-        # --- High CPC (tylko traffic i conversion, nie engagement/reach) ---
-        if cpc is not None and cpc > 15 and obj in ('traffic', 'conversion'):
+        # --- High CPC (próg różny per cel: traffic ≤ 4 PLN, conversion ≤ 15 PLN) ---
+        _cpc_threshold = 4 if obj == 'traffic' else 15
+        if cpc is not None and cpc > _cpc_threshold and obj in ('traffic', 'conversion'):
             recs.append({
                 "campaign": name,
                 "action": "Zmień strategię bidowania (Target CPA)",
-                "reason": f"CPC {cpc:.2f} PLN > 15 PLN",
+                "reason": f"CPC {cpc:.2f} PLN > {_cpc_threshold} PLN",
                 "evidence": "Target CPA zazwyczaj obniża CPC o 20-30% vs manual",
                 "expected_impact": "CPC -20-30%",
                 "confidence": 0.65,
@@ -3265,10 +3266,10 @@ def _build_objective_alerts(meta_campaigns, google_campaigns=None):
                     'message': f'CTR {ctr:.2f}% < 0.5% — bardzo niska klikalność',
                     'action': 'Zmień kreację / CTA lub zawęź targeting',
                 })
-            if cpc > 15 and spend > 50:
+            if cpc > 4 and spend > 50:
                 alerts.append({
                     'campaign': name,
-                    'message': f'CPC {cpc:.2f} PLN > 15 PLN — wysoki koszt kliknięcia',
+                    'message': f'CPC {cpc:.2f} PLN > 4 PLN — wysoki koszt kliknięcia dla kampanii traffic',
                     'action': 'Przetestuj nowe kreacje lub zmień strategię bidowania',
                 })
 
