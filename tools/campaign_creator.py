@@ -492,23 +492,20 @@ def create_campaign_draft(
             if page_id:
                 story_spec["page_id"] = page_id
 
-            ad_creative = AdCreative(parent_id=account_id)
-            ad_creative.update({
-                AdCreative.Field.name:              f"{campaign_params['campaign_name']} - Creative {i+1}",
-                AdCreative.Field.object_story_spec: story_spec,
+            creative_body = _graph_post("adcreatives", {
+                "name":              f"{campaign_params['campaign_name']} - Creative {i+1}",
+                "object_story_spec": story_spec,
             })
-            ad_creative.remote_create()
+            creative_id = creative_body["id"]
 
-            ad = Ad(parent_id=account_id)
-            ad.update({
-                Ad.Field.name:     f"{campaign_params['campaign_name']} - Ad {i+1}",
-                Ad.Field.adset_id: adset_id,
-                Ad.Field.status:   "PAUSED",
-                Ad.Field.creative: {"creative_id": ad_creative["id"]},
+            ad_body = _graph_post("ads", {
+                "name":     f"{campaign_params['campaign_name']} - Ad {i+1}",
+                "adset_id": adset_id,
+                "status":   "PAUSED",
+                "creative": {"creative_id": creative_id},
             })
-            ad.remote_create()
-            ad_ids.append(ad["id"])
-            logger.info(f"Ad {i+1} created: {ad['id']}")
+            ad_ids.append(ad_body["id"])
+            logger.info(f"Ad {i+1} created: {ad_body['id']}")
 
         except FacebookRequestError as e:
             logger.error(f"Ad {i+1} creation Meta error: {e.api_error_message()}")
