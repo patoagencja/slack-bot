@@ -491,10 +491,12 @@ def create_campaign_draft(
             if page_id:
                 story_spec["page_id"] = page_id
 
-            creative_body = _graph_post("adcreatives", {
+            creative_payload = {
                 "name":              f"{campaign_params['campaign_name']} - Creative {i+1}",
                 "object_story_spec": story_spec,
-            })
+            }
+            logger.info(f"AdCreative payload: {json.dumps(creative_payload, ensure_ascii=False)}")
+            creative_body = _graph_post("adcreatives", creative_payload)
             creative_id = creative_body["id"]
 
             ad_body = _graph_post("ads", {
