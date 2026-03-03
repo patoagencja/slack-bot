@@ -2442,6 +2442,38 @@ CHANNEL_CLIENT_MAP = {
 }
 
 
+def _detect_campaign_objective(campaign_name):
+    """Wykrywa cel kampanii na podstawie słów kluczowych w nazwie.
+    Zwraca: 'engagement' | 'reach' | 'traffic' | 'conversion' (default)."""
+    n = (campaign_name or '').lower()
+    if any(k in n for k in ['engagement', 'zaangaż', 'zaangaz', 'interakcj', 'reakcj', 'post eng']):
+        return 'engagement'
+    if any(k in n for k in ['reach', 'zasięg', 'zasieg', 'awareness', 'świadom', 'swiadom', 'brand']):
+        return 'reach'
+    if any(k in n for k in ['traffic', 'ruch', 'link click', 'link_click', 'kliknięcia', 'klikniecia']):
+        return 'traffic'
+    return 'conversion'
+
+
+def _extract_engagement_actions(campaign_data):
+    """Wyciąga engagement metryki z Meta actions list (pole 'actions' z API).
+    Zwraca dict z reakcjami, komentarzami, zapisami, udostępnieniami."""
+    actions_raw = campaign_data.get('actions') or []
+    by_type = {}
+    for a in actions_raw:
+        action_type = a.get('action_type', '')
+        try:
+            by_type[action_type] = int(float(a.get('value', 0) or 0))
+        except (ValueError, TypeError):
+            by_type[action_type] = 0
+    return {
+        'reactions':  by_type.get('post_reaction', 0),
+        'comments':   by_type.get('comment', 0),
+        'post_saves': by_type.get('onsite_conversion.post_save', 0),
+        'shares':     by_type.get('post', 0),
+    }
+
+
 def _resolve_ads_client(channel_id, text):
     """Zwraca (client_key, client_cfg). Najpierw szuka nazwy w tekście,
     potem mapuje z kanału. Zwraca (None, None) jeśli nie znaleziono."""
@@ -2950,13 +2982,14 @@ def generate_smart_recommendations(client, current_campaigns, patterns=None):
         name = c.get("campaign_name", c.get("name", ""))
         if not name:
             continue
-        freq = c.get("frequency")
-        ctr = c.get("ctr")
-        roas = c.get("purchase_roas", c.get("roas"))
-        cpc = c.get("cpc")
+        obj   = c.get("_objective", _detect_campaign_objective(name))
+        freq  = c.get("frequency")
+        ctr   = c.get("ctr")
+        roas  = c.get("purchase_roas", c.get("roas"))
+        cpc   = c.get("cpc")
         spend = c.get("spend", c.get("cost", 0))
 
-        # --- Frequency → Creative Refresh ---
+        # --- Frequency → Creative Refresh (dotyczy wszystkich celów) ---
         if freq and freq >= 4.5:
             avg_imp = freq_p.get("avg_ctr_improvement_pct", 30.0)
             base = freq_p.get("confidence", 0.0) if freq_p.get("total", 0) >= 2 else 0.0
@@ -2978,8 +3011,8 @@ def generate_smart_recommendations(client, current_campaigns, patterns=None):
                     "predicted_change_pct": avg_imp,
                 })
 
-        # --- Low CTR → targeting review ---
-        if ctr is not None and ctr < 0.6:
+        # --- Low CTR → targeting review (tylko traffic i conversion, nie engagement/reach) ---
+        if ctr is not None and ctr < 0.6 and obj in ('traffic', 'conversion'):
             recs.append({
                 "campaign": name,
                 "action": "Zmień targeting / grupę odbiorców",
@@ -2992,8 +3025,8 @@ def generate_smart_recommendations(client, current_campaigns, patterns=None):
                 "predicted_change_pct": 50.0,
             })
 
-        # --- ROAS below break-even ---
-        if roas is not None and roas < 1.5 and spend > 50:
+        # --- ROAS below break-even (tylko conversion!) ---
+        if roas is not None and roas < 1.5 and spend > 50 and obj == 'conversion':
             recs.append({
                 "campaign": name,
                 "action": "Pause lub głęboka optymalizacja",
@@ -3006,8 +3039,8 @@ def generate_smart_recommendations(client, current_campaigns, patterns=None):
                 "predicted_change_pct": 60.0,
             })
 
-        # --- High CPC ---
-        if cpc is not None and cpc > 15:
+        # --- High CPC (tylko traffic i conversion, nie engagement/reach) ---
+        if cpc is not None and cpc > 15 and obj in ('traffic', 'conversion'):
             recs.append({
                 "campaign": name,
                 "action": "Zmień strategię bidowania (Target CPA)",
@@ -3183,6 +3216,93 @@ def weekly_learnings_dre():
         logger.error(f"❌ Błąd weekly_learnings_dre: {e}")
 
 
+def _build_objective_alerts(meta_campaigns, google_campaigns=None):
+    """Generuje alerty dostosowane do celu kampanii (per-campaign objective).
+    Pomija nieistotne metryki — np. brak alertu ROAS dla kampanii engagement."""
+    alerts = []
+    for c in (meta_campaigns or []):
+        obj  = c.get('_objective', 'conversion')
+        name = c.get('campaign_name', '?')
+        spend = float(c.get('spend', 0) or 0)
+        freq  = c.get('frequency')
+
+        if obj == 'engagement':
+            eng = c.get('_engagement', {})
+            total_interactions = (
+                eng.get('reactions', 0) + eng.get('comments', 0) +
+                eng.get('post_saves', 0) + eng.get('shares', 0)
+            )
+            reach = int(c.get('reach', 0) or 0)
+            # Alert: bardzo niskie zaangażowanie przy wysokim zasięgu
+            if reach > 500 and total_interactions == 0:
+                alerts.append({
+                    'campaign': name,
+                    'message': 'Zero interakcji przy aktywnym zasięgu — sprawdź kreacje',
+                    'action': 'Zmień grafikę / copy lub odśwież grupę odbiorców',
+                })
+            # Alert: ad fatigue (frequency)
+            if freq and freq >= 5.0:
+                alerts.append({
+                    'campaign': name,
+                    'message': f'Frequency {freq:.1f} ≥ 5 — ryzyko ad fatigue',
+                    'action': 'Wymień kreacje lub rozszerz grupę odbiorców',
+                })
+
+        elif obj == 'reach':
+            if freq and freq >= 6.0:
+                alerts.append({
+                    'campaign': name,
+                    'message': f'Frequency {freq:.1f} ≥ 6 — zbyt duże nasycenie',
+                    'action': 'Rozszerz targeting lub zmień kreacje',
+                })
+
+        elif obj == 'traffic':
+            ctr = float(c.get('ctr', 0) or 0)
+            cpc = float(c.get('cpc', 0) or 0)
+            if ctr < 0.5 and spend > 50:
+                alerts.append({
+                    'campaign': name,
+                    'message': f'CTR {ctr:.2f}% < 0.5% — bardzo niska klikalność',
+                    'action': 'Zmień kreację / CTA lub zawęź targeting',
+                })
+            if cpc > 15 and spend > 50:
+                alerts.append({
+                    'campaign': name,
+                    'message': f'CPC {cpc:.2f} PLN > 15 PLN — wysoki koszt kliknięcia',
+                    'action': 'Przetestuj nowe kreacje lub zmień strategię bidowania',
+                })
+
+        else:  # conversion
+            roas = c.get('purchase_roas')
+            if roas is not None and roas < 1.5 and spend > 50:
+                alerts.append({
+                    'campaign': name,
+                    'message': f'ROAS {roas:.2f}x < 1.5 — poniżej break-even',
+                    'action': 'Pause lub głęboka optymalizacja targetingu/kreacji',
+                })
+            ctr = float(c.get('ctr', 0) or 0)
+            if ctr < 0.5 and spend > 50:
+                alerts.append({
+                    'campaign': name,
+                    'message': f'CTR {ctr:.2f}% < 0.5%',
+                    'action': 'Zmień kreację lub targeting',
+                })
+
+    # Google — zawsze conversion-style alerty
+    for c in (google_campaigns or []):
+        name  = c.get('campaign_name', c.get('name', '?'))
+        ctr   = float(c.get('ctr', 0) or 0)
+        spend = float(c.get('cost', c.get('spend', 0)) or 0)
+        if ctr < 1.0 and spend > 50:
+            alerts.append({
+                'campaign': f'{name} (Google)',
+                'message': f'CTR {ctr:.2f}% < 1% — niska klikalność w wyszukiwarce',
+                'action': 'Sprawdź treść reklam i słowa kluczowe',
+            })
+
+    return alerts
+
+
 def generate_daily_digest_dre():
     """
     Generuje daily digest dla klienta DRE (Meta + Google Ads) z benchmarkami.
@@ -3206,7 +3326,7 @@ def generate_daily_digest_dre():
             date_to=today,
             level="campaign",
             metrics=["campaign_name", "spend", "impressions", "clicks", "ctr", "cpc",
-                    "reach", "frequency", "conversions", "purchase_roas"]
+                    "reach", "frequency", "conversions", "purchase_roas", "actions"]
         )
 
         # === GOOGLE ADS ===
@@ -3249,6 +3369,11 @@ def generate_daily_digest_dre():
 
         if not all_campaigns:
             return "📊 DRE - Daily Digest\n\n⚠️ Brak kampanii z spendem ≥ 20 PLN za wczoraj."
+
+        # === ANNOTACJA CELU PER KAMPANIA (Meta) ===
+        for c in meta_campaigns:
+            c['_objective'] = _detect_campaign_objective(c.get('campaign_name', ''))
+            c['_engagement'] = _extract_engagement_actions(c)
 
         # === SAVE RESULTS TO HISTORY (zapisuj wszystkie, niezależnie od spędu) ===
         for c in meta_campaigns_raw:
@@ -3295,7 +3420,8 @@ def generate_daily_digest_dre():
         total_reach = sum(c.get("reach", 0) for c in all_campaigns)
 
         # ── 1. TL;DR ──────────────────────────────────────────────────────────
-        n_alerts = len(analysis.get("critical_alerts", []))
+        obj_alerts = _build_objective_alerts(meta_campaigns, google_data_combined)
+        n_alerts = len(obj_alerts)
         alert_note = f" | 🔴 {n_alerts} alert{'y' if n_alerts > 1 else ''}" if n_alerts else " | ✅ bez alertów"
         skipped_note = f" (+{skipped_count} <20PLN)" if skipped_count > 0 else ""
 
@@ -3306,19 +3432,74 @@ def generate_daily_digest_dre():
             f"{alert_note}\n"
         )
 
-        # ── 2. AKCJA WYMAGANA ──────────────────────────────────────────────────
-        if analysis.get("critical_alerts"):
+        # ── 2. KAMPANIE — metryki per cel ─────────────────────────────────────
+        digest += "\n*📋 Kampanie:*\n"
+        for c in meta_campaigns:
+            obj  = c.get('_objective', 'conversion')
+            name = c.get('campaign_name', '?')
+            spend = float(c.get('spend', 0) or 0)
+            reach = int(c.get('reach', 0) or 0)
+            freq  = c.get('frequency')
+            eng   = c.get('_engagement', {})
+
+            if obj == 'engagement':
+                reactions  = eng.get('reactions', 0)
+                comments   = eng.get('comments', 0)
+                saves      = eng.get('post_saves', 0)
+                shares     = eng.get('shares', 0)
+                digest += (
+                    f"🎯 *[ENGAGEMENT]* {name}\n"
+                    f"   ❤️ Reakcje: {reactions} | 💬 Komentarze: {comments} | "
+                    f"🔖 Zapisy: {saves} | 🔁 Udostępnienia: {shares}\n"
+                    f"   💰 Spend: {spend:.0f} PLN"
+                    + (f" | 👥 Zasięg: {reach:,}" if reach else "")
+                    + (f" | 📊 Freq: {freq:.1f}" if freq else "")
+                    + "\n"
+                )
+            elif obj == 'reach':
+                cpm = float(c.get('cpm', 0) or 0)
+                digest += (
+                    f"📡 *[REACH]* {name}\n"
+                    f"   👥 Zasięg: {reach:,} | 📊 Freq: {freq:.1f if freq else '—'} | 💰 {spend:.0f} PLN"
+                    + (f" | CPM: {cpm:.2f} PLN" if cpm else "")
+                    + "\n"
+                )
+            elif obj == 'traffic':
+                clicks = int(c.get('clicks', 0) or 0)
+                ctr    = float(c.get('ctr', 0) or 0)
+                cpc    = float(c.get('cpc', 0) or 0)
+                digest += (
+                    f"🔗 *[TRAFFIC]* {name}\n"
+                    f"   👆 Kliknięcia: {clicks} | CTR: {ctr:.2f}% | CPC: {cpc:.2f} PLN | 💰 {spend:.0f} PLN\n"
+                )
+            else:  # conversion
+                roas  = c.get('purchase_roas')
+                convs = int(c.get('conversions', 0) or 0)
+                ctr   = float(c.get('ctr', 0) or 0)
+                digest += (
+                    f"🛒 *[CONVERSION]* {name}\n"
+                    f"   🎯 ROAS: {f'{roas:.2f}x' if roas else '—'} | "
+                    f"🔄 Konwersje: {convs} | CTR: {ctr:.2f}% | 💰 {spend:.0f} PLN\n"
+                )
+
+        # Google campaigns (no objective detection — show standard metrics)
+        for c in google_data_combined:
+            name  = c.get('campaign_name', c.get('name', '?'))
+            spend = float(c.get('cost', c.get('spend', 0)) or 0)
+            ctr   = float(c.get('ctr', 0) or 0)
+            convs = int(c.get('conversions', 0) or 0)
+            digest += (
+                f"🔍 *[GOOGLE]* {name}\n"
+                f"   🔄 Konwersje: {convs} | CTR: {ctr:.2f}% | 💰 {spend:.0f} PLN\n"
+            )
+
+        # ── 3. AKCJA WYMAGANA ──────────────────────────────────────────────────
+        if obj_alerts:
             digest += "\n*🔴 AKCJA WYMAGANA:*\n"
-            for alert in analysis["critical_alerts"]:
+            for alert in obj_alerts:
                 digest += f"• *{alert['campaign']}* — {alert['message']}\n"
                 if alert.get("action"):
                     digest += f"  → {alert['action']}\n"
-
-        # ── 3. TOP PERFORMER ───────────────────────────────────────────────────
-        tops = analysis.get("top_performers", [])
-        if tops:
-            top = tops[0]
-            digest += f"\n*🟢 TOP:* {top['campaign']} — {top.get('metrics_line', '')}\n"
 
         # ── 4. EKSPERYMENT TYGODNIA ────────────────────────────────────────────
         try:
@@ -3353,22 +3534,40 @@ def generate_daily_digest_dre():
         logger.error(f"Błąd generowania digestu: {e}")
         return f"❌ Błąd generowania digestu: {str(e)}"
 
+_DIGEST_LAST_SENT_FILE = os.path.join(os.path.dirname(__file__), "data", "digest_last_sent.json")
+_DIGEST_INTERVAL_DAYS = 3
+
+
 def daily_digest_dre():
-    """Wysyła daily digest dla DRE o 9:00"""
+    """Wysyła daily digest dla DRE co 3 dni (cron codziennie o 9:00, ale z guard)."""
+    # ── Guard: pomijaj jeśli minęło mniej niż 3 dni od ostatniego ──
+    try:
+        if os.path.exists(_DIGEST_LAST_SENT_FILE):
+            with open(_DIGEST_LAST_SENT_FILE, 'r', encoding='utf-8') as _f:
+                _last = json.load(_f).get('date', '')
+            if _last:
+                _days_ago = (datetime.now() - datetime.strptime(_last, '%Y-%m-%d')).days
+                if _days_ago < _DIGEST_INTERVAL_DAYS:
+                    logger.info(f"Digest DRE skip — wysłany {_last} ({_days_ago} dni temu, czekam do {_DIGEST_INTERVAL_DAYS})")
+                    return
+    except Exception as _e:
+        logger.warning(f"Digest guard error (ignoruję): {_e}")
+
     try:
         dre_channel_id = os.environ.get("DRE_CHANNEL_ID", "C05GPM4E9B8")
-        
         logger.info("🔥 Generuję Daily Digest dla DRE...")
-        
         digest = generate_daily_digest_dre()
-        
-        app.client.chat_postMessage(
-            channel=dre_channel_id,
-            text=digest
-        )
-        
+        app.client.chat_postMessage(channel=dre_channel_id, text=digest)
         logger.info("✅ Daily Digest wysłany!")
-        
+
+        # Zapisz datę ostatniego wysłania
+        try:
+            os.makedirs(os.path.dirname(_DIGEST_LAST_SENT_FILE), exist_ok=True)
+            with open(_DIGEST_LAST_SENT_FILE, 'w', encoding='utf-8') as _f:
+                json.dump({'date': datetime.now().strftime('%Y-%m-%d')}, _f)
+        except Exception as _e:
+            logger.warning(f"Nie udało się zapisać digest_last_sent: {_e}")
+
     except Exception as e:
         logger.error(f"❌ Błąd wysyłania digestu: {e}")
 # Funkcja do codziennych podsumowań
