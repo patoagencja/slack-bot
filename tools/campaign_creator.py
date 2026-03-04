@@ -485,24 +485,40 @@ def create_campaign_draft(
     ad_copy   = campaign_params.get("ad_copy", "")
     cta       = campaign_params.get("call_to_action", "LEARN_MORE")
 
+    def _get_page_access_token(pid: str) -> str:
+        """Pobiera Page Access Token z /me/accounts (User Token → Page Token)."""
+        try:
+            resp = requests.get(
+                "https://graph.facebook.com/v19.0/me/accounts",
+                params={"access_token": _token, "fields": "id,access_token", "limit": 50},
+                timeout=15,
+            )
+            for page in resp.json().get("data", []):
+                if page.get("id") == pid:
+                    logger.info(f"Got page access token for page {pid}")
+                    return page.get("access_token", "")
+        except Exception as e:
+            logger.warning(f"_get_page_access_token error: {e}")
+        return ""
+
     def _get_existing_page_post(pid: str):
-        # Próbujemy kilka endpointów — różne tokeny mają różne uprawnienia
-        for endpoint in ["published_posts", "posts", "feed"]:
-            try:
-                resp = requests.get(
-                    f"https://graph.facebook.com/v19.0/{pid}/{endpoint}",
-                    params={"access_token": _token, "fields": "id", "limit": 5},
-                    timeout=15,
-                )
-                body = resp.json()
-                logger.info(f"_get_page_post [{endpoint}]: {json.dumps(body)[:400]}")
-                data = body.get("data", [])
-                if data:
-                    return data[0]["id"]
-                if "error" in body:
-                    logger.warning(f"_get_page_post [{endpoint}] API error: {body['error'].get('message')}")
-            except Exception as e:
-                logger.warning(f"_get_page_post [{endpoint}] exception: {e}")
+        # Page Access Token jest wymagany przez Meta API dla /published_posts
+        page_token = _get_page_access_token(pid) or _token
+        try:
+            resp = requests.get(
+                f"https://graph.facebook.com/v19.0/{pid}/published_posts",
+                params={"access_token": page_token, "fields": "id", "limit": 5},
+                timeout=15,
+            )
+            body = resp.json()
+            logger.info(f"_get_existing_page_post: {json.dumps(body)[:300]}")
+            data = body.get("data", [])
+            if data:
+                return data[0]["id"]
+            if "error" in body:
+                logger.warning(f"_get_existing_page_post error: {body['error'].get('message')}")
+        except Exception as e:
+            logger.warning(f"_get_existing_page_post exception: {e}")
         return None
 
     def _discover_page_id() -> str:
