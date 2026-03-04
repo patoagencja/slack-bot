@@ -203,6 +203,24 @@ Zasady mapowania:
 
         params = json.loads(text)
 
+        # Hard-normalize objective — Meta API v19 akceptuje tylko OUTCOME_*
+        _OBJ_NORMALIZE = {
+            "REACH":            "OUTCOME_AWARENESS",
+            "BRAND_AWARENESS":  "OUTCOME_AWARENESS",
+            "AWARENESS":        "OUTCOME_AWARENESS",
+            "CONVERSIONS":      "OUTCOME_SALES",
+            "LEAD_GENERATION":  "OUTCOME_LEADS",
+            "LEADS":            "OUTCOME_LEADS",
+            "VIDEO_VIEWS":      "OUTCOME_ENGAGEMENT",
+            "POST_ENGAGEMENT":  "OUTCOME_ENGAGEMENT",
+            "ENGAGEMENT":       "OUTCOME_ENGAGEMENT",
+            "LINK_CLICKS":      "OUTCOME_TRAFFIC",
+            "TRAFFIC":          "OUTCOME_TRAFFIC",
+            "APP_INSTALLS":     "OUTCOME_APP_PROMOTION",
+        }
+        _raw_obj = (params.get("objective") or "").upper().strip()
+        params["objective"] = _OBJ_NORMALIZE.get(_raw_obj, _raw_obj) or "OUTCOME_TRAFFIC"
+
         # Defaults — użyj or aby zastąpić też None (nie tylko brak klucza)
         client = (params.get("client_name") or "kampania").upper()
         params["objective"]      = params.get("objective")      or "OUTCOME_TRAFFIC"
