@@ -486,17 +486,23 @@ def create_campaign_draft(
     cta       = campaign_params.get("call_to_action", "LEARN_MORE")
 
     def _get_existing_page_post(pid: str):
-        try:
-            resp = requests.get(
-                f"https://graph.facebook.com/v19.0/{pid}/posts",
-                params={"access_token": _token, "fields": "id", "limit": 5},
-                timeout=15,
-            )
-            data = resp.json().get("data", [])
-            if data:
-                return data[0]["id"]
-        except Exception as e:
-            logger.warning(f"_get_existing_page_post error: {e}")
+        # Próbujemy kilka endpointów — różne tokeny mają różne uprawnienia
+        for endpoint in ["published_posts", "posts", "feed"]:
+            try:
+                resp = requests.get(
+                    f"https://graph.facebook.com/v19.0/{pid}/{endpoint}",
+                    params={"access_token": _token, "fields": "id", "limit": 5},
+                    timeout=15,
+                )
+                body = resp.json()
+                logger.info(f"_get_page_post [{endpoint}]: {json.dumps(body)[:400]}")
+                data = body.get("data", [])
+                if data:
+                    return data[0]["id"]
+                if "error" in body:
+                    logger.warning(f"_get_page_post [{endpoint}] API error: {body['error'].get('message')}")
+            except Exception as e:
+                logger.warning(f"_get_page_post [{endpoint}] exception: {e}")
         return None
 
     def _discover_page_id() -> str:
