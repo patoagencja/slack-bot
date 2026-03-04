@@ -140,6 +140,54 @@ def get_availability_for_date(target_date):
     return [e for e in _load_availability() if e.get("date") == target_date]
 
 
+def remove_availability_entries(user_id: str, date_from: str = None, date_to: str = None):
+    """Usuwa wpisy nieobecności dla użytkownika. Jeśli brak dat → usuwa wszystkie przyszłe."""
+    all_entries = _load_availability()
+    today = datetime.now().strftime('%Y-%m-%d')
+    before = len(all_entries)
+    if date_from and date_to:
+        all_entries = [e for e in all_entries
+                       if not (e["user_id"] == user_id and date_from <= e["date"] <= date_to)]
+    else:
+        all_entries = [e for e in all_entries
+                       if not (e["user_id"] == user_id and e["date"] >= today)]
+    removed = before - len(all_entries)
+    _save_availability(all_entries)
+    return removed
+
+
+def sync_availability_from_slack():
+    """
+    Odczytuje historię DM z ostatnich 14 dni dla każdego członka teamu
+    i rekonstruuje dane nieobecności. Wywoływane przy starcie i przed raportem.
+    """
+    cutoff_ts = str((datetime.now() - timedelta(days=14)).timestamp())
+    synced_total = 0
+    for member in TEAM_MEMBERS:
+        try:
+            dm = _ctx.app.client.conversations_open(users=member["slack_id"])
+            channel_id = dm["channel"]["id"]
+            history = _ctx.app.client.conversations_history(
+                channel=channel_id, oldest=cutoff_ts, limit=40
+            )
+            for msg in history.get("messages", []):
+                if msg.get("bot_id") or msg.get("subtype"):
+                    continue
+                text = msg.get("text", "").strip()
+                if len(text) < 8:
+                    continue
+                if not any(kw in text.lower() for kw in ABSENCE_KEYWORDS):
+                    continue
+                entries = _parse_availability_with_claude(text, member["name"])
+                if entries:
+                    save_availability_entry(member["slack_id"], member["name"], entries)
+                    synced_total += len(entries)
+        except Exception as e:
+            logger.warning(f"sync_availability_from_slack [{member['name']}]: {e}")
+    if synced_total:
+        logger.info(f"🔄 Synced {synced_total} absence entries from Slack history")
+
+
 def _next_workday(from_date=None):
     """Zwraca następny dzień roboczy (pomiń weekend)."""
     d = from_date or datetime.now()
@@ -192,6 +240,7 @@ def _format_availability_summary(entries, date_label):
 def send_daily_team_availability():
     """Wysyła na #zarzondpato o 17:00: dostępność jutro + otwarte prośby teamu."""
     try:
+        sync_availability_from_slack()
         tomorrow       = _next_workday()
         tomorrow_str   = tomorrow.strftime('%Y-%m-%d')
         tomorrow_label = tomorrow.strftime('%A %d.%m.%Y')
