@@ -163,7 +163,7 @@ Zwróć dokładnie ten JSON (null gdy brak danych):
 {{
   "client_name": "dre|instax|m2|pato",
   "campaign_name": "nazwa kampanii",
-  "objective": "OUTCOME_TRAFFIC|OUTCOME_ENGAGEMENT|OUTCOME_LEADS|OUTCOME_SALES|OUTCOME_AWARENESS|CONVERSIONS|REACH|BRAND_AWARENESS|LEAD_GENERATION|VIDEO_VIEWS",
+  "objective": "OUTCOME_TRAFFIC|OUTCOME_ENGAGEMENT|OUTCOME_LEADS|OUTCOME_SALES|OUTCOME_AWARENESS|OUTCOME_APP_PROMOTION",
   "daily_budget": liczba_PLN,
   "website_url": "https://...",
   "ad_copy": "tekst reklamy",
@@ -183,7 +183,7 @@ Zasady mapowania:
 - "dre"/"drzwi" → client_name="dre"
 - "instax"/"fuji"/"fujifilm" → client_name="instax"
 - "m2"/"nieruchomości" → client_name="m2"
-- cel "traffic"/"ruch" → OUTCOME_TRAFFIC | "konwersje"/"sprzedaż" → OUTCOME_SALES | "zasięg" → REACH | "zaangażowanie" → OUTCOME_ENGAGEMENT | "leady" → OUTCOME_LEADS
+- cel "traffic"/"ruch" → OUTCOME_TRAFFIC | "konwersje"/"sprzedaż" → OUTCOME_SALES | "zasięg"/"reach"/"świadomość" → OUTCOME_AWARENESS | "zaangażowanie" → OUTCOME_ENGAGEMENT | "leady" → OUTCOME_LEADS | "app"/"aplikacja" → OUTCOME_APP_PROMOTION
 - start_date domyślnie jutro ({tomorrow})
 - Odpowiedz TYLKO JSON."""
 
@@ -384,9 +384,16 @@ def create_campaign_draft(
 
     # Normalize legacy objective names → Meta API v19 names
     _legacy_obj_map = {
-        "TRAFFIC":     "OUTCOME_TRAFFIC",
-        "ENGAGEMENT":  "OUTCOME_ENGAGEMENT",
-        "APP_INSTALLS":"OUTCOME_APP_PROMOTION",
+        "TRAFFIC":          "OUTCOME_TRAFFIC",
+        "ENGAGEMENT":       "OUTCOME_ENGAGEMENT",
+        "APP_INSTALLS":     "OUTCOME_APP_PROMOTION",
+        "REACH":            "OUTCOME_AWARENESS",
+        "BRAND_AWARENESS":  "OUTCOME_AWARENESS",
+        "CONVERSIONS":      "OUTCOME_SALES",
+        "LEAD_GENERATION":  "OUTCOME_LEADS",
+        "VIDEO_VIEWS":      "OUTCOME_ENGAGEMENT",
+        "POST_ENGAGEMENT":  "OUTCOME_ENGAGEMENT",
+        "LINK_CLICKS":      "OUTCOME_TRAFFIC",
     }
     objective = _legacy_obj_map.get(objective, objective)
 
@@ -397,13 +404,6 @@ def create_campaign_draft(
         "OUTCOME_SALES":         "OFFSITE_CONVERSIONS",
         "OUTCOME_AWARENESS":     "REACH",
         "OUTCOME_APP_PROMOTION": "APP_INSTALLS",
-        "CONVERSIONS":           "OFFSITE_CONVERSIONS",
-        "REACH":                 "REACH",
-        "BRAND_AWARENESS":       "BRAND_AWARENESS",
-        "LEAD_GENERATION":       "LEAD_GENERATION",
-        "VIDEO_VIEWS":           "THRUPLAY",
-        "POST_ENGAGEMENT":       "POST_ENGAGEMENT",
-        "LINK_CLICKS":           "LINK_CLICKS",
     }
     optimization_goal = opt_goal_map.get(objective, "LINK_CLICKS")
 
