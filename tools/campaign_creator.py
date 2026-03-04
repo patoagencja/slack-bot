@@ -499,9 +499,33 @@ def create_campaign_draft(
             logger.warning(f"_get_existing_page_post error: {e}")
         return None
 
+    def _discover_page_id() -> str:
+        """Jeśli DRE_META_PAGE_ID nie ustawiony — szuka strony przez /me/accounts."""
+        try:
+            resp = requests.get(
+                "https://graph.facebook.com/v19.0/me/accounts",
+                params={"access_token": _token, "fields": "id,name", "limit": 20},
+                timeout=15,
+            )
+            pages = resp.json().get("data", [])
+            if pages:
+                logger.info(f"_discover_page_id found {len(pages)} pages: {[p.get('name') for p in pages]}")
+                return pages[0]["id"]
+        except Exception as e:
+            logger.warning(f"_discover_page_id error: {e}")
+        return ""
+
+    # Jeśli page_id nie skonfigurowany — próbuj auto-discovery
+    if not page_id:
+        page_id = _discover_page_id()
+        if page_id:
+            logger.info(f"Auto-discovered page_id: {page_id}")
+
     existing_post_id = _get_existing_page_post(page_id) if page_id else None
     if existing_post_id:
         logger.info(f"Using existing page post: {existing_post_id}")
+    else:
+        logger.warning(f"No existing page post found (page_id={page_id!r}) — no ads will be created")
 
     # Jeśli brak uploadowanych kreacji ale jest post na stronie — stwórz 1 reklamę z posta
     if not creatives and existing_post_id:
