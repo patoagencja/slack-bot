@@ -221,16 +221,28 @@ def handle_mention(event, say):
         return
 
     # === "usuń nieobecność X" / "resetuj nieobecności X" ===
-    _rm_abs = re.search(
-        r'(usu[nń]\s+nieobecno[sś][cć]|resetuj\s+nieobecno[sś]ci|wyczy[sś][cć]\s+nieobecno[sś]ci)',
-        msg_lower_m
+    # Używamy substring check zamiast regex — Slack może zwracać polskie znaki w NFD lub NFC
+    _msg_flat = (msg_lower_m
+                 .replace('ń', 'n').replace('ś', 's').replace('ć', 'c')
+                 .replace('ż', 'z').replace('ź', 'z').replace('ą', 'a')
+                 .replace('ę', 'e').replace('ó', 'o').replace('ł', 'l'))
+    _is_rm_abs = (
+        ('usun nieobecno' in _msg_flat or 'usuń nieobecno' in msg_lower_m) or
+        ('resetuj nieobecno' in _msg_flat) or
+        ('wyczys nieobecno' in _msg_flat or 'wyczysc nieobecno' in _msg_flat)
     )
-    if _rm_abs:
-        # wyciągnij imię po komendzie
-        _rm_suffix = msg_lower_m[_rm_abs.end():].strip()
-        _rm_words  = _rm_suffix.split()
+    if _is_rm_abs:
+        # wyciągnij imię — wszystko po słowie kluczowym
+        for _kw in ['nieobecnosc', 'nieobecnosci', 'nieobecność', 'nieobecności']:
+            if _kw in _msg_flat or _kw in msg_lower_m:
+                _after = (msg_lower_m.split(_kw, 1) + [''])[1].strip()
+                if not _after:
+                    _after = (_msg_flat.split(_kw.replace('ś','s').replace('ć','c'), 1) + [''])[1].strip()
+                break
+        else:
+            _after = ''
         _rm_member = None
-        for _w in _rm_words:
+        for _w in _after.split():
             _rm_member = find_team_member(_w)
             if _rm_member:
                 break

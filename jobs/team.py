@@ -156,10 +156,60 @@ def remove_availability_entries(user_id: str, date_from: str = None, date_to: st
     return removed
 
 
+def _classify_absence_message(text: str, reporter_name: str):
+    """
+    Klasyfikuje wiadomość o nieobecności — zwraca absent_person + entries.
+    Używana przez sync_availability_from_slack do wykrycia czy wiadomość
+    dotyczy nadawcy czy kogoś innego (np. 'Piotrka nie będzie w piątek').
+    """
+    today_str     = datetime.now().strftime('%Y-%m-%d')
+    today_weekday = datetime.now().strftime('%A')
+    current_year  = datetime.now().year
+
+    prompt = f"""Analizujesz wiadomość od pracownika "{reporter_name}".
+
+WIADOMOŚĆ: "{text}"
+DZIŚ: {today_str} ({today_weekday}), rok {current_year}
+
+CZY nieobecność dotyczy nadawcy ({reporter_name}) czy INNEJ osoby?
+
+Przykłady (nadawca = "Daniel"):
+  "Piotrek nie będzie w piątek" → absent_person: "Piotrek"
+  "jutro mnie nie będzie"       → absent_person: null
+  "Kasia ma urlop 5-10 marca"   → absent_person: "Kasia"
+
+Typy: absent / morning_only / afternoon_only / late_start / early_end / remote / partial
+Zakresy dat → wygeneruj każdy dzień roboczy (pomiń sob/niedz).
+Rok domyślny: {current_year}.
+
+Odpowiedz TYLKO JSON:
+{{
+  "absent_person": <"Imię" jeśli inna osoba, null jeśli sam nadawca>,
+  "absence_entries": [{{"date": "YYYY-MM-DD", "type": "absent", "details": "opis pl"}}]
+}}
+Jeśli brak konkretnych dat: {{"absent_person": null, "absence_entries": []}}"""
+
+    try:
+        resp = _ctx.claude.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = resp.content[0].text.strip()
+        m = _re.search(r'\{.*\}', raw, _re.DOTALL)
+        if m:
+            return json.loads(m.group())
+    except Exception as e:
+        logger.warning(f"_classify_absence_message error: {e}")
+    return None
+
+
 def sync_availability_from_slack():
     """
     Odczytuje historię DM z ostatnich 14 dni dla każdego członka teamu
     i rekonstruuje dane nieobecności. Wywoływane przy starcie i przed raportem.
+    Poprawnie obsługuje wiadomości o nieobecności innej osoby (np. Danio pisze
+    'Piotrka nie będzie' → zapisuje pod Piotrkiem, nie Danio).
     """
     cutoff_ts = str((datetime.now() - timedelta(days=14)).timestamp())
     synced_total = 0
@@ -178,10 +228,37 @@ def sync_availability_from_slack():
                     continue
                 if not any(kw in text.lower() for kw in ABSENCE_KEYWORDS):
                     continue
-                entries = _parse_availability_with_claude(text, member["name"])
-                if entries:
+
+                classified = _classify_absence_message(text, member["name"])
+                if not classified:
+                    continue
+                entries = classified.get("absence_entries", [])
+                if not entries:
+                    continue
+
+                absent_person = (classified.get("absent_person") or "").strip() or None
+                if absent_person:
+                    # Nieobecność dotyczy kogoś innego — znajdź właściwą osobę
+                    target = find_team_member(absent_person)
+                    if target:
+                        save_availability_entry(target["slack_id"], target["name"], entries)
+                        synced_total += len(entries)
+                        logger.info(
+                            f"sync: saved {len(entries)} entries for {target['name']}"
+                            f" (reported by {member['name']}): {text[:80]!r}"
+                        )
+                    else:
+                        logger.info(
+                            f"sync: unknown absent_person={absent_person!r}"
+                            f" in msg from {member['name']}: {text[:80]!r}"
+                        )
+                else:
                     save_availability_entry(member["slack_id"], member["name"], entries)
                     synced_total += len(entries)
+                    logger.info(
+                        f"sync: saved {len(entries)} entries for {member['name']}"
+                        f" from msg: {text[:80]!r}"
+                    )
         except Exception as e:
             logger.warning(f"sync_availability_from_slack [{member['name']}]: {e}")
     if synced_total:
