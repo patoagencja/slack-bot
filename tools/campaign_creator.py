@@ -357,8 +357,8 @@ def validate_campaign_params(params: dict) -> list:
             f"Szacowany budżet miesięczny {budget * 30:.0f} PLN przekracza limit {MAX_TOTAL_BUDGET} PLN"
         )
 
-    if not params.get("ad_copy"):
-        errors.append("Brak copy (tekst reklamy)")
+    # ad_copy jest opcjonalne gdy brak plików — bot użyje istniejącego posta ze strony
+    # (wymagane dopiero gdy business portfolio zweryfikowane i dark posty będą działać)
 
     if not params.get("targeting"):
         errors.append("Brak targetingu")
@@ -485,6 +485,10 @@ def create_campaign_draft(
     if existing_post_id:
         logger.info(f"Using existing page post: {existing_post_id}")
 
+    # Jeśli brak uploadowanych kreacji ale jest post na stronie — stwórz 1 reklamę z posta
+    if not creatives and existing_post_id:
+        creatives = [{"type": "page_post", "hash": None, "id": None}]
+
     for i, creative in enumerate(creatives):
         try:
             if existing_post_id:
@@ -535,11 +539,12 @@ def create_campaign_draft(
             logger.error(f"Ad {i+1} creation error: {e}")
 
     result = {
-        "campaign_id": campaign_id,
-        "adset_id":    adset_id,
-        "ad_ids":      ad_ids,
-        "params":      campaign_params,
-        "account_id":  account_id,
+        "campaign_id":     campaign_id,
+        "adset_id":        adset_id,
+        "ad_ids":          ad_ids,
+        "params":          campaign_params,
+        "account_id":      account_id,
+        "using_page_post": bool(existing_post_id),
     }
 
     # Zapisz w _ctx do późniejszego approval
@@ -574,10 +579,18 @@ def generate_campaign_preview(
     end        = campaign_params.get("end_date") or "Bez końca"
     client     = (campaign_params.get("client_name") or "").upper()
     camp_name  = campaign_params.get("campaign_name", "—")
-    ad_copy    = campaign_params.get("ad_copy") or "—"
+    ad_copy    = campaign_params.get("ad_copy") or None
     url        = campaign_params.get("website_url") or "—"
     cta        = campaign_params.get("call_to_action", "LEARN_MORE")
     camp_id    = draft_ids["campaign_id"]
+    using_post = draft_ids.get("using_page_post", False)
+
+    kreacje_str = (
+        "📌 Istniejący post ze strony FB"
+        if using_post
+        else f"{creative_count} szt. (uploadowane)"
+    )
+    copy_line = f"📝 *COPY:*\n_{ad_copy}_\n\n" if ad_copy else "📝 *COPY:* _(z posta FB)_\n\n"
 
     return (
         f"📊 *PREVIEW KAMPANII — {client}*\n"
@@ -591,8 +604,8 @@ def generate_campaign_preview(
         f"• Wiek: {t.get('age_min', 18)}–{t.get('age_max', 65)} lat\n"
         f"• Lokalizacja: {locs_str}\n"
         f"• Zainteresowania: {int_str}\n\n"
-        f"🎨 *KREACJE:* {creative_count} szt.\n\n"
-        f"📝 *COPY:*\n_{ad_copy}_\n\n"
+        f"🎨 *KREACJE:* {kreacje_str}\n\n"
+        f"{copy_line}"
         f"🔗 *Link:* {url}\n"
         f"📣 *CTA:* {cta}\n\n"
         f"📅 *HARMONOGRAM:*\n"

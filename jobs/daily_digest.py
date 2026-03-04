@@ -1,11 +1,10 @@
 """Daily digest + weekly learnings for DRE."""
 import os
-import json
 import logging
 from datetime import datetime, timedelta
 
 import _ctx
-from config.constants import CLIENT_GOALS, _DIGEST_LAST_SENT_FILE, _DIGEST_INTERVAL_DAYS
+from config.constants import CLIENT_GOALS, _DIGEST_INTERVAL_DAYS
 from tools.meta_ads import meta_ads_tool
 from tools.google_ads import google_ads_tool
 from jobs.performance_analysis import (
@@ -181,31 +180,32 @@ def weekly_learnings_dre():
 # ── DAILY DIGEST ───────────────────────────────────────────────────────────────
 
 def generate_daily_digest_dre():
-    """Generuje daily digest dla klienta DRE (Meta + Google Ads) z benchmarkami."""
+    """Generuje daily digest dla klienta DRE (Meta + Google Ads) — ostatnie 7 dni."""
     try:
-        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-        today     = datetime.now().strftime('%Y-%m-%d')
+        yesterday  = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        week_ago   = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+        date_label = f"{week_ago} → {yesterday}"
 
         meta_benchmarks   = get_client_benchmarks("drzwi dre", "meta", lookback_days=30)
         google_benchmarks = get_client_benchmarks("dre", "google", lookback_days=30)
 
         client_goal = CLIENT_GOALS.get("drzwi dre", "conversion")
 
-        # === META ADS ===
+        # === META ADS (ostatnie 7 dni) ===
         meta_data = meta_ads_tool(
             client_name="drzwi dre",
-            date_from=yesterday, date_to=today,
+            date_from=week_ago, date_to=yesterday,
             level="campaign",
             metrics=["campaign_name", "spend", "impressions", "clicks", "ctr", "cpc",
                      "reach", "frequency", "conversions", "purchase_roas", "actions"]
         )
 
-        # === GOOGLE ADS ===
+        # === GOOGLE ADS (ostatnie 7 dni) ===
         google_data_combined = []
         for account in ["dre", "dre 2024", "dre 2025"]:
             data = google_ads_tool(
                 client_name=account,
-                date_from=yesterday, date_to=today,
+                date_from=week_ago, date_to=yesterday,
                 level="campaign",
                 metrics=["campaign.name", "metrics.impressions", "metrics.clicks",
                          "metrics.cost_micros", "metrics.conversions", "metrics.ctr",
@@ -218,7 +218,7 @@ def generate_daily_digest_dre():
         all_campaigns_raw   = meta_campaigns_raw + google_data_combined
 
         if not all_campaigns_raw:
-            return "📊 DRE - Daily Digest\n\n⚠️ Brak danych za wczoraj. Sprawdź czy kampanie są aktywne."
+            return f"📊 DRE - Daily Digest\n\n⚠️ Brak danych za ostatnie 7 dni ({date_label}). Sprawdź czy kampanie są aktywne."
 
         MIN_SPEND_PLN = 20.0
         meta_campaigns       = [c for c in meta_campaigns_raw
@@ -229,7 +229,7 @@ def generate_daily_digest_dre():
         skipped_count = len(all_campaigns_raw) - len(all_campaigns)
 
         if not all_campaigns:
-            return "📊 DRE - Daily Digest\n\n⚠️ Brak kampanii z spendem ≥ 20 PLN za wczoraj."
+            return f"📊 DRE - Daily Digest\n\n⚠️ Brak kampanii z spendem ≥ 20 PLN za ostatnie 7 dni ({date_label})."
 
         # Annotacja celu per kampania (Meta)
         for c in meta_campaigns:
@@ -384,17 +384,33 @@ def generate_daily_digest_dre():
         return f"❌ Błąd generowania digestu: {str(e)}"
 
 
-def daily_digest_dre():
-    """Wysyła daily digest dla DRE co 3 dni (cron codziennie o 9:00, ale z guard)."""
+def _digest_days_since_last_sent(channel_id: str) -> int:
+    """Sprawdza w historii Slacka ile dni minęło od ostatniego digestu.
+    Zwraca 999 jeśli nigdy nie wysłano lub błąd (bezpieczny fallback = wyślij)."""
     try:
-        if os.path.exists(_DIGEST_LAST_SENT_FILE):
-            with open(_DIGEST_LAST_SENT_FILE, 'r', encoding='utf-8') as _f:
-                _last = json.load(_f).get('date', '')
-            if _last:
-                _days_ago = (datetime.now() - datetime.strptime(_last, '%Y-%m-%d')).days
-                if _days_ago < _DIGEST_INTERVAL_DAYS:
-                    logger.info(f"Digest DRE skip — wysłany {_last} ({_days_ago}d temu)")
-                    return
+        history = _ctx.app.client.conversations_history(channel=channel_id, limit=100)
+        for msg in history.get("messages", []):
+            if not msg.get("bot_id"):
+                continue
+            text = msg.get("text", "")
+            if "DRE" in text and ("Digest" in text or "digest" in text):
+                msg_ts   = float(msg["ts"])
+                days_ago = (datetime.now() - datetime.fromtimestamp(msg_ts)).days
+                logger.info(f"Ostatni digest DRE: {days_ago}d temu (ts={msg['ts']})")
+                return days_ago
+    except Exception as _e:
+        logger.warning(f"_digest_days_since_last_sent error: {_e}")
+    return 999
+
+
+def daily_digest_dre():
+    """Wysyła digest dla DRE co _DIGEST_INTERVAL_DAYS dni. Guard oparty o historię Slacka."""
+    try:
+        dre_channel_id = os.environ.get("DRE_CHANNEL_ID", "C05GPM4E9B8")
+        days_ago = _digest_days_since_last_sent(dre_channel_id)
+        if days_ago < _DIGEST_INTERVAL_DAYS:
+            logger.info(f"Digest DRE skip — wysłany {days_ago}d temu (Slack history guard)")
+            return
     except Exception as _e:
         logger.warning(f"Digest guard error (ignoruję): {_e}")
 
@@ -404,13 +420,5 @@ def daily_digest_dre():
         digest = generate_daily_digest_dre()
         _ctx.app.client.chat_postMessage(channel=dre_channel_id, text=digest)
         logger.info("✅ Daily Digest wysłany!")
-
-        try:
-            os.makedirs(os.path.dirname(_DIGEST_LAST_SENT_FILE), exist_ok=True)
-            with open(_DIGEST_LAST_SENT_FILE, 'w', encoding='utf-8') as _f:
-                json.dump({'date': datetime.now().strftime('%Y-%m-%d')}, _f)
-        except Exception as _e:
-            logger.warning(f"Nie udało się zapisać digest_last_sent: {_e}")
-
     except Exception as e:
         logger.error(f"❌ Błąd wysyłania digestu: {e}")

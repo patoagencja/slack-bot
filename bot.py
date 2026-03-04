@@ -33,6 +33,7 @@ from jobs.team import (
     close_request, get_pending_requests, _format_requests_list,
     _next_workday, get_availability_for_date, _format_availability_summary,
     handle_employee_dm, send_daily_team_availability,
+    sync_availability_from_slack, remove_availability_entries, find_team_member,
 )
 from jobs.email_summary import daily_email_summary_slack
 from jobs.standup import (
@@ -217,6 +218,27 @@ def handle_mention(event, say):
                 f"_{closed['user_name']}_ — {cat_label}: {closed['summary']}")
         else:
             say(f"❌ Nie znalazłem otwartej prośby *#{req_id}*.")
+        return
+
+    # === "usuń nieobecność X" / "resetuj nieobecności X" ===
+    _rm_abs = re.search(
+        r'(usu[nń]\s+nieobecno[sś][cć]|resetuj\s+nieobecno[sś]ci|wyczy[sś][cć]\s+nieobecno[sś]ci)',
+        msg_lower_m
+    )
+    if _rm_abs:
+        # wyciągnij imię po komendzie
+        _rm_suffix = msg_lower_m[_rm_abs.end():].strip()
+        _rm_words  = _rm_suffix.split()
+        _rm_member = None
+        for _w in _rm_words:
+            _rm_member = find_team_member(_w)
+            if _rm_member:
+                break
+        if _rm_member:
+            _removed = remove_availability_entries(_rm_member["slack_id"])
+            say(f"🗑️ Usunąłem *{_removed}* wpisów nieobecności dla *{_rm_member['name']}*.")
+        else:
+            say("❌ Nie rozpoznałem imienia. Napisz np. `usuń nieobecność Piotrka`.")
         return
 
     # === "co czeka?" / "prośby" — lista otwartych próśb ===
@@ -1063,6 +1085,12 @@ scheduler.start()
 
 print(f"✅ Scheduler załadowany! Jobs: {len(scheduler.get_jobs())}")
 print("✅ Scheduler wystartował!")
+
+# Odbuduj dane nieobecności z historii Slacka po starcie/deployu
+try:
+    sync_availability_from_slack()
+except Exception as _e:
+    print(f"⚠️ sync_availability_from_slack startup error: {_e}")
 
 # ── start ─────────────────────────────────────────────────────────────────────
 
