@@ -521,6 +521,36 @@ def create_campaign_draft(
             logger.warning(f"_get_existing_page_post exception: {e}")
         return None
 
+    def _create_page_photo_post(pid: str, image_hash: str, message: str) -> str | None:
+        """
+        Tworzy post ze zdjęciem na stronie FB (dark post — published=false).
+        Zwraca post_id do użycia jako object_story_id w reklamie.
+        Omija błąd 1885183 (unverified business portfolio przy object_story_spec).
+        """
+        page_token = _get_page_access_token(pid) or _token
+        try:
+            resp = requests.post(
+                f"https://graph.facebook.com/v19.0/{pid}/photos",
+                params={"access_token": page_token},
+                data={
+                    "hash":      image_hash,
+                    "message":   message or "",
+                    "published": "false",
+                },
+                timeout=30,
+            )
+            body = resp.json()
+            logger.info(f"_create_page_photo_post response: {json.dumps(body)[:300]}")
+            # Przy published=false Meta zwraca post_id bezpośrednio
+            post_id = body.get("post_id") or body.get("id")
+            if post_id:
+                return str(post_id)
+            if "error" in body:
+                logger.warning(f"_create_page_photo_post error: {body['error'].get('message')}")
+        except Exception as e:
+            logger.warning(f"_create_page_photo_post exception: {e}")
+        return None
+
     def _discover_page_id() -> str:
         """Jeśli DRE_META_PAGE_ID nie ustawiony — szuka strony przez /me/accounts."""
         try:
@@ -555,13 +585,23 @@ def create_campaign_draft(
 
     for i, creative in enumerate(creatives):
         try:
-            if existing_post_id:
-                creative_payload = {
-                    "name":            f"{campaign_params['campaign_name']} - Creative {i+1}",
-                    "object_story_id": existing_post_id,
-                }
-            else:
-                if creative["type"] == "image":
+            cr_type = creative.get("type")
+
+            if cr_type == "image":
+                # Własny obrazek → stwórz dark post na stronie → object_story_id
+                # (omija błąd 1885183 przy object_story_spec)
+                own_post_id = None
+                if page_id and creative.get("hash"):
+                    own_post_id = _create_page_photo_post(page_id, creative["hash"], ad_copy or "")
+                if own_post_id:
+                    logger.info(f"Using own image post: {own_post_id}")
+                    creative_payload = {
+                        "name":            f"{campaign_params['campaign_name']} - Creative {i+1}",
+                        "object_story_id": own_post_id,
+                    }
+                else:
+                    # Fallback: object_story_spec z image_hash
+                    logger.warning("_create_page_photo_post failed — falling back to object_story_spec")
                     story_spec = {
                         "link_data": {
                             "image_hash":     creative["hash"],
@@ -570,20 +610,35 @@ def create_campaign_draft(
                             "call_to_action": {"type": cta, "value": {"link": website}},
                         }
                     }
-                else:  # video
-                    story_spec = {
-                        "video_data": {
-                            "video_id":       creative["id"],
-                            "title":          campaign_params["campaign_name"],
-                            "message":        ad_copy,
-                            "call_to_action": {"type": cta, "value": {"link": website}},
-                        }
+                    if page_id:
+                        story_spec["page_id"] = page_id
+                    creative_payload = {
+                        "name":              f"{campaign_params['campaign_name']} - Creative {i+1}",
+                        "object_story_spec": story_spec,
                     }
+
+            elif cr_type == "video":
+                # Video → object_story_spec z video_data
+                story_spec = {
+                    "video_data": {
+                        "video_id":       creative["id"],
+                        "title":          campaign_params["campaign_name"],
+                        "message":        ad_copy,
+                        "call_to_action": {"type": cta, "value": {"link": website}},
+                    }
+                }
                 if page_id:
                     story_spec["page_id"] = page_id
                 creative_payload = {
                     "name":              f"{campaign_params['campaign_name']} - Creative {i+1}",
                     "object_story_spec": story_spec,
+                }
+
+            else:
+                # Brak własnej kreacji (type="page_post") → istniejący post ze strony
+                creative_payload = {
+                    "name":            f"{campaign_params['campaign_name']} - Creative {i+1}",
+                    "object_story_id": existing_post_id,
                 }
 
             logger.info(f"AdCreative payload: {json.dumps(creative_payload, ensure_ascii=False)}")
