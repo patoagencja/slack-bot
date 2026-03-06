@@ -255,14 +255,31 @@ Zasady mapowania:
 
     except Exception as e:
         logger.error(f"parse_campaign_request error: {e}")
+        # Keyword fallback nawet gdy Claude rzuci wyjątek (np. brak kredytów API)
+        _msg_l = user_message.lower()
+        _fallback_client = None
+        if any(k in _msg_l for k in ("dre", "drzwi", "dzrwi", "dzwri", "drze")):
+            _fallback_client = "dre"
+        elif any(k in _msg_l for k in ("instax", "fuji", "fujifilm")):
+            _fallback_client = "instax"
+        elif "m2" in _msg_l:
+            _fallback_client = "m2"
+        elif "pato" in _msg_l:
+            _fallback_client = "pato"
+        if _fallback_client:
+            logger.info(f"parse_campaign_request except-fallback client: {_fallback_client!r}")
+        # Wyciągnij budżet prostą regexem z wiadomości
+        import re as _re2
+        _budget_m = _re2.search(r'(\d+)\s*(?:zł|pln|złotych)', _msg_l)
+        _budget = float(_budget_m.group(1)) if _budget_m else 100
         return {
-            "client_name":    None,
+            "client_name":    _fallback_client,
             "campaign_name":  "Nowa kampania",
             "objective":      "OUTCOME_TRAFFIC",
-            "daily_budget":   100,
+            "daily_budget":   _budget,
             "website_url":    "https://patoagencja.com",
             "ad_copy":        "",
-            "targeting":      {"gender": "all", "age_min": 18, "age_max": 65, "locations": [], "interests": []},
+            "targeting":      {"gender": "all", "age_min": 18, "age_max": 65, "locations": ["Polska"], "interests": []},
             "start_date":     tomorrow,
             "end_date":       None,
             "call_to_action": "LEARN_MORE",
