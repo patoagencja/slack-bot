@@ -1,17 +1,21 @@
-"""Daily standup — wysyłka pytań, zbieranie odpowiedzi, podsumowanie."""
+"""Daily standup — wysyłka pytań w kanale, zbieranie odpowiedzi z wątku, podsumowanie."""
 import json
 import logging
+import os
 import pytz
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import _ctx
-from config.constants import TEAM_MEMBERS, STANDUP_FILE, STANDUP_CHANNEL, STANDUP_QUESTION
+from config.constants import TEAM_MEMBERS, STANDUP_FILE
 
 logger = logging.getLogger(__name__)
 
+_STANDUP_MARKER = "Szybki standup"  # unikalny tekst do wyszukiwania w historii kanału
+
+
+# ── persistence ────────────────────────────────────────────────────────────────
 
 def _load_standup():
-    import os
     try:
         if os.path.exists(STANDUP_FILE):
             with open(STANDUP_FILE, "r", encoding="utf-8") as f:
@@ -22,7 +26,6 @@ def _load_standup():
 
 
 def _save_standup(data):
-    import os
     try:
         os.makedirs(os.path.dirname(STANDUP_FILE), exist_ok=True)
         with open(STANDUP_FILE, "w", encoding="utf-8") as f:
@@ -35,8 +38,88 @@ def _today_standup_key():
     return datetime.now(pytz.timezone("Europe/Warsaw")).strftime("%Y-%m-%d")
 
 
+def _get_standup_channel():
+    """Kanał do standupu — DRE channel."""
+    return os.environ.get("DRE_CHANNEL_ID", "C05GPM4E9B8")
+
+
+# ── recovery helpers (Render kasuje pliki przy restarcie) ──────────────────────
+
+def _find_thread_ts_in_history(channel: str, today: str):
+    """
+    Szuka wiadomości standupu w historii kanału.
+    Fallback gdy standup.json skasowany przez Render przy deployu.
+    """
+    try:
+        tz = pytz.timezone("Europe/Warsaw")
+        today_dt = tz.localize(datetime.strptime(today, "%Y-%m-%d"))
+        oldest   = str(today_dt.timestamp())
+        latest   = str((today_dt + timedelta(days=1)).timestamp())
+        history  = _ctx.app.client.conversations_history(
+            channel=channel, oldest=oldest, latest=latest, limit=50
+        )
+        for msg in history.get("messages", []):
+            if msg.get("bot_id") and _STANDUP_MARKER in msg.get("text", ""):
+                logger.info(f"Znaleziono standup thread_ts w historii kanału: {msg['ts']}")
+                return msg["ts"]
+    except Exception as e:
+        logger.warning(f"_find_thread_ts_in_history error: {e}")
+    return None
+
+
+def get_today_standup_thread_ts():
+    """
+    Zwraca (channel_id, thread_ts) dla dzisiejszego standupu.
+    Sprawdza najpierw plik, potem historię kanału.
+    """
+    today   = _today_standup_key()
+    data    = _load_standup()
+    session = data.get(today, {})
+
+    channel   = session.get("channel") or _get_standup_channel()
+    thread_ts = session.get("thread_ts")
+
+    if not thread_ts:
+        thread_ts = _find_thread_ts_in_history(channel, today)
+        if thread_ts:
+            if today in data:
+                data[today]["thread_ts"] = thread_ts
+                data[today]["channel"]   = channel
+                _save_standup(data)
+
+    return channel, thread_ts
+
+
+def _read_responses_from_thread(channel: str, thread_ts: str) -> dict:
+    """
+    Odczytuje odpowiedzi z wątku standupu bezpośrednio przez Slack API.
+    Używane gdy bot zrestartował się i stracił dane z pamięci / pliku.
+    """
+    responses = {}
+    try:
+        replies    = _ctx.app.client.conversations_replies(
+            channel=channel, ts=thread_ts, limit=50
+        )
+        team_by_id = {m["slack_id"]: m for m in TEAM_MEMBERS}
+        for msg in replies.get("messages", []):
+            if msg.get("ts") == thread_ts:
+                continue  # pomijamy wiadomość-rodzica
+            uid = msg.get("user", "")
+            if uid in team_by_id and uid not in responses:
+                responses[uid] = {
+                    "text":       msg.get("text", ""),
+                    "replied_at": datetime.fromtimestamp(float(msg["ts"])).isoformat(),
+                    "name":       team_by_id[uid]["name"],
+                }
+    except Exception as e:
+        logger.warning(f"_read_responses_from_thread error: {e}")
+    return responses
+
+
+# ── main flow ──────────────────────────────────────────────────────────────────
+
 def send_standup_questions():
-    """9:00 pn-pt — DM do wszystkich członków teamu z pytaniem standupowym."""
+    """9:00 pn-pt — postuje pytanie standupowe do kanału DRE i taguje zespół."""
     today = _today_standup_key()
     data  = _load_standup()
 
@@ -44,43 +127,60 @@ def send_standup_questions():
         logger.info(f"Standup {today} już wysłany, pomijam.")
         return
 
-    session = {
+    channel  = _get_standup_channel()
+    mentions = " ".join([f"<@{m['slack_id']}>" for m in TEAM_MEMBERS])
+
+    try:
+        result = _ctx.app.client.chat_postMessage(
+            channel=channel,
+            text=(
+                f"☀️ *Dzień dobry! Szybki standup* 👇\n\n"
+                f"1️⃣ Co dziś planujesz robić?\n"
+                f"2️⃣ Jakieś blokery lub czego potrzebujesz od innych?\n\n"
+                f"_{mentions} — odpiszcie w wątku poniżej, skleję o 9:30_ 🙏"
+            ),
+        )
+        thread_ts = result["ts"]
+        logger.info(f"✅ Standup {today} wysłany do kanału {channel}, thread_ts={thread_ts}")
+    except Exception as e:
+        logger.error(f"Standup channel post error: {e}")
+        return
+
+    data[today] = {
         "date":           today,
         "sent_at":        datetime.now().isoformat(),
         "sent":           True,
+        "channel":        channel,
+        "thread_ts":      thread_ts,
         "responses":      {},
         "summary_posted": False,
     }
-
-    sent_count = 0
-    for member in TEAM_MEMBERS:
-        uid = member["slack_id"]
-        try:
-            _ctx.app.client.chat_postMessage(channel=uid, text=STANDUP_QUESTION)
-            sent_count += 1
-            logger.info(f"📤 Standup DM → {member['name']} ({uid})")
-        except Exception as e:
-            logger.error(f"Standup DM error ({member['name']}): {e}")
-
-    data[today] = session
     _save_standup(data)
-    logger.info(f"✅ Standup {today} wysłany do {sent_count}/{len(TEAM_MEMBERS)} osób")
 
 
-def handle_standup_dm(user_id, user_name, text):
-    """Łapie odpowiedź na standup w oknie 9:00–9:45.
-    Zwraca True jeśli wiadomość była odpowiedzią standupową."""
-    today = _today_standup_key()
-    data  = _load_standup()
+def handle_standup_reply(user_id: str, user_name: str, text: str, msg_thread_ts: str) -> bool:
+    """
+    Łapie odpowiedź na standup z wątku w kanale (okno 9:00–9:45).
+    Zwraca True jeśli wiadomość była odpowiedzią standupową.
+    """
+    today   = _today_standup_key()
+    data    = _load_standup()
+    session = data.get(today, {})
 
-    if today not in data or not data[today].get("sent"):
+    if not session.get("sent"):
         return False
-    if data[today].get("summary_posted"):
+    if session.get("summary_posted"):
         return False
 
+    # Okno czasowe 9:00–9:45
     now_w  = datetime.now(pytz.timezone("Europe/Warsaw"))
     cutoff = now_w.replace(hour=9, minute=45, second=0, microsecond=0)
     if now_w > cutoff:
+        return False
+
+    # Sprawdź thread_ts (jeśli mamy zapisany)
+    stored_thread_ts = session.get("thread_ts")
+    if stored_thread_ts and msg_thread_ts != stored_thread_ts:
         return False
 
     data[today]["responses"][user_id] = {
@@ -89,7 +189,7 @@ def handle_standup_dm(user_id, user_name, text):
         "name":       user_name,
     }
     _save_standup(data)
-    logger.info(f"📥 Standup odpowiedź: {user_name}")
+    logger.info(f"📥 Standup odpowiedź z kanału: {user_name}")
     return True
 
 
@@ -103,7 +203,7 @@ def _build_standup_summary(session):
     date_str = f"{day_name} {dt.day} {months[dt.month]}"
 
     responses = session.get("responses", {})
-    lines = [f"📋 *Standup — {date_str}*\n"]
+    lines     = [f"📋 *Standup — {date_str}*\n"]
 
     answered, no_answer = [], []
     for member in TEAM_MEMBERS:
@@ -128,31 +228,46 @@ def _build_standup_summary(session):
 
 
 def post_standup_summary():
-    """9:30 pn-pt — postuje podsumowanie standupu do kanału."""
+    """9:30 pn-pt — postuje podsumowanie standupu w wątku pod pytaniem."""
     today = _today_standup_key()
     data  = _load_standup()
 
-    if today not in data or not data[today].get("sent"):
+    session = data.get(today, {})
+    if not session.get("sent"):
         logger.info("Standup nie był wysłany dziś, pomijam summary.")
         return
-    if data[today].get("summary_posted"):
+    if session.get("summary_posted"):
         logger.info(f"Standup {today} summary już wysłany.")
         return
 
-    channel = STANDUP_CHANNEL
-    if not channel:
-        logger.error("STANDUP_CHANNEL nie ustawiony — brak kanału do postu.")
+    channel, thread_ts = get_today_standup_thread_ts()
+    if not channel or not thread_ts:
+        logger.error("Nie znaleziono thread_ts standupu — pomijam summary.")
         return
 
-    summary = _build_standup_summary(data[today])
+    # Przeładuj po ewentualnym update z get_today_standup_thread_ts
+    data    = _load_standup()
+    session = data.get(today, {})
+
+    # Fallback: brak zapisanych odpowiedzi (restart bota) → czytaj z wątku
+    if not session.get("responses"):
+        session["responses"] = _read_responses_from_thread(channel, thread_ts)
+
+    summary = _build_standup_summary(session)
     try:
-        _ctx.app.client.chat_postMessage(channel=channel, text=summary)
+        _ctx.app.client.chat_postMessage(
+            channel=channel,
+            thread_ts=thread_ts,
+            text=summary,
+        )
         data[today]["summary_posted"] = True
         _save_standup(data)
-        logger.info(f"✅ Standup summary {today} wysłany na {channel}")
+        logger.info(f"✅ Standup summary {today} wysłany w wątku {thread_ts}")
     except Exception as e:
         logger.error(f"Błąd post standup summary: {e}")
 
+
+# ── slash command ──────────────────────────────────────────────────────────────
 
 def handle_standup_slash(ack, respond, command):
     """Handler dla /standup slash command (rejestrowany w bot.py)."""
@@ -167,7 +282,7 @@ def handle_standup_slash(ack, respond, command):
             respond("⚠️ Standup na dziś już był wysłany.")
             return
         send_standup_questions()
-        respond(f"📤 Standup wysłany do {len(TEAM_MEMBERS)} osób!")
+        respond(f"📤 Standup wysłany do kanału!")
         return
 
     if text == "summary":
@@ -175,7 +290,7 @@ def handle_standup_slash(ack, respond, command):
             respond("⚠️ Standup nie był jeszcze wysłany dziś. Użyj `/standup send`.")
             return
         post_standup_summary()
-        respond("✅ Summary wysłane!")
+        respond("✅ Summary wysłane w wątku!")
         return
 
     if not session or not session.get("sent"):
