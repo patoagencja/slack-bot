@@ -165,8 +165,8 @@ Zwróć dokładnie ten JSON (null gdy brak danych):
   "campaign_name": "nazwa kampanii",
   "objective": "OUTCOME_TRAFFIC|OUTCOME_ENGAGEMENT|OUTCOME_LEADS|OUTCOME_SALES|OUTCOME_AWARENESS|OUTCOME_APP_PROMOTION",
   "daily_budget": liczba_PLN,
-  "website_url": "https://...",
-  "ad_copy": "tekst reklamy",
+  "website_url": "https://... lub null jeśli nie podano",
+  "ad_copy": "tekst reklamy lub null",
   "targeting": {{
     "gender": "male|female|all",
     "age_min": liczba,
@@ -174,9 +174,13 @@ Zwróć dokładnie ten JSON (null gdy brak danych):
     "locations": ["Warszawa", "Kraków"],
     "interests": ["interior design", "home decor"]
   }},
+  "publisher_platforms": ["facebook","instagram"] lub null (null = automatyczne),
+  "placement_positions": ["feed","story","reels","explore"] lub null (null = automatyczne),
+  "cta_enabled": true lub false,
+  "call_to_action": "LEARN_MORE|SHOP_NOW|SIGN_UP|GET_QUOTE|CONTACT_US|BOOK_TRAVEL|MESSAGE_PAGE|null",
+  "link_enabled": true lub false,
   "start_date": "YYYY-MM-DD",
-  "end_date": "YYYY-MM-DD lub null",
-  "call_to_action": "LEARN_MORE|SHOP_NOW|SIGN_UP|GET_QUOTE|CONTACT_US|BOOK_TRAVEL"
+  "end_date": "YYYY-MM-DD lub null"
 }}
 
 Zasady mapowania:
@@ -184,6 +188,10 @@ Zasady mapowania:
 - "instax"/"fuji"/"fujifilm" → client_name="instax"
 - "m2"/"nieruchomości" → client_name="m2"
 - cel "traffic"/"ruch" → OUTCOME_TRAFFIC | "konwersje"/"sprzedaż" → OUTCOME_SALES | "zasięg"/"reach"/"świadomość" → OUTCOME_AWARENESS | "zaangażowanie" → OUTCOME_ENGAGEMENT | "leady" → OUTCOME_LEADS | "app"/"aplikacja" → OUTCOME_APP_PROMOTION
+- "tylko Instagram"/"instagram" → publisher_platforms=["instagram"] | "tylko Facebook"/"facebook" → ["facebook"] | brak = null
+- "Stories"/"story" → placement_positions zawiera "story" | "Reels"/"reels" → "reels" | "Feed" → "feed"
+- "bez buttona"/"no cta"/"bez CTA" → cta_enabled=false, inaczej true
+- "bez linku"/"no link" → link_enabled=false, inaczej true
 - start_date domyślnie jutro ({tomorrow})
 - Odpowiedz TYLKO JSON."""
 
@@ -223,12 +231,22 @@ Zasady mapowania:
 
         # Defaults — użyj or aby zastąpić też None (nie tylko brak klucza)
         client = (params.get("client_name") or "kampania").upper()
-        params["objective"]      = params.get("objective")      or "OUTCOME_TRAFFIC"
-        params["campaign_name"]  = params.get("campaign_name")  or f"{client} – {today}"
-        params["daily_budget"]   = params.get("daily_budget")   or 100
-        params["call_to_action"] = params.get("call_to_action") or "LEARN_MORE"
-        params["website_url"]    = params.get("website_url")    or "https://patoagencja.com"
-        params["start_date"]     = params.get("start_date")     or tomorrow
+        params["objective"]           = params.get("objective")      or "OUTCOME_TRAFFIC"
+        params["campaign_name"]       = params.get("campaign_name")  or f"{client} – {today}"
+        params["daily_budget"]        = params.get("daily_budget")   or 100
+        params["call_to_action"]      = params.get("call_to_action") or "LEARN_MORE"
+        params["website_url"]         = params.get("website_url")    or None
+        params["start_date"]          = params.get("start_date")     or tomorrow
+        # cta_enabled / link_enabled — default True jeśli nie podano
+        if params.get("cta_enabled") is None:
+            params["cta_enabled"] = True
+        if params.get("link_enabled") is None:
+            params["link_enabled"] = True
+        # publisher_platforms / placement_positions — None = automatyczne
+        if "publisher_platforms" not in params:
+            params["publisher_platforms"] = None
+        if "placement_positions" not in params:
+            params["placement_positions"] = None
 
         if not params.get("targeting"):
             params["targeting"] = {
@@ -515,6 +533,31 @@ def create_campaign_draft(
         **targeting,
         "targeting_automation": {"advantage_audience": 0},
     }
+
+    # Umiejscowienie reklamy (placements) — jeśli user podał konkretne
+    _pub_platforms = campaign_params.get("publisher_platforms")  # np. ["facebook","instagram"]
+    _placements    = campaign_params.get("placement_positions")   # np. ["feed","story","reels"]
+    if _pub_platforms:
+        targeting_with_auto["publisher_platforms"] = _pub_platforms
+        if _placements:
+            # facebook_positions: feed, story, reels, video_feeds, search, marketplace
+            _fb_pos_map = {"feed": "feed", "story": "story", "reels": "reels",
+                           "video": "video_feeds", "search": "search", "marketplace": "marketplace"}
+            # instagram_positions: stream (=feed), story, reels, explore
+            _ig_pos_map = {"feed": "stream", "stream": "stream", "story": "story",
+                           "reels": "reels", "explore": "explore"}
+            if "facebook" in _pub_platforms:
+                _fb_pos = [_fb_pos_map[p] for p in _placements if p in _fb_pos_map]
+                if _fb_pos:
+                    targeting_with_auto["facebook_positions"] = _fb_pos
+            if "instagram" in _pub_platforms:
+                _ig_pos = [_ig_pos_map[p] for p in _placements if p in _ig_pos_map]
+                if _ig_pos:
+                    targeting_with_auto["instagram_positions"] = _ig_pos
+        logger.info(f"Placements: platforms={_pub_platforms} positions={_placements}")
+    else:
+        logger.info("Placements: automatic (advantage+)")
+
     adset_body_data = {
         "name":              f"{campaign_params['campaign_name']} - AdSet 1",
         "campaign_id":       campaign_id,
@@ -534,10 +577,12 @@ def create_campaign_draft(
     logger.info(f"AdSet created: {adset_id}")
 
     # ── C: Create Ads (jedna reklama na kreację) ───────────────────────────────
-    ad_ids    = []
-    website   = campaign_params.get("website_url", "https://patoagencja.com")
-    ad_copy   = campaign_params.get("ad_copy", "")
-    cta       = campaign_params.get("call_to_action", "LEARN_MORE")
+    ad_ids      = []
+    website     = campaign_params.get("website_url") or "https://patoagencja.com"
+    ad_copy     = campaign_params.get("ad_copy", "")
+    cta         = campaign_params.get("call_to_action", "LEARN_MORE")
+    cta_enabled  = campaign_params.get("cta_enabled", True)
+    link_enabled = campaign_params.get("link_enabled", True)
 
     def _get_page_access_token(pid: str) -> str:
         """Pobiera Page Access Token z /me/accounts (User Token → Page Token)."""
@@ -656,14 +701,15 @@ def create_campaign_draft(
                 else:
                     # Fallback: object_story_spec z image_hash
                     logger.warning("_create_page_photo_post failed — falling back to object_story_spec")
-                    story_spec = {
-                        "link_data": {
-                            "image_hash":     creative["hash"],
-                            "link":           website,
-                            "message":        ad_copy,
-                            "call_to_action": {"type": cta, "value": {"link": website}},
-                        }
+                    _link_data: dict = {
+                        "image_hash": creative["hash"],
+                        "message":    ad_copy,
                     }
+                    if link_enabled:
+                        _link_data["link"] = website
+                    if cta_enabled and link_enabled:
+                        _link_data["call_to_action"] = {"type": cta, "value": {"link": website}}
+                    story_spec = {"link_data": _link_data}
                     if page_id:
                         story_spec["page_id"] = page_id
                     creative_payload = {
@@ -673,14 +719,14 @@ def create_campaign_draft(
 
             elif cr_type == "video":
                 # Video → object_story_spec z video_data
-                story_spec = {
-                    "video_data": {
-                        "video_id":       creative["id"],
-                        "title":          campaign_params["campaign_name"],
-                        "message":        ad_copy,
-                        "call_to_action": {"type": cta, "value": {"link": website}},
-                    }
+                _video_data: dict = {
+                    "video_id": creative["id"],
+                    "title":    campaign_params["campaign_name"],
+                    "message":  ad_copy,
                 }
+                if cta_enabled and link_enabled:
+                    _video_data["call_to_action"] = {"type": cta, "value": {"link": website}}
+                story_spec = {"video_data": _video_data}
                 if page_id:
                     story_spec["page_id"] = page_id
                 creative_payload = {
@@ -746,24 +792,38 @@ def generate_campaign_preview(
     obj     = campaign_params.get("objective", "TRAFFIC")
     obj_str = OBJECTIVE_FRIENDLY.get(obj, obj)
 
-    budget     = float(campaign_params.get("daily_budget") or 0)
-    total_7d   = budget * 7
-    start      = campaign_params.get("start_date", "—")
-    end        = campaign_params.get("end_date") or "Bez końca"
-    client     = (campaign_params.get("client_name") or "").upper()
-    camp_name  = campaign_params.get("campaign_name", "—")
-    ad_copy    = campaign_params.get("ad_copy") or None
-    url        = campaign_params.get("website_url") or "—"
-    cta        = campaign_params.get("call_to_action", "LEARN_MORE")
-    camp_id    = draft_ids["campaign_id"]
-    using_post = draft_ids.get("using_page_post", False)
+    budget      = float(campaign_params.get("daily_budget") or 0)
+    total_7d    = budget * 7
+    start       = campaign_params.get("start_date", "—")
+    end         = campaign_params.get("end_date") or "Bez końca"
+    client      = (campaign_params.get("client_name") or "").upper()
+    camp_name   = campaign_params.get("campaign_name", "—")
+    ad_copy     = campaign_params.get("ad_copy") or None
+    url         = campaign_params.get("website_url") or None
+    cta         = campaign_params.get("call_to_action", "LEARN_MORE")
+    cta_enabled  = campaign_params.get("cta_enabled", True)
+    link_enabled = campaign_params.get("link_enabled", True)
+    camp_id     = draft_ids["campaign_id"]
+    using_post  = draft_ids.get("using_page_post", False)
+
+    # Umiejscowienie
+    _pub = campaign_params.get("publisher_platforms")
+    _pos = campaign_params.get("placement_positions")
+    if _pub:
+        _plat_str = " + ".join(p.capitalize() for p in _pub)
+        _pos_str  = " | ".join(p.capitalize() for p in (_pos or [])) if _pos else "Wszystkie"
+        placement_line = f"🖥️ *UMIEJSCOWIENIE:* {_plat_str} — {_pos_str}\n"
+    else:
+        placement_line = "🖥️ *UMIEJSCOWIENIE:* Automatyczne (Advantage+)\n"
 
     kreacje_str = (
         "📌 Istniejący post ze strony FB"
         if using_post
         else f"{creative_count} szt. (uploadowane)"
     )
-    copy_line = f"📝 *COPY:*\n_{ad_copy}_\n\n" if ad_copy else "📝 *COPY:* _(z posta FB)_\n\n"
+    copy_line   = f"📝 *COPY:*\n_{ad_copy}_\n\n" if ad_copy else "📝 *COPY:* _(z posta FB)_\n\n"
+    link_line   = f"🔗 *Link:* {url}\n" if link_enabled and url else ("🔗 *Link:* _(brak)_\n" if not link_enabled else "")
+    cta_line    = f"📣 *CTA:* {cta}\n" if cta_enabled else "📣 *CTA:* _(wyłączony)_\n"
 
     return (
         f"📊 *PREVIEW KAMPANII — {client}*\n"
@@ -777,10 +837,11 @@ def generate_campaign_preview(
         f"• Wiek: {t.get('age_min', 18)}–{t.get('age_max', 65)} lat\n"
         f"• Lokalizacja: {locs_str}\n"
         f"• Zainteresowania: {int_str}\n\n"
+        f"{placement_line}\n"
         f"🎨 *KREACJE:* {kreacje_str}\n\n"
         f"{copy_line}"
-        f"🔗 *Link:* {url}\n"
-        f"📣 *CTA:* {cta}\n\n"
+        f"{link_line}"
+        f"{cta_line}\n"
         f"📅 *HARMONOGRAM:*\n"
         f"• Start: {start}\n"
         f"• Koniec: {end}\n\n"
