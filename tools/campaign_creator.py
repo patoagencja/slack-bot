@@ -268,18 +268,41 @@ Zasady mapowania:
             _fallback_client = "pato"
         if _fallback_client:
             logger.info(f"parse_campaign_request except-fallback client: {_fallback_client!r}")
-        # Wyciągnij budżet prostą regexem z wiadomości
+        # Wyciągnij podstawowe parametry regexem z wiadomości
         import re as _re2
+        # Budżet
         _budget_m = _re2.search(r'(\d+)\s*(?:zł|pln|złotych)', _msg_l)
         _budget = float(_budget_m.group(1)) if _budget_m else 100
+        # Płeć
+        if any(k in _msg_l for k in ("kobiety", "kobieta", "female", "women")):
+            _gender = "female"
+        elif any(k in _msg_l for k in ("mężczyźni", "mezczyzni", "mężczyzn", "male", "men")):
+            _gender = "male"
+        else:
+            _gender = "all"
+        # Wiek (np. "18-32", "25-45")
+        _age_m = _re2.search(r'(\d{1,2})\s*[-–]\s*(\d{1,2})', _msg_l)
+        _age_min = int(_age_m.group(1)) if _age_m else 18
+        _age_max = int(_age_m.group(2)) if _age_m else 65
+        # Cel kampanii
+        if any(k in _msg_l for k in ("sprzedaż", "sprzedaz", "konwersje", "sales")):
+            _obj = "OUTCOME_SALES"
+        elif any(k in _msg_l for k in ("leady", "lead")):
+            _obj = "OUTCOME_LEADS"
+        elif any(k in _msg_l for k in ("zasięg", "zasieg", "awareness", "świadomość")):
+            _obj = "OUTCOME_AWARENESS"
+        elif any(k in _msg_l for k in ("zaangażowanie", "zaangazowanie", "engagement")):
+            _obj = "OUTCOME_ENGAGEMENT"
+        else:
+            _obj = "OUTCOME_TRAFFIC"
         return {
             "client_name":    _fallback_client,
             "campaign_name":  "Nowa kampania",
-            "objective":      "OUTCOME_TRAFFIC",
+            "objective":      _obj,
             "daily_budget":   _budget,
             "website_url":    "https://patoagencja.com",
             "ad_copy":        "",
-            "targeting":      {"gender": "all", "age_min": 18, "age_max": 65, "locations": ["Polska"], "interests": []},
+            "targeting":      {"gender": _gender, "age_min": _age_min, "age_max": _age_max, "locations": ["Polska"], "interests": []},
             "start_date":     tomorrow,
             "end_date":       None,
             "call_to_action": "LEARN_MORE",
