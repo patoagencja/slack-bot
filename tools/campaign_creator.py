@@ -461,6 +461,87 @@ def validate_campaign_params(params: dict) -> list:
     return errors
 
 
+# ── ETAP 3b: EXPERT ANALYSIS ──────────────────────────────────────────────────
+
+def generate_campaign_expert_analysis(params: dict, files: list) -> str:
+    """
+    Analizuje parametry kampanii jak ekspert digital marketingu i zwraca
+    sugestie + pytania proaktywne. Wywoływana PRZED stworzeniem kampanii.
+
+    Returns: tekst Slack markdown z analizą ekspercką.
+    """
+    client     = (params.get("client_name") or "?").upper()
+    budget     = float(params.get("daily_budget") or 0)
+    objective  = params.get("objective") or "OUTCOME_TRAFFIC"
+    tgt        = params.get("targeting") or {}
+    platform   = params.get("publisher_platforms") or []
+    placements = params.get("placement_positions") or []
+    start_date = params.get("start_date") or "jutro"
+    end_date   = params.get("end_date") or "bez końca"
+    has_files  = bool(files)
+    has_copy   = bool(params.get("ad_copy"))
+    link_ok    = bool(params.get("website_url")) and params.get("link_enabled", True)
+
+    _obj_map = {
+        "OUTCOME_TRAFFIC":       "Ruch na stronie",
+        "OUTCOME_ENGAGEMENT":    "Zaangażowanie",
+        "OUTCOME_LEADS":         "Pozyskanie leadów",
+        "OUTCOME_SALES":         "Sprzedaż / Konwersje",
+        "OUTCOME_AWARENESS":     "Zasięg / Świadomość",
+        "OUTCOME_APP_PROMOTION": "Promocja aplikacji",
+    }
+    obj_friendly = _obj_map.get(objective, objective)
+
+    campaign_ctx = (
+        f"- Klient: *{client}*\n"
+        f"- Cel kampanii: {obj_friendly}\n"
+        f"- Budżet dzienny: {budget:.0f} PLN\n"
+        f"- Szacowany tygodniowy: {budget * 7:.0f} PLN\n"
+        f"- Płeć: {tgt.get('gender', 'all')}\n"
+        f"- Wiek: {tgt.get('age_min', 18)}–{tgt.get('age_max', 65)} lat\n"
+        f"- Lokalizacje: {', '.join(tgt.get('locations') or ['Polska'])}\n"
+        f"- Zainteresowania: {', '.join(tgt.get('interests') or []) or 'brak (broad)'}\n"
+        f"- Platformy: {', '.join(platform) if platform else 'automatyczne (Advantage+)'}\n"
+        f"- Umiejscowienia: {', '.join(placements) if placements else 'automatyczne'}\n"
+        f"- Kreacje: {'uploadowane (' + str(len(files)) + ' pliki)' if has_files else 'z istniejącego posta na stronie FB'}\n"
+        f"- Copy: {'tak' if has_copy else 'brak (z posta FB)'}\n"
+        f"- Link do strony: {'tak — ' + str(params.get('website_url')) if link_ok else 'brak / wyłączony'}\n"
+        f"- CTA: {params.get('call_to_action') or 'LEARN_MORE'}\n"
+        f"- Start: {start_date} → Koniec: {end_date}"
+    )
+
+    prompt = f"""Jesteś doświadczonym ekspertem performance marketingu specjalizującym się w Meta Ads (Facebook/Instagram). Pracujesz w agencji marketingowej i rozmawiasz z account managerem przez Slacka.
+
+Przeanalizuj tę kampanię i odpowiedz bezpośrednio, po polsku, jak kolega-ekspert.
+
+PARAMETRY KAMPANII:
+{campaign_ctx}
+
+Twoja odpowiedź powinna:
+1. Jednym krótkim zdaniem potwierdzić co rozumiesz
+2. Podać 2-4 konkretne eksperckie uwagi / pytania / sugestie — skupione na tym co REALNIE wpłynie na wyniki (np. faza uczenia przy małym budżecie, brak retargetingu, za wąska/szeroka grupa, format kreacji vs placement, czas trwania kampanii, brak zainteresowań = broad targeting plusy i minusy, copy/kreacja)
+3. NIE pytać o rzeczy które są już podane i OK
+4. Być konkretnym — zamiast "rozważ retargeting" napisz "dodaj retargeting osób z dre.pl z ostatnich 30 dni — zazwyczaj 3-5x lepszy ROAS niż cold audience"
+
+Format: Slack markdown (gwiazdki do bold, myślniki, emoji). Max 220 słów.
+
+Na KOŃCU (osobna linia) napisz dosłownie:
+"Napisz co chcesz zmienić lub potwierdź: *zaczynaj*"
+
+Nie bądź formalny. Mów wprost."""
+
+    try:
+        resp = _ctx.claude.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=550,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return resp.content[0].text.strip()
+    except Exception as e:
+        logger.error(f"generate_campaign_expert_analysis error: {e}")
+        return ""
+
+
 # ── ETAP 4: CAMPAIGN BUILDER (DRAFT) ─────────────────────────────────────────
 
 def create_campaign_draft(

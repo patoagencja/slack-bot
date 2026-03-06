@@ -46,7 +46,7 @@ from tools.campaign_creator import (
     download_slack_files, upload_creative_to_meta, parse_campaign_request,
     build_meta_targeting, create_campaign_draft, generate_campaign_preview,
     approve_and_launch_campaign, cancel_campaign_draft, validate_campaign_params,
-    get_meta_account_id,
+    get_meta_account_id, generate_campaign_expert_analysis,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -400,54 +400,105 @@ def handle_mention(event, say):
     thread_ts = event.get('thread_ts', event['ts'])
     _mention_user_id = event.get('user', '')
 
-    # === PENDING CAMPAIGN: user answers missing-fields questionnaire ===
+    # === PENDING CAMPAIGN: state machine (collecting → expert_review → build) ===
+    _CONFIRM_KWS = [
+        "zaczynaj", "zaczynamy", "dawaj", "buduj", "budujemy", "robimy",
+        "lecimy", "no to lej", "go", "start", "ok buduj", "ok zaczynaj",
+        "potwierdź", "potwierdzam", "tak buduj", "tak zaczynaj", "zgoda",
+    ]
     if _mention_user_id in _ctx.campaign_pending:
-        _pending = _ctx.campaign_pending[_mention_user_id]
-        # Parse the user's answer to fill in missing fields
-        _fill_params = parse_campaign_request(user_message, [])
-        _pending["params"] = _merge_pending_campaign_params(
-            _pending["params"], _fill_params, user_message
-        )
-        _still_missing = _check_missing_campaign_fields(
-            _pending["params"], _pending.get("files", [])
-        )
-        if _still_missing:
-            say(
-                text="❓ Jeszcze brakuje mi:\n\n" + "\n".join(f"• {q}" for q in _still_missing)
-                     + "\n\nOdpowiedz na te pytania — zaraz zaczynam! 🚀",
-                thread_ts=thread_ts,
+        _pending      = _ctx.campaign_pending[_mention_user_id]
+        _pend_state   = _pending.get("state", "collecting")
+        _pend_msg_l   = user_message.lower().strip()
+
+        if _pend_state == "expert_review":
+            # Sprawdź czy user potwierdza (zaczynaj / ok / etc.) lub podaje zmiany
+            _is_confirm = (
+                any(kw in _pend_msg_l for kw in _CONFIRM_KWS)
+                or (_pend_msg_l in ("ok", "tak", "yes", "ok.", "tak.", "k"))
             )
-            return
-        # All fields present → create campaign from pending state
-        _pp       = _pending["params"]
-        _pfiles   = _pending.get("files", [])
-        del _ctx.campaign_pending[_mention_user_id]
-        # Apply numeric defaults before creation
-        _pp["daily_budget"]   = float(_pp.get("daily_budget") or 100)
-        _pp["objective"]      = _pp.get("objective") or "OUTCOME_TRAFFIC"
-        _pp["call_to_action"] = _pp.get("call_to_action") or "LEARN_MORE"
-        say(text="✅ Mam wszystko! Tworzę kampanię...", thread_ts=thread_ts)
-        try:
-            _p_account_id = get_meta_account_id(_pp["client_name"])
-            _p_creatives  = []
-            if _pfiles:
-                say(text=f"🎨 Uploaduję {len(_pfiles)} kreacji do Meta...", thread_ts=thread_ts)
-                for _pf_name, _pf_data, _pf_type in _pfiles:
-                    try:
-                        _p_cr = upload_creative_to_meta(_p_account_id, _pf_data, _pf_type, _pf_name)
-                        _p_creatives.append(_p_cr)
-                    except Exception as _pce:
-                        say(text=f"⚠️ Nie udało się uploadować `{_pf_name}`: {_pce}", thread_ts=thread_ts)
-            _p_targeting = build_meta_targeting(_pp.get("targeting") or {})
-            say(text="📋 Tworzę szkic kampanii w Meta Ads...", thread_ts=thread_ts)
-            _p_draft_ids = create_campaign_draft(_p_account_id, _pp, _p_creatives, _p_targeting)
-            _p_preview   = generate_campaign_preview(
-                _pp, _pp.get("targeting") or {}, len(_p_creatives), _p_draft_ids,
+            if _is_confirm:
+                # ── BUDUJ KAMPANIĘ ──────────────────────────────────────────
+                _pp     = _pending["params"]
+                _pfiles = _pending.get("files", [])
+                del _ctx.campaign_pending[_mention_user_id]
+                say(text="✅ Zaczynamy! Buduję kampanię...", thread_ts=thread_ts)
+                try:
+                    _p_account_id = get_meta_account_id(_pp["client_name"])
+                    _p_creatives  = []
+                    if _pfiles:
+                        say(text=f"🎨 Uploaduję {len(_pfiles)} kreacji do Meta...", thread_ts=thread_ts)
+                        for _pf_name, _pf_data, _pf_type in _pfiles:
+                            try:
+                                _p_cr = upload_creative_to_meta(_p_account_id, _pf_data, _pf_type, _pf_name)
+                                _p_creatives.append(_p_cr)
+                            except Exception as _pce:
+                                say(text=f"⚠️ Nie udało się uploadować `{_pf_name}`: {_pce}", thread_ts=thread_ts)
+                    _p_targeting = build_meta_targeting(_pp.get("targeting") or {})
+                    say(text="📋 Tworzę szkic kampanii w Meta Ads...", thread_ts=thread_ts)
+                    _p_draft_ids = create_campaign_draft(_p_account_id, _pp, _p_creatives, _p_targeting)
+                    _p_preview   = generate_campaign_preview(
+                        _pp, _pp.get("targeting") or {}, len(_p_creatives), _p_draft_ids,
+                    )
+                    say(text=_p_preview, thread_ts=thread_ts)
+                except Exception as _pce:
+                    logger.error(f"Campaign build error (mention): {_pce}")
+                    say(text=f"❌ Błąd tworzenia kampanii: {str(_pce)}", thread_ts=thread_ts)
+            else:
+                # ── USER CHCE ZMIANY → zaktualizuj parametry i re-analizuj ──
+                _fill = parse_campaign_request(user_message, [])
+                _pending["params"] = _merge_pending_campaign_params(
+                    _pending["params"], _fill, user_message
+                )
+                _still_miss = _check_missing_campaign_fields(
+                    _pending["params"], _pending.get("files", [])
+                )
+                if _still_miss:
+                    _pending["state"] = "collecting"
+                    say(
+                        text="❓ Mam zmiany, ale brakuje mi jeszcze:\n\n"
+                             + "\n".join(f"• {q}" for q in _still_miss),
+                        thread_ts=thread_ts,
+                    )
+                else:
+                    say(text="🔄 Aktualizuję analizę...", thread_ts=thread_ts)
+                    _expert_txt = generate_campaign_expert_analysis(
+                        _pending["params"], _pending.get("files", [])
+                    )
+                    if _expert_txt:
+                        say(text=_expert_txt, thread_ts=thread_ts)
+                    else:
+                        say(text="Napisz *zaczynaj* żeby zbudować kampanię.", thread_ts=thread_ts)
+
+        else:  # state == "collecting"
+            # Merge odpowiedzi użytkownika z brakującymi polami
+            _fill = parse_campaign_request(user_message, [])
+            _pending["params"] = _merge_pending_campaign_params(
+                _pending["params"], _fill, user_message
             )
-            say(text=_p_preview, thread_ts=thread_ts)
-        except Exception as _pce:
-            logger.error(f"Campaign pending creation error (mention): {_pce}")
-            say(text=f"❌ Błąd tworzenia kampanii: {str(_pce)}", thread_ts=thread_ts)
+            _still_miss = _check_missing_campaign_fields(
+                _pending["params"], _pending.get("files", [])
+            )
+            if _still_miss:
+                say(
+                    text="❓ Jeszcze brakuje mi:\n\n"
+                         + "\n".join(f"• {q}" for q in _still_miss)
+                         + "\n\nOdpowiedz na te pytania — zaraz zaczynam! 🚀",
+                    thread_ts=thread_ts,
+                )
+            else:
+                # Wszystkie wymagane pola zebrane → ekspert przejmuje
+                _pp = _pending["params"]
+                _pp["daily_budget"]   = float(_pp.get("daily_budget") or 100)
+                _pp["objective"]      = _pp.get("objective") or "OUTCOME_TRAFFIC"
+                _pp["call_to_action"] = _pp.get("call_to_action") or "LEARN_MORE"
+                _pending["state"]     = "expert_review"
+                say(text="🧠 Analizuję kampanię...", thread_ts=thread_ts)
+                _expert_txt = generate_campaign_expert_analysis(_pp, _pending.get("files", []))
+                if _expert_txt:
+                    say(text=_expert_txt, thread_ts=thread_ts)
+                else:
+                    say(text="Mam wszystko! Napisz *zaczynaj* żeby zbudować kampanię.", thread_ts=thread_ts)
         return
 
     # === CAMPAIGN: zatwierdź kampanię {id} ===
@@ -482,67 +533,56 @@ def handle_mention(event, say):
             # 2. Parse request with Claude
             _cparams = parse_campaign_request(user_message, _cfiles)
 
-            # 2b. Questionnaire: pytaj o brakujące wymagane pola zamiast używać defaultów
+            # 2b. Sprawdź brakujące wymagane pola
             _missing_qs = _check_missing_campaign_fields(_cparams, _cfiles)
             if _missing_qs:
+                # Brakuje danych → zbieramy
                 _ctx.campaign_pending[_mention_user_id] = {
                     "params":    _cparams,
                     "files":     _cfiles,
                     "thread_ts": thread_ts,
                     "is_dm":     False,
+                    "state":     "collecting",
                 }
                 say(
                     text=(
                         "❓ *Zanim stworzę kampanię, potrzebuję kilku informacji:*\n\n"
                         + "\n".join(f"• {q}" for q in _missing_qs)
-                        + "\n\nOdpowiedz na te pytania — zaraz zaczynam! 🚀"
+                        + "\n\nOdpowiedz — zaraz analizuję i zaczynam! 🚀"
                     ),
                     thread_ts=thread_ts,
                 )
                 return
 
-            # Apply default budget if Claude returned None
+            # Wszystkie wymagane pola są → Apply defaults i przejdź do expert review
             if not _cparams.get("daily_budget"):
                 _cparams["daily_budget"] = 100.0
+            _cparams["objective"]      = _cparams.get("objective") or "OUTCOME_TRAFFIC"
+            _cparams["call_to_action"] = _cparams.get("call_to_action") or "LEARN_MORE"
 
-            # 3. Validate
-            _cerrors = validate_campaign_params(_cparams)
-            if _cerrors:
+            # Zapisz do pending → expert_review (użytkownik musi potwierdzić)
+            _ctx.campaign_pending[_mention_user_id] = {
+                "params":    _cparams,
+                "files":     _cfiles,
+                "thread_ts": thread_ts,
+                "is_dm":     False,
+                "state":     "expert_review",
+            }
+
+            # Uruchom ekspercką analizę
+            say(text="🧠 Analizuję kampanię jako ekspert...", thread_ts=thread_ts)
+            _expert_txt = generate_campaign_expert_analysis(_cparams, _cfiles)
+            if _expert_txt:
+                say(text=_expert_txt, thread_ts=thread_ts)
+            else:
                 say(
-                    text="❌ Nie mogę stworzyć kampanii:\n" + "\n".join(f"• {e}" for e in _cerrors),
+                    text="✅ Mam wszystko! Napisz *zaczynaj* żeby zbudować kampanię.",
                     thread_ts=thread_ts,
                 )
-                return
-
-            _account_id = get_meta_account_id(_cparams['client_name'])
-
-            # 4. Upload creatives (jeśli są)
-            _creatives = []
-            if _cfiles:
-                say(text=f"🎨 Uploaduję {len(_cfiles)} kreacji do Meta...", thread_ts=thread_ts)
-                for _fname, _fdata, _ftype in _cfiles:
-                    try:
-                        _cr = upload_creative_to_meta(_account_id, _fdata, _ftype, _fname)
-                        _creatives.append(_cr)
-                    except Exception as _ce:
-                        say(text=f"⚠️ Nie udało się uploadować `{_fname}`: {_ce}", thread_ts=thread_ts)
-
-            # 5. Build targeting
-            _targeting = build_meta_targeting(_cparams.get('targeting') or {})
-
-            # 6. Create campaign draft (PAUSED)
-            say(text="📋 Tworzę szkic kampanii w Meta Ads...", thread_ts=thread_ts)
-            _draft_ids = create_campaign_draft(_account_id, _cparams, _creatives, _targeting)
-
-            # 7. Send preview
-            _preview = generate_campaign_preview(
-                _cparams, _cparams.get('targeting') or {}, len(_creatives), _draft_ids,
-            )
-            say(text=_preview, thread_ts=thread_ts)
 
         except Exception as _ce:
             logger.error(f"Campaign creation error: {_ce}")
-            say(text=f"❌ Błąd tworzenia kampanii: {str(_ce)}", thread_ts=thread_ts)
+            say(text=f"❌ Błąd: {str(_ce)}", thread_ts=thread_ts)
         return
 
     channel_type  = event.get('channel_type', 'channel')
@@ -1023,56 +1063,104 @@ def handle_message_events(body, say, logger):
         _dm_cancel_m  = re.search(r'(anuluj|usuń|usun|skasuj)\s+kampanię\s+(\d+)', _dm_text_l)
         _dm_has_files = bool(event.get('files'))
 
-        # === PENDING CAMPAIGN (DM): user odpowiada na questionnaire ===
+        # === PENDING CAMPAIGN (DM): state machine (collecting → expert_review → build) ===
+        _DM_CONFIRM_KWS = [
+            "zaczynaj", "zaczynamy", "dawaj", "buduj", "budujemy", "robimy",
+            "lecimy", "no to lej", "go", "start", "ok buduj", "ok zaczynaj",
+            "potwierdź", "potwierdzam", "tak buduj", "tak zaczynaj", "zgoda",
+        ]
         if user_id in _ctx.campaign_pending:
-            _dm_pending = _ctx.campaign_pending[user_id]
-            _dm_fill_params = parse_campaign_request(user_message, [])
-            _dm_pending["params"] = _merge_pending_campaign_params(
-                _dm_pending["params"], _dm_fill_params, user_message
-            )
-            _dm_still_missing = _check_missing_campaign_fields(
-                _dm_pending["params"], _dm_pending.get("files", [])
-            )
-            if _dm_still_missing:
-                _say_dm(
-                    text="❓ Jeszcze brakuje mi:\n\n"
-                         + "\n".join(f"• {q}" for q in _dm_still_missing)
-                         + "\n\nOdpowiedz na te pytania — zaraz zaczynam! 🚀"
+            _dm_pending    = _ctx.campaign_pending[user_id]
+            _dm_pend_state = _dm_pending.get("state", "collecting")
+            _dm_msg_l      = user_message.lower().strip()
+
+            if _dm_pend_state == "expert_review":
+                _dm_is_confirm = (
+                    any(kw in _dm_msg_l for kw in _DM_CONFIRM_KWS)
+                    or (_dm_msg_l in ("ok", "tak", "yes", "ok.", "tak.", "k"))
                 )
-                return
-            # All fields present → create campaign from pending state
-            _dm_pp    = _dm_pending["params"]
-            _dm_pfiles = _dm_pending.get("files", [])
-            del _ctx.campaign_pending[user_id]
-            _dm_pp["daily_budget"]   = float(_dm_pp.get("daily_budget") or 100)
-            _dm_pp["objective"]      = _dm_pp.get("objective") or "OUTCOME_TRAFFIC"
-            _dm_pp["call_to_action"] = _dm_pp.get("call_to_action") or "LEARN_MORE"
-            _say_dm(text="✅ Mam wszystko! Tworzę kampanię...")
-            try:
-                _dm_p_account_id = get_meta_account_id(_dm_pp["client_name"])
-                _dm_p_creatives  = []
-                if _dm_pfiles:
-                    _say_dm(text=f"🎨 Uploaduję {len(_dm_pfiles)} kreacji do Meta...")
-                    for _dm_pf_name, _dm_pf_data, _dm_pf_type in _dm_pfiles:
-                        try:
-                            _dm_p_cr = upload_creative_to_meta(
-                                _dm_p_account_id, _dm_pf_data, _dm_pf_type, _dm_pf_name
-                            )
-                            _dm_p_creatives.append(_dm_p_cr)
-                        except Exception as _dm_pce:
-                            _say_dm(text=f"⚠️ Nie udało się uploadować `{_dm_pf_name}`: {_dm_pce}")
-                _dm_p_targeting = build_meta_targeting(_dm_pp.get("targeting") or {})
-                _say_dm(text="📋 Tworzę szkic kampanii w Meta Ads...")
-                _dm_p_draft_ids = create_campaign_draft(
-                    _dm_p_account_id, _dm_pp, _dm_p_creatives, _dm_p_targeting
+                if _dm_is_confirm:
+                    # ── BUDUJ KAMPANIĘ ──────────────────────────────────────
+                    _dm_pp     = _dm_pending["params"]
+                    _dm_pfiles = _dm_pending.get("files", [])
+                    del _ctx.campaign_pending[user_id]
+                    _say_dm(text="✅ Zaczynamy! Buduję kampanię...")
+                    try:
+                        _dm_p_account_id = get_meta_account_id(_dm_pp["client_name"])
+                        _dm_p_creatives  = []
+                        if _dm_pfiles:
+                            _say_dm(text=f"🎨 Uploaduję {len(_dm_pfiles)} kreacji do Meta...")
+                            for _dm_pf_name, _dm_pf_data, _dm_pf_type in _dm_pfiles:
+                                try:
+                                    _dm_p_cr = upload_creative_to_meta(
+                                        _dm_p_account_id, _dm_pf_data, _dm_pf_type, _dm_pf_name
+                                    )
+                                    _dm_p_creatives.append(_dm_p_cr)
+                                except Exception as _dm_pce:
+                                    _say_dm(text=f"⚠️ Nie udało się uploadować `{_dm_pf_name}`: {_dm_pce}")
+                        _dm_p_targeting = build_meta_targeting(_dm_pp.get("targeting") or {})
+                        _say_dm(text="📋 Tworzę szkic kampanii w Meta Ads...")
+                        _dm_p_draft_ids = create_campaign_draft(
+                            _dm_p_account_id, _dm_pp, _dm_p_creatives, _dm_p_targeting
+                        )
+                        _dm_p_preview = generate_campaign_preview(
+                            _dm_pp, _dm_pp.get("targeting") or {}, len(_dm_p_creatives), _dm_p_draft_ids,
+                        )
+                        _say_dm(text=_dm_p_preview)
+                    except Exception as _dm_pce:
+                        logger.error(f"Campaign build error (DM): {_dm_pce}")
+                        _say_dm(text=f"❌ Błąd tworzenia kampanii: {str(_dm_pce)}")
+                else:
+                    # ── USER CHCE ZMIANY → zaktualizuj i re-analizuj ────────
+                    _dm_fill = parse_campaign_request(user_message, [])
+                    _dm_pending["params"] = _merge_pending_campaign_params(
+                        _dm_pending["params"], _dm_fill, user_message
+                    )
+                    _dm_still_miss = _check_missing_campaign_fields(
+                        _dm_pending["params"], _dm_pending.get("files", [])
+                    )
+                    if _dm_still_miss:
+                        _dm_pending["state"] = "collecting"
+                        _say_dm(
+                            text="❓ Mam zmiany, ale brakuje mi jeszcze:\n\n"
+                                 + "\n".join(f"• {q}" for q in _dm_still_miss)
+                        )
+                    else:
+                        _say_dm(text="🔄 Aktualizuję analizę...")
+                        _dm_expert_txt = generate_campaign_expert_analysis(
+                            _dm_pending["params"], _dm_pending.get("files", [])
+                        )
+                        if _dm_expert_txt:
+                            _say_dm(text=_dm_expert_txt)
+                        else:
+                            _say_dm(text="Napisz *zaczynaj* żeby zbudować kampanię.")
+
+            else:  # state == "collecting"
+                _dm_fill = parse_campaign_request(user_message, [])
+                _dm_pending["params"] = _merge_pending_campaign_params(
+                    _dm_pending["params"], _dm_fill, user_message
                 )
-                _dm_p_preview = generate_campaign_preview(
-                    _dm_pp, _dm_pp.get("targeting") or {}, len(_dm_p_creatives), _dm_p_draft_ids,
+                _dm_still_miss = _check_missing_campaign_fields(
+                    _dm_pending["params"], _dm_pending.get("files", [])
                 )
-                _say_dm(text=_dm_p_preview)
-            except Exception as _dm_pce:
-                logger.error(f"Campaign pending creation error (DM): {_dm_pce}")
-                _say_dm(text=f"❌ Błąd tworzenia kampanii: {str(_dm_pce)}")
+                if _dm_still_miss:
+                    _say_dm(
+                        text="❓ Jeszcze brakuje mi:\n\n"
+                             + "\n".join(f"• {q}" for q in _dm_still_miss)
+                             + "\n\nOdpowiedz — zaraz analizuję i zaczynam! 🚀"
+                    )
+                else:
+                    _dm_pp = _dm_pending["params"]
+                    _dm_pp["daily_budget"]   = float(_dm_pp.get("daily_budget") or 100)
+                    _dm_pp["objective"]      = _dm_pp.get("objective") or "OUTCOME_TRAFFIC"
+                    _dm_pp["call_to_action"] = _dm_pp.get("call_to_action") or "LEARN_MORE"
+                    _dm_pending["state"]     = "expert_review"
+                    _say_dm(text="🧠 Analizuję kampanię jako ekspert...")
+                    _dm_expert_txt = generate_campaign_expert_analysis(_dm_pp, _dm_pending.get("files", []))
+                    if _dm_expert_txt:
+                        _say_dm(text=_dm_expert_txt)
+                    else:
+                        _say_dm(text="Mam wszystko! Napisz *zaczynaj* żeby zbudować kampanię.")
             return
 
         if _dm_approve_m:
@@ -1093,51 +1181,48 @@ def handle_message_events(body, say, logger):
                 _cfiles   = download_slack_files(_file_ids) if _file_ids else []
                 _cparams  = parse_campaign_request(user_message, _cfiles)
 
-                # Questionnaire (DM): pytaj o brakujące wymagane pola
+                # Sprawdź brakujące wymagane pola
                 _dm_missing_qs = _check_missing_campaign_fields(_cparams, _cfiles)
                 if _dm_missing_qs:
                     _ctx.campaign_pending[user_id] = {
-                        "params":  _cparams,
-                        "files":   _cfiles,
-                        "is_dm":   True,
+                        "params": _cparams,
+                        "files":  _cfiles,
+                        "is_dm":  True,
+                        "state":  "collecting",
                     }
                     _say_dm(
                         text=(
                             "❓ *Zanim stworzę kampanię, potrzebuję kilku informacji:*\n\n"
                             + "\n".join(f"• {q}" for q in _dm_missing_qs)
-                            + "\n\nOdpowiedz na te pytania — zaraz zaczynam! 🚀"
+                            + "\n\nOdpowiedz — zaraz analizuję i zaczynam! 🚀"
                         )
                     )
                     return
 
-                # Apply default budget if Claude returned None
+                # Wszystkie pola są → Apply defaults i przejdź do expert_review
                 if not _cparams.get("daily_budget"):
                     _cparams["daily_budget"] = 100.0
+                _cparams["objective"]      = _cparams.get("objective") or "OUTCOME_TRAFFIC"
+                _cparams["call_to_action"] = _cparams.get("call_to_action") or "LEARN_MORE"
 
-                _cerrors  = validate_campaign_params(_cparams)
-                if _cerrors:
-                    _say_dm(text="❌ Nie mogę stworzyć kampanii:\n" + "\n".join(f"• {e}" for e in _cerrors))
-                    return
-                _account_id = get_meta_account_id(_cparams['client_name'])
-                _creatives  = []
-                if _cfiles:
-                    _say_dm(text=f"🎨 Uploaduję {len(_cfiles)} kreacji do Meta...")
-                    for _fname, _fdata, _ftype in _cfiles:
-                        try:
-                            _cr = upload_creative_to_meta(_account_id, _fdata, _ftype, _fname)
-                            _creatives.append(_cr)
-                        except Exception as _ce:
-                            _say_dm(text=f"⚠️ Nie udało się uploadować `{_fname}`: {_ce}")
-                _targeting = build_meta_targeting(_cparams.get('targeting') or {})
-                _say_dm(text="📋 Tworzę szkic kampanii w Meta Ads...")
-                _draft_ids = create_campaign_draft(_account_id, _cparams, _creatives, _targeting)
-                _preview   = generate_campaign_preview(
-                    _cparams, _cparams.get('targeting') or {}, len(_creatives), _draft_ids,
-                )
-                _say_dm(text=_preview)
+                _ctx.campaign_pending[user_id] = {
+                    "params": _cparams,
+                    "files":  _cfiles,
+                    "is_dm":  True,
+                    "state":  "expert_review",
+                }
+
+                # Uruchom ekspercką analizę
+                _say_dm(text="🧠 Analizuję kampanię jako ekspert...")
+                _dm_init_expert = generate_campaign_expert_analysis(_cparams, _cfiles)
+                if _dm_init_expert:
+                    _say_dm(text=_dm_init_expert)
+                else:
+                    _say_dm(text="✅ Mam wszystko! Napisz *zaczynaj* żeby zbudować kampanię.")
+
             except Exception as _ce:
                 logger.error(f"Campaign creation DM error: {_ce}")
-                _say_dm(text=f"❌ Błąd tworzenia kampanii: {str(_ce)}")
+                _say_dm(text=f"❌ Błąd: {str(_ce)}")
             return
 
         # Guard: tylko jeśli message zawiera znane employee keywords
