@@ -16,3 +16,7 @@ conversation_history = {}
 
 # Campaign drafts pending approval: campaign_id → {campaign_id, adset_id, ad_ids, params, account_id}
 campaign_drafts = {}
+
+# Campaign creation pending info: user_id → {params, files, channel, thread_ts, round}
+# Używane gdy bot pyta o brakujące pola przed stworzeniem kampanii
+campaign_pending = {}

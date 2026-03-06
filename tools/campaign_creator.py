@@ -233,7 +233,12 @@ Zasady mapowania:
         client = (params.get("client_name") or "kampania").upper()
         params["objective"]           = params.get("objective")      or "OUTCOME_TRAFFIC"
         params["campaign_name"]       = params.get("campaign_name")  or f"{client} – {today}"
-        params["daily_budget"]        = params.get("daily_budget")   or 100
+        # daily_budget: keep None if Claude didn't detect it (questionnaire will ask)
+        if params.get("daily_budget") is not None:
+            try:
+                params["daily_budget"] = float(params["daily_budget"])
+            except (TypeError, ValueError):
+                params["daily_budget"] = None
         params["call_to_action"]      = params.get("call_to_action") or "LEARN_MORE"
         params["website_url"]         = params.get("website_url")    or None
         params["start_date"]          = params.get("start_date")     or tomorrow
