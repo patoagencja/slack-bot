@@ -517,13 +517,45 @@ Przeanalizuj tę kampanię i odpowiedz bezpośrednio, po polsku, jak kolega-eksp
 PARAMETRY KAMPANII:
 {campaign_ctx}
 
+---
+FUNDAMENTY PERFORMANCE MARKETINGU — zawsze sprawdzaj każdy punkt i uwzględniaj w analizie:
+
+📌 FAZA UCZENIA
+- Meta potrzebuje min. 50 konwersji/tydzień żeby wyjść z fazy uczenia. Przy małym budżecie (<50 zł/dzień) kampania konwersyjna może tkwić w fazie uczenia przez cały czas trwania — rozważ OUTCOME_TRAFFIC lub OUTCOME_ENGAGEMENT zamiast konwersji.
+
+📌 RETARGETING vs COLD AUDIENCE
+- Cold audience (brak retargetingu) = zazwyczaj ROAS 1–2×. Retargeting (odwiedzający stronę, osoby zaangażowane w posty, widzowie video) = 3–7× ROAS. Jeśli brak grupy retargetingowej → zawsze zwróć na to uwagę i zaproponuj konkretne custom audiences.
+
+📌 BROAD vs INTEREST TARGETING
+- Wąskie zainteresowania (<50k reach) = mała skala, wysokie CPM. Szerokie zainteresowania + Advantage+ Audience = często skuteczniejsze przy dobrych kreacjach. Zbyt duża liczba zainteresowań = rozmyta grupa. Optymalnie: 1–3 tematycznie powiązane zainteresowania LUB broad.
+
+📌 FORMAT KREACJI vs PLACEMENT
+- Reels/Stories wymagają pionowego wideo 9:16. Feed Instagram/Facebook = kwadrat 1:1 lub poziomy 1.91:1. Zły format = przycięte kreacje = drastyczny spadek CTR. Jeśli kreacja jest foto na Reels → zapytaj o format.
+
+📌 CZAS TRWANIA I OPTYMALIZACJA
+- Kampania <7 dni = za mało danych do optymalizacji. Min. 7–14 dni żeby Meta zebrało dane i zoptymalizowało dostarczanie. Kampanie wieczne (bez daty końca) przy małym budżecie = ryzyko wchodzenia w "holiday pricing" bez kontroli.
+
+📌 PIXEL / TRACKING
+- Kampanie OUTCOME_SALES lub OUTCOME_LEADS bez Pixela = Meta optymalizuje w ciemno. Zawsze zapytaj: czy piksel jest zainstalowany? Czy zdarzenia (ViewContent, AddToCart, Purchase, Lead) są skonfigurowane?
+
+📌 BUDŻET vs AUDIENCE SIZE
+- Zbyt mały budżet na dużą grupę = niska częstotliwość = słabe wyniki. Zbyt duży budżet na małą grupę (<50k) = szybkie nasycenie, rosnące CPM i CPR. Złota proporcja: ~0,5–1 PLN dziennie na każde 1 000 osób w grupie docelowej.
+
+📌 COPY I CTA
+- Bez ad copy Meta używa tekstu z posta (może być nieoptymalne dla reklamy). Krótkie copy (<125 znaków) lepsze na mobile — dłuższe jest ucinane. CTA powinno pasować do celu: ruch → "Dowiedz się więcej", sprzedaż → "Kup teraz", lead → "Zarejestruj się".
+
+📌 KREATYWNOŚĆ I A/B
+- Jedna kreacja na zestaw = brak danych porównawczych. Optymalnie 2–4 kreacje w adset — Meta automatycznie preferuje lepiej performującą. Zapytaj o warianty jeśli jest tylko jedna kreacja.
+---
+
 Twoja odpowiedź powinna:
 1. Jednym krótkim zdaniem potwierdzić co rozumiesz
-2. Podać 2-4 konkretne eksperckie uwagi / pytania / sugestie — skupione na tym co REALNIE wpłynie na wyniki (np. faza uczenia przy małym budżecie, brak retargetingu, za wąska/szeroka grupa, format kreacji vs placement, czas trwania kampanii, brak zainteresowań = broad targeting plusy i minusy, copy/kreacja)
-3. NIE pytać o rzeczy które są już podane i OK
+2. Podać 2-4 najważniejsze uwagi na podstawie FUNDAMENTÓW powyżej — tylko te które faktycznie dotyczą TEJ kampanii i mogą realnie poprawić wyniki
+3. NIE wymieniać fundamentów które są OK — tylko te które wymagają uwagi
 4. Być konkretnym — zamiast "rozważ retargeting" napisz "dodaj retargeting osób z dre.pl z ostatnich 30 dni — zazwyczaj 3-5x lepszy ROAS niż cold audience"
+5. Jeśli coś jest niejasne (np. czy piksel jest zainstalowany, jaki format kreacji) — zapytaj wprost
 
-Format: Slack markdown (gwiazdki do bold, myślniki, emoji). Max 220 słów.
+Format: Slack markdown (gwiazdki do bold, myślniki, emoji). Max 250 słów.
 
 Na KOŃCU (osobna linia) napisz dosłownie:
 "Napisz co chcesz zmienić lub potwierdź: *zaczynaj*"
@@ -533,7 +565,7 @@ Nie bądź formalny. Mów wprost."""
     try:
         resp = _ctx.claude.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=550,
+            max_tokens=700,
             messages=[{"role": "user", "content": prompt}],
         )
         return resp.content[0].text.strip()
