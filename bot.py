@@ -732,6 +732,13 @@ def handle_message_events(body, say, logger):
     logger.info(body)
     event = body["event"]
 
+    # Helper: zawsze odpowiada w głównym kanale DM (Chat tab), bez thread_ts.
+    # Slack Bolt's say() może automatycznie dodawać thread_ts z eventu,
+    # co powoduje że odpowiedzi trafiają do History zamiast do Chat.
+    def _say_dm(text="", **_kw):
+        _txt = text or _kw.get("text", "")
+        app.client.chat_postMessage(channel=event.get("channel"), text=_txt)
+
     if event.get("channel_type") == "im" and event.get("user") in _ctx.checkin_responses:
         user_id_ci  = event["user"]
         user_msg_ci = (event.get("text") or "").strip()
@@ -745,14 +752,14 @@ def handle_message_events(body, say, logger):
         if any(kw in user_msg_ci.lower() for kw in finish_kw):
             if entry["messages"]:
                 entry["done"] = True
-                say("✅ *Dzięki za check-in!* Zapisałem Twój feedback na ten tydzień. Miłego weekendu! 🙏")
+                _say_dm("✅ *Dzięki za check-in!* Zapisałem Twój feedback na ten tydzień. Miłego weekendu! 🙏")
             else:
-                say("🤔 Nie mam jeszcze żadnych Twoich odpowiedzi. Napisz coś zanim napiszesz *gotowe*!")
+                _say_dm("🤔 Nie mam jeszcze żadnych Twoich odpowiedzi. Napisz coś zanim napiszesz *gotowe*!")
             return
 
         entry["messages"].append(user_msg_ci)
         if len(entry["messages"]) == 1:
-            say("✍️ Zapisuję. Odpowiedz na pozostałe pytania i napisz *gotowe* kiedy skończysz.")
+            _say_dm("✍️ Zapisuję. Odpowiedz na pozostałe pytania i napisz *gotowe* kiedy skończysz.")
         return
 
     if event.get("bot_id"):
@@ -873,7 +880,7 @@ def handle_message_events(body, say, logger):
                         except Exception as _e:
                             _dm_results.append(f"❌ Błąd wysyłania do {_member['name']}: {_e}")
                 if _dm_results:
-                    say("\n".join(_dm_results))
+                    _say_dm("\n".join(_dm_results))
                     return
 
         # === CAMPAIGN in DM: sprawdź zanim handle_employee_dm połknie request ===
@@ -889,50 +896,50 @@ def handle_message_events(body, say, logger):
 
         if _dm_approve_m:
             _camp_id = _dm_approve_m.group(2)
-            say(text=f"🚀 Uruchamiam kampanię `{_camp_id}`...")
-            say(text=approve_and_launch_campaign(_camp_id))
+            _say_dm(text=f"🚀 Uruchamiam kampanię `{_camp_id}`...")
+            _say_dm(text=approve_and_launch_campaign(_camp_id))
             return
 
         if _dm_cancel_m:
             _camp_id = _dm_cancel_m.group(2)
-            say(text=cancel_campaign_draft(_camp_id))
+            _say_dm(text=cancel_campaign_draft(_camp_id))
             return
 
         if _dm_has_files or any(kw in _dm_text_l for kw in _dm_camp_kws):
-            say(text="⏳ Przetwarzam... zaraz wrócę z preview.")
+            _say_dm(text="⏳ Przetwarzam... zaraz wrócę z preview.")
             try:
                 _file_ids = [f['id'] for f in event.get('files', [])]
                 _cfiles   = download_slack_files(_file_ids) if _file_ids else []
                 _cparams  = parse_campaign_request(user_message, _cfiles)
                 _cerrors  = validate_campaign_params(_cparams)
                 if _cerrors:
-                    say(text="❌ Nie mogę stworzyć kampanii:\n" + "\n".join(f"• {e}" for e in _cerrors))
+                    _say_dm(text="❌ Nie mogę stworzyć kampanii:\n" + "\n".join(f"• {e}" for e in _cerrors))
                     return
                 _account_id = get_meta_account_id(_cparams['client_name'])
                 _creatives  = []
                 if _cfiles:
-                    say(text=f"🎨 Uploaduję {len(_cfiles)} kreacji do Meta...")
+                    _say_dm(text=f"🎨 Uploaduję {len(_cfiles)} kreacji do Meta...")
                     for _fname, _fdata, _ftype in _cfiles:
                         try:
                             _cr = upload_creative_to_meta(_account_id, _fdata, _ftype, _fname)
                             _creatives.append(_cr)
                         except Exception as _ce:
-                            say(text=f"⚠️ Nie udało się uploadować `{_fname}`: {_ce}")
+                            _say_dm(text=f"⚠️ Nie udało się uploadować `{_fname}`: {_ce}")
                 _targeting = build_meta_targeting(_cparams.get('targeting') or {})
-                say(text="📋 Tworzę szkic kampanii w Meta Ads...")
+                _say_dm(text="📋 Tworzę szkic kampanii w Meta Ads...")
                 _draft_ids = create_campaign_draft(_account_id, _cparams, _creatives, _targeting)
                 _preview   = generate_campaign_preview(
                     _cparams, _cparams.get('targeting') or {}, len(_creatives), _draft_ids,
                 )
-                say(text=_preview)
+                _say_dm(text=_preview)
             except Exception as _ce:
                 logger.error(f"Campaign creation DM error: {_ce}")
-                say(text=f"❌ Błąd tworzenia kampanii: {str(_ce)}")
+                _say_dm(text=f"❌ Błąd tworzenia kampanii: {str(_ce)}")
             return
 
         # Guard: tylko jeśli message zawiera znane employee keywords
         if any(kw in _dm_text_l for kw in EMPLOYEE_MSG_KEYWORDS):
-            if handle_employee_dm(user_id, user_name, user_message, say):
+            if handle_employee_dm(user_id, user_name, user_message, _say_dm):
                 return
 
     # Email summary trigger — wyniki zawsze na DM
@@ -1077,10 +1084,10 @@ def handle_message_events(body, say, logger):
             (b.text for b in _resp.content if hasattr(b, "text")),
             "Przepraszam, nie mogłem wygenerować odpowiedzi.",
         )
-        say(text=response_text)
+        _say_dm(text=response_text)
     except Exception as e:
         logger.error(f"Błąd DM handler: {e}")
-        say(text=f"Przepraszam, wystąpił błąd: {str(e)}")
+        _say_dm(text=f"Przepraszam, wystąpił błąd: {str(e)}")
 
 
 # ── /standup slash command ────────────────────────────────────────────────────
