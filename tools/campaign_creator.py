@@ -236,6 +236,20 @@ Zasady mapowania:
                 "locations": ["Polska"], "interests": [],
             }
 
+        # ── Fallback: jeśli Claude nie wyciągnął client_name, szukaj po słowach kluczowych ──
+        if not params.get("client_name"):
+            _msg_l = user_message.lower()
+            if any(k in _msg_l for k in ("dre", "drzwi", "dzrwi", "dzwri", "drze")):
+                params["client_name"] = "dre"
+            elif any(k in _msg_l for k in ("instax", "fuji", "fujifilm")):
+                params["client_name"] = "instax"
+            elif "m2" in _msg_l:
+                params["client_name"] = "m2"
+            elif "pato" in _msg_l:
+                params["client_name"] = "pato"
+            if params.get("client_name"):
+                logger.info(f"client_name fallback keyword match: {params['client_name']!r}")
+
         logger.info(f"parse_campaign_request: {json.dumps(params, ensure_ascii=False)}")
         return params
 
