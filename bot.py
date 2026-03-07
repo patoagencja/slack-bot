@@ -26,7 +26,7 @@ from tools.slack_tools import slack_read_channel_tool, slack_read_thread_tool
 # ── jobs ──────────────────────────────────────────────────────────────────────
 from jobs.performance_analysis import _dispatch_ads_command
 from jobs.daily_digest import generate_daily_digest_dre, daily_digest_dre, weekly_learnings_dre
-from jobs.budget_alerts import check_budget_alerts, send_budget_alerts_dre
+from jobs.budget_alerts import check_budget_alerts
 from jobs.weekly_reports import weekly_report_dre, send_weekly_reports
 from jobs.checkin import weekly_checkin, send_checkin_reminders, checkin_summary
 from jobs.team import (
@@ -1393,7 +1393,6 @@ scheduler.add_job(weekly_checkin,            'cron', day_of_week='fri', hour=14,
 scheduler.add_job(send_checkin_reminders,    'cron', day_of_week='fri', hour=17, minute=30, id='checkin_reminders')
 scheduler.add_job(checkin_summary,           'cron', day_of_week='mon', hour=9,  minute=0)
 scheduler.add_job(check_budget_alerts,       'cron', minute=0, id='budget_alerts')
-scheduler.add_job(send_budget_alerts_dre,    'cron', hour='9,11,13,15,17,19', minute=0, id='budget_alerts_dre')
 scheduler.add_job(weekly_report_dre,         'cron', day_of_week='fri', hour=16, minute=0, id='weekly_reports')
 scheduler.add_job(weekly_learnings_dre,      'cron', day_of_week='mon,thu', hour=8, minute=30, id='weekly_learnings')
 scheduler.add_job(daily_email_summary_slack, 'cron', hour=16, minute=0, id='daily_email_summary')
