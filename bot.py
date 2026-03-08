@@ -162,10 +162,14 @@ def daily_summaries():
 
                     summary = anthropic.messages.create(
                         model="claude-sonnet-4-20250514",
-                        max_tokens=500,
+                        max_tokens=300,
                         messages=[{
                             "role": "user",
-                            "content": f"Zrób krótkie podsumowanie (3-5 zdań) najważniejszych tematów z dzisiejszych rozmów na kanale #{channel_name}:\n\n{messages_text}"
+                            "content": (
+                                f"Na podstawie dzisiejszych wiadomości z kanału #{channel_name} napisz BARDZO krótkie podsumowanie (max 2 zdania ogólnie co się działo). "
+                                f"Następnie jeśli były jakieś problemy, alerty, błędy lub rzeczy wymagające uwagi — wylistuj je osobno jako '⚠️ Wymaga uwagi:'. "
+                                f"Jeśli nie było nic alarmującego, nie pisz tej sekcji w ogóle. Nie opisuj każdej kampanii z osobna.\n\n{messages_text}"
+                            )
                         }]
                     )
 
