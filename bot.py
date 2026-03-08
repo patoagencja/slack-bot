@@ -167,7 +167,7 @@ def daily_summaries():
                             "role": "user",
                             "content": (
                                 f"Na podstawie dzisiejszych wiadomości z kanału #{channel_name} napisz BARDZO krótkie podsumowanie (max 2 zdania ogólnie co się działo). "
-                                f"Następnie jeśli były jakieś problemy, alerty, błędy lub rzeczy wymagające uwagi — wylistuj je osobno jako '⚠️ Wymaga uwagi:'. "
+                                f"Następnie jeśli były jakieś problemy, alerty, błędy lub rzeczy wymagające uwagi — wylistuj je osobno jako '*Wymaga uwagi:*'. "
                                 f"Jeśli nie było nic alarmującego, nie pisz tej sekcji w ogóle. Nie opisuj każdej kampanii z osobna.\n\n{messages_text}"
                             )
                         }]
@@ -176,7 +176,7 @@ def daily_summaries():
                     summary_text = summary.content[0].text
                     app.client.chat_postMessage(
                         channel=channel_id,
-                        text=f"📊 *Podsumowanie dnia ({today.strftime('%d.%m.%Y')})*\n\n{summary_text}"
+                        text=f"📋 *Podsumowanie dnia — {today.strftime('%d.%m.%Y')}*\n\n{summary_text}"
                     )
 
     except Exception as e:
