@@ -535,7 +535,10 @@ def handle_mention(event, say):
         return
 
     # === CAMPAIGN CREATION: stwórz/zrób kampanię lub upload kreacji ===
-    _has_files       = bool(event.get('files'))
+    _has_files       = any(
+        not f.get("mimetype", "").startswith("audio/")
+        for f in event.get("files", [])
+    )
     _campaign_create_kws = [
         'stwórz kampanię', 'stworz kampanie', 'zrób kampanię', 'zrob kampanie',
         'nową kampanię', 'nowa kampania', 'utwórz kampanię', 'utworz kampanie',
