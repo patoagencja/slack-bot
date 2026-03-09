@@ -24,7 +24,6 @@ _DIGEST_INTERVAL_DAYS  = 3
 # ── STANDUP ────────────────────────────────────────────────────────────────────
 STANDUP_CHANNEL    = os.environ.get("STANDUP_CHANNEL_ID",
                      os.environ.get("GENERAL_CHANNEL_ID", ""))
-ZARZAD_CHANNEL_ID  = os.environ.get("ZARZAD_CHANNEL_ID", "")
 
 STANDUP_QUESTION = (
     "☀️ *Dzień dobry! Szybki standup* (odpowiedz tutaj — skleję o 9:30)\n\n"

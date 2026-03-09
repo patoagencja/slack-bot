@@ -6,7 +6,24 @@ import pytz
 from datetime import datetime, timedelta
 
 import _ctx
-from config.constants import TEAM_MEMBERS, STANDUP_FILE, ZARZAD_CHANNEL_ID
+from config.constants import TEAM_MEMBERS, STANDUP_FILE
+
+_ZARZOND_CHANNEL_NAME = "zarzondpato"
+_zarzond_channel_id_cache = None
+
+def _get_zarzond_channel_id():
+    global _zarzond_channel_id_cache
+    if _zarzond_channel_id_cache:
+        return _zarzond_channel_id_cache
+    try:
+        result = _ctx.app.client.conversations_list(types="public_channel,private_channel", limit=200)
+        for ch in result.get("channels", []):
+            if ch.get("name") == _ZARZOND_CHANNEL_NAME:
+                _zarzond_channel_id_cache = ch["id"]
+                return _zarzond_channel_id_cache
+    except Exception as e:
+        logger.warning(f"Nie znaleziono kanału #{_ZARZOND_CHANNEL_NAME}: {e}")
+    return None
 
 logger = logging.getLogger(__name__)
 
@@ -269,7 +286,8 @@ def post_standup_summary():
         except Exception as e:
             logger.error(f"Plan DM error dla {member['name']}: {e}")
 
-    # 2. Summary zarządowe → #zarzadpato
+    # 2. Summary zarządowe → #zarzondpato
+    ZARZAD_CHANNEL_ID = _get_zarzond_channel_id()
     if ZARZAD_CHANNEL_ID:
         dt       = datetime.fromisoformat(session["sent_at"])
         weekdays = ["poniedziałek","wtorek","środa","czwartek","piątek","sobota","niedziela"]
@@ -303,7 +321,7 @@ def post_standup_summary():
         except Exception as e:
             logger.error(f"Błąd wysyłki do #zarzadpato: {e}")
     else:
-        logger.warning("ZARZAD_CHANNEL_ID nie ustawiony — pomijam summary zarządowe")
+        logger.warning(f"Kanał #{_ZARZOND_CHANNEL_NAME} nie znaleziony — pomijam summary zarządowe")
 
     data[today]["summary_posted"] = True
     _save_standup(data)
