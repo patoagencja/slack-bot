@@ -928,7 +928,8 @@ def handle_cleanup_slash(ack, respond, command, client):
         auth_info = client.auth_test()
         bot_id = auth_info.get("bot_id")        # format B...
         bot_user_id = auth_info.get("user_id")  # format U...
-        logger.info(f"cleanup: bot_id={bot_id} bot_user_id={bot_user_id}")
+        app_id = auth_info.get("app_id")        # format A...
+        logger.info(f"cleanup: bot_id={bot_id} bot_user_id={bot_user_id} app_id={app_id}")
     except Exception as e:
         respond(f"❌ Nie udało się pobrać auth info: {e}")
         return
@@ -948,7 +949,9 @@ def handle_cleanup_slash(ack, respond, command, client):
             is_bot_msg = (
                 (bot_id and msg.get("bot_id") == bot_id)
                 or msg.get("user") == bot_user_id
+                or (app_id and msg.get("app_id") == app_id)
             )
+            logger.debug(f"cleanup msg ts={msg.get('ts')} bot_id={msg.get('bot_id')} user={msg.get('user')} app_id={msg.get('app_id')} -> is_bot={is_bot_msg}")
             if is_bot_msg:
                 try:
                     client.chat_delete(channel=channel_id, ts=msg["ts"])
@@ -968,6 +971,7 @@ def handle_cleanup_slash(ack, respond, command, client):
                         is_bot_reply = (
                             (bot_id and reply.get("bot_id") == bot_id)
                             or reply.get("user") == bot_user_id
+                            or (app_id and reply.get("app_id") == app_id)
                         )
                         if not is_bot_reply:
                             continue
