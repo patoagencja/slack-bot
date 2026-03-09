@@ -119,7 +119,7 @@ def _read_responses_from_thread(channel: str, thread_ts: str) -> dict:
 # ── main flow ──────────────────────────────────────────────────────────────────
 
 def send_standup_questions():
-    """9:00 pn-pt — postuje pytanie standupowe do kanału DRE i taguje zespół."""
+    """9:00 pn-pt — wysyła pytanie standupowe prywatnie (DM) do każdego członka zespołu."""
     today = _today_standup_key()
     data  = _load_standup()
 
@@ -127,40 +127,40 @@ def send_standup_questions():
         logger.info(f"Standup {today} już wysłany, pomijam.")
         return
 
-    channel  = _get_standup_channel()
-    mentions = " ".join([f"<@{m['slack_id']}>" for m in TEAM_MEMBERS])
-
-    try:
-        result = _ctx.app.client.chat_postMessage(
-            channel=channel,
-            text=(
-                f"☀️ *Dzień dobry! Szybki standup* 👇\n\n"
-                f"1️⃣ Co dziś planujesz robić?\n"
-                f"2️⃣ Jakieś blokery lub czego potrzebujesz od innych?\n\n"
-                f"_{mentions} — odpiszcie w wątku poniżej, skleję o 9:30_ 🙏"
-            ),
-        )
-        thread_ts = result["ts"]
-        logger.info(f"✅ Standup {today} wysłany do kanału {channel}, thread_ts={thread_ts}")
-    except Exception as e:
-        logger.error(f"Standup channel post error: {e}")
-        return
+    dm_channels = {}
+    for member in TEAM_MEMBERS:
+        try:
+            res = _ctx.app.client.conversations_open(users=member["slack_id"])
+            dm_ch = res["channel"]["id"]
+            _ctx.app.client.chat_postMessage(
+                channel=dm_ch,
+                text=(
+                    f"☀️ *Szybki standup* — {today}\n\n"
+                    f"1️⃣ Co dziś planujesz robić?\n"
+                    f"2️⃣ Jakieś blokery lub czego potrzebujesz od innych?\n\n"
+                    f"_Odpowiedz tutaj, skleję o 9:30_ 🙏"
+                ),
+            )
+            dm_channels[member["slack_id"]] = dm_ch
+            logger.info(f"✅ Standup DM wysłany do {member['name']} ({dm_ch})")
+        except Exception as e:
+            logger.error(f"Standup DM error dla {member['name']}: {e}")
 
     data[today] = {
-        "date":           today,
-        "sent_at":        datetime.now().isoformat(),
-        "sent":           True,
-        "channel":        channel,
-        "thread_ts":      thread_ts,
-        "responses":      {},
+        "date":        today,
+        "sent_at":     datetime.now().isoformat(),
+        "sent":        True,
+        "dm_channels": dm_channels,
+        "responses":   {},
         "summary_posted": False,
     }
     _save_standup(data)
 
 
-def handle_standup_reply(user_id: str, user_name: str, text: str, msg_thread_ts: str) -> bool:
+def handle_standup_reply(user_id: str, user_name: str, text: str,
+                         msg_thread_ts: str = None, msg_channel: str = None) -> bool:
     """
-    Łapie odpowiedź na standup z wątku w kanale (okno 9:00–9:45).
+    Łapie odpowiedź na standup — z DM (okno 9:00–9:45).
     Zwraca True jeśli wiadomość była odpowiedzią standupową.
     """
     today   = _today_standup_key()
@@ -178,10 +178,15 @@ def handle_standup_reply(user_id: str, user_name: str, text: str, msg_thread_ts:
     if now_w > cutoff:
         return False
 
-    # Sprawdź thread_ts (jeśli mamy zapisany)
-    stored_thread_ts = session.get("thread_ts")
-    if stored_thread_ts and msg_thread_ts != stored_thread_ts:
+    # Sprawdź czy wiadomość pochodzi z DM standupu tego użytkownika
+    dm_channels = session.get("dm_channels", {})
+    if msg_channel and dm_channels.get(user_id) != msg_channel:
         return False
+    if not msg_channel and not dm_channels:
+        # fallback: stary tryb kanałowy — sprawdź thread_ts
+        stored_thread_ts = session.get("thread_ts")
+        if stored_thread_ts and msg_thread_ts != stored_thread_ts:
+            return False
 
     data[today]["responses"][user_id] = {
         "text":       text,
@@ -228,7 +233,7 @@ def _build_standup_summary(session):
 
 
 def post_standup_summary():
-    """9:30 pn-pt — postuje podsumowanie standupu w wątku pod pytaniem."""
+    """9:30 pn-pt — postuje podsumowanie standupu na kanale DRE."""
     today = _today_standup_key()
     data  = _load_standup()
 
@@ -240,29 +245,16 @@ def post_standup_summary():
         logger.info(f"Standup {today} summary już wysłany.")
         return
 
-    channel, thread_ts = get_today_standup_thread_ts()
-    if not channel or not thread_ts:
-        logger.error("Nie znaleziono thread_ts standupu — pomijam summary.")
-        return
-
-    # Przeładuj po ewentualnym update z get_today_standup_thread_ts
-    data    = _load_standup()
-    session = data.get(today, {})
-
-    # Fallback: brak zapisanych odpowiedzi (restart bota) → czytaj z wątku
-    if not session.get("responses"):
-        session["responses"] = _read_responses_from_thread(channel, thread_ts)
-
+    channel = _get_standup_channel()
     summary = _build_standup_summary(session)
     try:
         _ctx.app.client.chat_postMessage(
             channel=channel,
-            thread_ts=thread_ts,
             text=summary,
         )
         data[today]["summary_posted"] = True
         _save_standup(data)
-        logger.info(f"✅ Standup summary {today} wysłany w wątku {thread_ts}")
+        logger.info(f"✅ Standup summary {today} wysłany na kanał {channel}")
     except Exception as e:
         logger.error(f"Błąd post standup summary: {e}")
 

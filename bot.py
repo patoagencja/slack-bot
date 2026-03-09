@@ -958,24 +958,23 @@ def handle_message_events(body, say, logger):
         elif _ch_id.startswith("G"):
             _ch_type = "group"
     logger.info(f"MSG EVENT → channel_type={_ch_type!r} ch={_ch_id} text={user_message[:60]!r}")
+    # === STANDUP: przechwytuj odpowiedzi z DM ===
+    if _ch_type == "im":
+        try:
+            _st_info = app.client.users_info(user=user_id)
+            _st_name = (_st_info["user"].get("real_name")
+                        or _st_info["user"].get("profile", {}).get("display_name")
+                        or user_id)
+        except Exception:
+            _st_name = user_id
+        if handle_standup_reply(user_id, _st_name, user_message, msg_channel=_ch_id):
+            app.client.chat_postMessage(
+                channel=_ch_id,
+                text="✅ Dzięki! Zapisałem Twoją odpowiedź na standup.",
+            )
+            return
+
     if _ch_type in ("channel", "group", "mpim"):
-        # === STANDUP: przechwytuj odpowiedzi w wątku (przed sprawdzeniem "seba" triggera) ===
-        _thread_ts = event.get("thread_ts")
-        if _thread_ts and CHANNEL_CLIENT_MAP.get(_ch_id) == "dre":
-            try:
-                _st_info = app.client.users_info(user=user_id)
-                _st_name = (_st_info["user"].get("real_name")
-                            or _st_info["user"].get("profile", {}).get("display_name")
-                            or user_id)
-            except Exception:
-                _st_name = user_id
-            if handle_standup_reply(user_id, _st_name, user_message, _thread_ts):
-                app.client.chat_postMessage(
-                    channel=_ch_id,
-                    thread_ts=_thread_ts,
-                    text=f"✅ <@{user_id}> Dzięki! Zapisałem Twoją odpowiedź na standup.",
-                )
-                return
 
         if user_message.startswith("<@"):
             return

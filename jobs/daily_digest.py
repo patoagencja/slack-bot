@@ -393,7 +393,7 @@ def _digest_days_since_last_sent(channel_id: str) -> int:
             if not msg.get("bot_id"):
                 continue
             text = msg.get("text", "")
-            if "DRE" in text and ("Digest" in text or "digest" in text):
+            if "DRE" in text and ("Digest" in text or "digest" in text or "📊 *DRE " in text):
                 msg_ts   = float(msg["ts"])
                 days_ago = (datetime.now() - datetime.fromtimestamp(msg_ts)).days
                 logger.info(f"Ostatni digest DRE: {days_ago}d temu (ts={msg['ts']})")
