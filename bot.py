@@ -239,6 +239,17 @@ def _merge_pending_campaign_params(pending_params: dict, new_params: dict, user_
     return pp
 
 
+_GROUP_CHAT_RULES = (
+    "Jesteś w grupowym czacie z kilkoma osobami z teamu. Zasady:\n"
+    "- Zachowuj się jak uczestnik rozmowy, nie jak bot który się prezentuje\n"
+    '- NIE wypisuj swoich możliwości, NIE zaczynaj od "mogę pomóc w..." \u2014 po prostu odpowiadaj\n'
+    "- Czytaj historię czatu (podaną wyżej) żeby rozumieć kontekst rozmowy\n"
+    "- Odpowiadaj naturalnie i bezpośrednio na to co jest pytane lub omawiane\n"
+    "- Krótko gdy wystarczy; szczegółowo gdy ktoś prosi o analizę lub dane\n"
+    "- Gdy pytają o kampanie/dane \u2014 wywołaj narzędzie i daj konkretne liczby"
+)
+
+
 # ── app_mention handler ───────────────────────────────────────────────────────
 
 @app.event("app_mention")
@@ -673,13 +684,7 @@ Analiza → SPEND | PERFORMANCE (ROAS/Conv/CTR) | 🔥 Top performer | ⚠️ Ne
 Pytanie → Direct answer → Context → Actionable next step
 
 {"# TRYB: GRUPOWY CZAT" if is_group_chat else ""}
-{"""Jesteś w grupowym czacie z kilkoma osobami z teamu. Zasady:
-- Zachowuj się jak uczestnik rozmowy, nie jak bot który się prezentuje
-- NIE wypisuj swoich możliwości, NIE zaczynaj od "mogę pomóc w..." — po prostu odpowiadaj
-- Czytaj historię czatu (podaną wyżej) żeby rozumieć kontekst rozmowy
-- Odpowiadaj naturalnie i bezpośrednio na to co jest pytane lub omawiane
-- Krótko gdy wystarczy; szczegółowo gdy ktoś prosi o analizę lub dane
-- Gdy pytają o kampanie/dane — wywołaj narzędzie i daj konkretne liczby""" if is_group_chat else ""}
+{_GROUP_CHAT_RULES if is_group_chat else ""}
 """
 
     tools = [
