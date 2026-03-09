@@ -1058,7 +1058,20 @@ def handle_message_events(body, say, logger):
     user_id      = event.get("user")
 
     # === GŁOSÓWKI: transkrybuj pliki audio → tekst ===
-    _audio_files = [f for f in event.get("files", []) if f.get("mimetype", "").startswith("audio/")]
+    # Slack wysyła pliki jako "files" (array) lub "file" (singular, starszy format).
+    # Natywne głosówki mogą mieć mimetype audio/* lub video/mp4 (Slack clips).
+    _all_event_files = list(event.get("files", []))
+    if event.get("file"):
+        _all_event_files.append(event["file"])
+    _audio_files = [
+        f for f in _all_event_files
+        if (f.get("mimetype", "").startswith("audio/")
+            or f.get("mimetype", "") in ("video/mp4", "video/webm")
+            or f.get("subtype") == "slack_audio"
+            or f.get("filetype") in ("mp4", "m4a", "webm", "ogg"))
+    ]
+    if _all_event_files:
+        logger.info(f"PLIKI W EVENCIE: {[{'id': f.get('id'), 'mimetype': f.get('mimetype'), 'filetype': f.get('filetype'), 'subtype': f.get('subtype')} for f in _all_event_files]}")
     if _audio_files:
         _transcripts = []
         for _af in _audio_files:
