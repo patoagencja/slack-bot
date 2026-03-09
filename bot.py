@@ -1014,12 +1014,15 @@ def handle_message_events(body, say, logger):
     logger.info(body)
     event = body["event"]
 
-    # Helper: zawsze odpowiada w głównym kanale DM (Chat tab), bez thread_ts.
-    # Slack Bolt's say() może automatycznie dodawać thread_ts z eventu,
-    # co powoduje że odpowiedzi trafiają do History zamiast do Chat.
+    # Helper: odpowiada w tym samym wątku co wiadomość użytkownika (thread_ts z eventu).
+    # Dzięki temu odpowiedź trafia do właściwego wątku w History,
+    # zamiast tworzyć nową sesję.
     def _say_dm(text="", **_kw):
         _txt = text or _kw.get("text", "")
-        app.client.chat_postMessage(channel=event.get("channel"), text=_txt)
+        _kw_msg = {"channel": event.get("channel"), "text": _txt}
+        if event.get("thread_ts"):
+            _kw_msg["thread_ts"] = event["thread_ts"]
+        app.client.chat_postMessage(**_kw_msg)
 
     if event.get("channel_type") == "im" and event.get("user") in _ctx.checkin_responses:
         user_id_ci  = event["user"]
