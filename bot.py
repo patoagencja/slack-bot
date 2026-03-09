@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import logging
 import pytz
 from datetime import datetime, timedelta
@@ -26,7 +27,7 @@ from tools.slack_tools import slack_read_channel_tool, slack_read_thread_tool
 # ── jobs ──────────────────────────────────────────────────────────────────────
 from jobs.performance_analysis import _dispatch_ads_command
 from jobs.daily_digest import generate_daily_digest_dre, daily_digest_dre, weekly_learnings_dre
-from jobs.budget_alerts import check_budget_alerts, send_budget_alerts_dre
+from jobs.budget_alerts import check_budget_alerts
 from jobs.weekly_reports import weekly_report_dre, send_weekly_reports
 from jobs.checkin import weekly_checkin, send_checkin_reminders, checkin_summary
 from jobs.team import (
@@ -162,17 +163,21 @@ def daily_summaries():
 
                     summary = anthropic.messages.create(
                         model="claude-sonnet-4-20250514",
-                        max_tokens=500,
+                        max_tokens=300,
                         messages=[{
                             "role": "user",
-                            "content": f"Zrób krótkie podsumowanie (3-5 zdań) najważniejszych tematów z dzisiejszych rozmów na kanale #{channel_name}:\n\n{messages_text}"
+                            "content": (
+                                f"Na podstawie dzisiejszych wiadomości z kanału #{channel_name} napisz BARDZO krótkie podsumowanie (max 2 zdania ogólnie co się działo). "
+                                f"Następnie jeśli były jakieś problemy, alerty, błędy lub rzeczy wymagające uwagi — wylistuj je osobno jako '*Wymaga uwagi:*'. "
+                                f"Jeśli nie było nic alarmującego, nie pisz tej sekcji w ogóle. Nie opisuj każdej kampanii z osobna.\n\n{messages_text}"
+                            )
                         }]
                     )
 
                     summary_text = summary.content[0].text
                     app.client.chat_postMessage(
                         channel=channel_id,
-                        text=f"📊 *Podsumowanie dnia ({today.strftime('%d.%m.%Y')})*\n\n{summary_text}"
+                        text=f"📋 *Podsumowanie dnia — {today.strftime('%d.%m.%Y')}*\n\n{summary_text}"
                     )
 
     except Exception as e:
@@ -232,6 +237,17 @@ def _merge_pending_campaign_params(pending_params: dict, new_params: dict, user_
     pp["targeting"] = _ot
 
     return pp
+
+
+_GROUP_CHAT_RULES = (
+    "Jesteś w grupowym czacie z kilkoma osobami z teamu. Zasady:\n"
+    "- Zachowuj się jak uczestnik rozmowy, nie jak bot który się prezentuje\n"
+    '- NIE wypisuj swoich możliwości, NIE zaczynaj od "mogę pomóc w..." \u2014 po prostu odpowiadaj\n'
+    "- Czytaj historię czatu (podaną wyżej) żeby rozumieć kontekst rozmowy\n"
+    "- Odpowiadaj naturalnie i bezpośrednio na to co jest pytane lub omawiane\n"
+    "- Krótko gdy wystarczy; szczegółowo gdy ktoś prosi o analizę lub dane\n"
+    "- Gdy pytają o kampanie/dane \u2014 wywołaj narzędzie i daj konkretne liczby"
+)
 
 
 # ── app_mention handler ───────────────────────────────────────────────────────
@@ -668,13 +684,7 @@ Analiza → SPEND | PERFORMANCE (ROAS/Conv/CTR) | 🔥 Top performer | ⚠️ Ne
 Pytanie → Direct answer → Context → Actionable next step
 
 {"# TRYB: GRUPOWY CZAT" if is_group_chat else ""}
-{"""Jesteś w grupowym czacie z kilkoma osobami z teamu. Zasady:
-- Zachowuj się jak uczestnik rozmowy, nie jak bot który się prezentuje
-- NIE wypisuj swoich możliwości, NIE zaczynaj od "mogę pomóc w..." — po prostu odpowiadaj
-- Czytaj historię czatu (podaną wyżej) żeby rozumieć kontekst rozmowy
-- Odpowiadaj naturalnie i bezpośrednio na to co jest pytane lub omawiane
-- Krótko gdy wystarczy; szczegółowo gdy ktoś prosi o analizę lub dane
-- Gdy pytają o kampanie/dane — wywołaj narzędzie i daj konkretne liczby""" if is_group_chat else ""}
+{_GROUP_CHAT_RULES if is_group_chat else ""}
 """
 
     tools = [
@@ -888,6 +898,76 @@ def handle_ads_slash(ack, respond, command):
     _dispatch_ads_command(subcmd, channel_id, extra_text, respond)
 
 
+# ── /cleanup slash command ────────────────────────────────────────────────────
+
+@app.command("/cleanup")
+def handle_cleanup_slash(ack, respond, command, client):
+    """Usuwa wszystkie wiadomości bota z bieżącego kanału."""
+    ack()
+    channel_id = command.get("channel_id", "")
+    user_id = command.get("user_id", "")
+    text = (command.get("text") or "").strip()
+
+    # Opcjonalny argument: liczba dni (domyślnie 30)
+    try:
+        days = int(text) if text else 30
+    except ValueError:
+        respond("Użycie: `/cleanup [liczba_dni]` (domyślnie 30)")
+        return
+
+    oldest = str(time.time() - days * 86400)
+
+    respond(f"🧹 Szukam wiadomości bota z ostatnich {days} dni... chwilka.")
+
+    deleted = 0
+    errors = 0
+    cursor = None
+
+    # Pobierz bot_id bota
+    try:
+        auth_info = client.auth_test()
+        bot_id = auth_info.get("bot_id") or auth_info.get("user_id")
+    except Exception as e:
+        respond(f"❌ Nie udało się pobrać auth info: {e}")
+        return
+
+    while True:
+        kwargs = {"channel": channel_id, "limit": 200, "oldest": oldest}
+        if cursor:
+            kwargs["cursor"] = cursor
+        try:
+            resp = client.conversations_history(**kwargs)
+        except Exception as e:
+            logger.error(f"cleanup: conversations_history error: {e}")
+            break
+
+        messages = resp.get("messages", [])
+        for msg in messages:
+            is_bot_msg = (
+                msg.get("bot_id") == bot_id
+                or (msg.get("subtype") in ("bot_message",) and msg.get("bot_id") == bot_id)
+            )
+            if not is_bot_msg:
+                continue
+            try:
+                client.chat_delete(channel=channel_id, ts=msg["ts"])
+                deleted += 1
+                time.sleep(0.3)  # rate limit
+            except Exception as e:
+                logger.warning(f"cleanup: nie udało się usunąć {msg['ts']}: {e}")
+                errors += 1
+
+        if resp.get("has_more") and resp.get("response_metadata", {}).get("next_cursor"):
+            cursor = resp["response_metadata"]["next_cursor"]
+        else:
+            break
+
+    status = f"✅ Usunięto *{deleted}* wiadomości bota"
+    if errors:
+        status += f" _(błędy przy {errors} wiadomościach)_"
+    respond(status)
+
+
 # ── /onboard slash command ────────────────────────────────────────────────────
 
 app.command("/onboard")(handle_onboard_slash)
@@ -954,24 +1034,23 @@ def handle_message_events(body, say, logger):
         elif _ch_id.startswith("G"):
             _ch_type = "group"
     logger.info(f"MSG EVENT → channel_type={_ch_type!r} ch={_ch_id} text={user_message[:60]!r}")
+    # === STANDUP: przechwytuj odpowiedzi z DM ===
+    if _ch_type == "im":
+        try:
+            _st_info = app.client.users_info(user=user_id)
+            _st_name = (_st_info["user"].get("real_name")
+                        or _st_info["user"].get("profile", {}).get("display_name")
+                        or user_id)
+        except Exception:
+            _st_name = user_id
+        if handle_standup_reply(user_id, _st_name, user_message, msg_channel=_ch_id):
+            app.client.chat_postMessage(
+                channel=_ch_id,
+                text="✅ Dzięki! Zapisałem Twoją odpowiedź na standup.",
+            )
+            return
+
     if _ch_type in ("channel", "group", "mpim"):
-        # === STANDUP: przechwytuj odpowiedzi w wątku (przed sprawdzeniem "seba" triggera) ===
-        _thread_ts = event.get("thread_ts")
-        if _thread_ts and CHANNEL_CLIENT_MAP.get(_ch_id) == "dre":
-            try:
-                _st_info = app.client.users_info(user=user_id)
-                _st_name = (_st_info["user"].get("real_name")
-                            or _st_info["user"].get("profile", {}).get("display_name")
-                            or user_id)
-            except Exception:
-                _st_name = user_id
-            if handle_standup_reply(user_id, _st_name, user_message, _thread_ts):
-                app.client.chat_postMessage(
-                    channel=_ch_id,
-                    thread_ts=_thread_ts,
-                    text=f"✅ <@{user_id}> Dzięki! Zapisałem Twoją odpowiedź na standup.",
-                )
-                return
 
         if user_message.startswith("<@"):
             return
@@ -1387,13 +1466,12 @@ logger.info("✅ /standup handler zarejestrowany")
 # ── scheduler ─────────────────────────────────────────────────────────────────
 
 scheduler = BackgroundScheduler(timezone=pytz.timezone('Europe/Warsaw'))
-scheduler.add_job(daily_summaries,           'cron', hour=16, minute=0)
-scheduler.add_job(daily_digest_dre,          'cron', hour=9, minute=0, id='daily_digest_dre')
+scheduler.add_job(daily_summaries,           'cron', day_of_week='mon-fri', hour=16, minute=0)
+scheduler.add_job(daily_digest_dre,          'cron', day_of_week='mon-fri', hour=9, minute=0, id='daily_digest_dre')
 scheduler.add_job(weekly_checkin,            'cron', day_of_week='fri', hour=14, minute=0)
 scheduler.add_job(send_checkin_reminders,    'cron', day_of_week='fri', hour=17, minute=30, id='checkin_reminders')
 scheduler.add_job(checkin_summary,           'cron', day_of_week='mon', hour=9,  minute=0)
 scheduler.add_job(check_budget_alerts,       'cron', minute=0, id='budget_alerts')
-scheduler.add_job(send_budget_alerts_dre,    'cron', hour='9,11,13,15,17,19', minute=0, id='budget_alerts_dre')
 scheduler.add_job(weekly_report_dre,         'cron', day_of_week='fri', hour=16, minute=0, id='weekly_reports')
 scheduler.add_job(weekly_learnings_dre,      'cron', day_of_week='mon,thu', hour=8, minute=30, id='weekly_learnings')
 scheduler.add_job(daily_email_summary_slack, 'cron', hour=16, minute=0, id='daily_email_summary')
