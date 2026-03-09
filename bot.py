@@ -544,7 +544,7 @@ def handle_mention(event, say):
         'nową kampanię', 'nowa kampania', 'utwórz kampanię', 'utworz kampanie',
         'create campaign', 'nowa kampan',
     ]
-    if _has_files or any(kw in msg_lower_m for kw in _campaign_create_kws):
+    if any(kw in msg_lower_m for kw in _campaign_create_kws):
         say(text="⏳ Przetwarzam... zaraz wrócę z preview.", thread_ts=thread_ts)
         try:
             # 1. Download files
