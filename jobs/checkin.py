@@ -7,6 +7,12 @@ from config.constants import TEAM_MEMBERS
 logger = logging.getLogger(__name__)
 
 
+def _open_dm(user_id: str) -> str:
+    """Zwraca ID kanału DM z użytkownikiem (D...) przez conversations_open."""
+    res = _ctx.app.client.conversations_open(users=user_id)
+    return res["channel"]["id"]
+
+
 def weekly_checkin():
     try:
         logger.info("🔥 ROZPOCZYNAM WEEKLY CHECK-IN!")
@@ -18,8 +24,9 @@ def weekly_checkin():
             user_id   = member["slack_id"]
             user_name = member["name"]
             try:
+                dm_ch = _open_dm(user_id)
                 _ctx.app.client.chat_postMessage(
-                    channel=user_id,
+                    channel=dm_ch,
                     text=(
                         f"Cześć {user_name}! 👋 Czas na *weekly check-in*!\n\n"
                         "Odpowiedz na kilka pytań o ten tydzień:\n\n"
@@ -37,7 +44,7 @@ def weekly_checkin():
                 )
                 _ctx.checkin_responses[user_id] = {"messages": [], "done": False, "name": user_name}
                 sent_count += 1
-                logger.info(f"✉️ Check-in wysłany → {user_name} ({user_id})")
+                logger.info(f"✉️ Check-in wysłany → {user_name} ({dm_ch})")
             except Exception as e:
                 logger.error(f"Błąd wysyłki check-in do {user_name}: {e}")
 
@@ -58,8 +65,9 @@ def send_checkin_reminders():
 
     for uid, v in no_answer:
         try:
+            dm_ch = _open_dm(uid)
             _ctx.app.client.chat_postMessage(
-                channel=uid,
+                channel=dm_ch,
                 text=(
                     f"👋 Hej {v['name']}! Widzę że nie miałeś/aś jeszcze czasu na check-in. "
                     "Masz chwilę? 😊 Odpowiedz na pytania i napisz *gotowe* kiedy skończysz."
@@ -71,8 +79,9 @@ def send_checkin_reminders():
 
     for uid, v in in_progress:
         try:
+            dm_ch = _open_dm(uid)
             _ctx.app.client.chat_postMessage(
-                channel=uid,
+                channel=dm_ch,
                 text=(
                     f"✍️ {v['name']}, widzę że zacząłeś/aś check-in — super! "
                     "Napisz *gotowe* żebym oficjalnie zapisał Twoje odpowiedzi 👍"
@@ -135,8 +144,9 @@ def checkin_summary():
             footer_parts.append(f"⏰ Brak odpowiedzi: {', '.join(no_answer)}")
 
         YOUR_USER_ID = "UTE1RN6SJ"
+        dm_ch = _open_dm(YOUR_USER_ID)
         _ctx.app.client.chat_postMessage(
-            channel=YOUR_USER_ID,
+            channel=dm_ch,
             text=(
                 f"📊 *WEEKLY CHECK-IN — PODSUMOWANIE ZESPOŁU*\n\n"
                 f"{summary_text}\n\n"
