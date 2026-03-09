@@ -6,7 +6,7 @@ import pytz
 from datetime import datetime, timedelta
 
 import _ctx
-from config.constants import TEAM_MEMBERS, STANDUP_FILE
+from config.constants import TEAM_MEMBERS, STANDUP_FILE, ZARZAD_CHANNEL_ID
 
 logger = logging.getLogger(__name__)
 
@@ -233,7 +233,7 @@ def _build_standup_summary(session):
 
 
 def post_standup_summary():
-    """9:30 pn-pt — postuje podsumowanie standupu na kanale DRE."""
+    """9:30 pn-pt — wysyła każdemu plan działania DM + summary zarządowe do #zarzadpato."""
     today = _today_standup_key()
     data  = _load_standup()
 
@@ -245,18 +245,68 @@ def post_standup_summary():
         logger.info(f"Standup {today} summary już wysłany.")
         return
 
-    channel = _get_standup_channel()
-    summary = _build_standup_summary(session)
-    try:
-        _ctx.app.client.chat_postMessage(
-            channel=channel,
-            text=summary,
-        )
-        data[today]["summary_posted"] = True
-        _save_standup(data)
-        logger.info(f"✅ Standup summary {today} wysłany na kanał {channel}")
-    except Exception as e:
-        logger.error(f"Błąd post standup summary: {e}")
+    responses  = session.get("responses", {})
+    dm_channels = session.get("dm_channels", {})
+
+    # 1. Każdemu członkowi → spersonalizowany plan działania na dziś (DM)
+    for member in TEAM_MEMBERS:
+        uid      = member["slack_id"]
+        dm_ch    = dm_channels.get(uid)
+        response = responses.get(uid, {}).get("text", "")
+        if not dm_ch:
+            continue
+        if response:
+            plan_text = (
+                f"*Twój plan na dziś — {today}*\n\n"
+                f"{response}\n\n"
+                f"_Powodzenia! Jeśli coś się zmieni, daj znać w wątku._"
+            )
+        else:
+            plan_text = f"_Nie odpowiedziałeś/aś na standup — jeśli masz pytania, pisz tutaj._"
+        try:
+            _ctx.app.client.chat_postMessage(channel=dm_ch, text=plan_text)
+            logger.info(f"✅ Plan DM wysłany do {member['name']}")
+        except Exception as e:
+            logger.error(f"Plan DM error dla {member['name']}: {e}")
+
+    # 2. Summary zarządowe → #zarzadpato
+    if ZARZAD_CHANNEL_ID:
+        dt       = datetime.fromisoformat(session["sent_at"])
+        weekdays = ["poniedziałek","wtorek","środa","czwartek","piątek","sobota","niedziela"]
+        months   = ["","stycznia","lutego","marca","kwietnia","maja","czerwca",
+                    "lipca","sierpnia","września","października","listopada","grudnia"]
+        date_str = f"{weekdays[dt.weekday()]} {dt.day} {months[dt.month]}"
+
+        lines = [f"*Standup — {date_str}*\n"]
+        no_answer = []
+        for member in TEAM_MEMBERS:
+            uid  = member["slack_id"]
+            resp = responses.get(uid, {}).get("text", "")
+            if resp:
+                lines.append(f"*{member['name']}* _({member['role']})_")
+                for line in resp.strip().splitlines():
+                    lines.append(f"   {line}")
+                lines.append("")
+            else:
+                no_answer.append(member["name"])
+
+        if no_answer:
+            lines.append(f"Brak odpowiedzi: {', '.join(no_answer)}")
+        lines.append(f"\n_{len(responses)}/{len(TEAM_MEMBERS)} osób odpowiedziało_")
+
+        try:
+            _ctx.app.client.chat_postMessage(
+                channel=ZARZAD_CHANNEL_ID,
+                text="\n".join(lines),
+            )
+            logger.info(f"✅ Standup summary zarządowy wysłany do #zarzadpato")
+        except Exception as e:
+            logger.error(f"Błąd wysyłki do #zarzadpato: {e}")
+    else:
+        logger.warning("ZARZAD_CHANNEL_ID nie ustawiony — pomijam summary zarządowe")
+
+    data[today]["summary_posted"] = True
+    _save_standup(data)
 
 
 # ── slash command ──────────────────────────────────────────────────────────────
