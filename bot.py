@@ -23,6 +23,7 @@ from tools.meta_ads import meta_ads_tool
 from tools.google_ads import google_ads_tool
 from tools.email_tools import email_tool, get_user_email_config
 from tools.slack_tools import slack_read_channel_tool, slack_read_thread_tool
+from tools.voice_transcription import transcribe_slack_audio
 
 # ── jobs ──────────────────────────────────────────────────────────────────────
 from jobs.performance_analysis import _dispatch_ads_command
@@ -1045,8 +1046,29 @@ def handle_message_events(body, say, logger):
     if event.get("subtype") == "bot_message":
         return
 
-    user_message = event.get("text", "")
+    user_message = event.get("text", "") or ""
     user_id      = event.get("user")
+
+    # === GŁOSÓWKI: transkrybuj pliki audio → tekst ===
+    _audio_files = [f for f in event.get("files", []) if f.get("mimetype", "").startswith("audio/")]
+    if _audio_files:
+        _transcripts = []
+        for _af in _audio_files:
+            _tx = transcribe_slack_audio(_af["id"])
+            if _tx:
+                _transcripts.append(_tx)
+            else:
+                logger.warning(f"Nie udało się transkrybować głosówki {_af.get('id')}")
+        if _transcripts:
+            _voice_text = " ".join(_transcripts)
+            user_message = f"{user_message} {_voice_text}".strip() if user_message else _voice_text
+            logger.info(f"Głosówka → tekst: {user_message[:120]!r}")
+        elif _audio_files and not _transcripts:
+            app.client.chat_postMessage(
+                channel=event.get("channel"),
+                text="🎙️ Otrzymałem głosówkę, ale nie udało mi się jej przetranskrybować. Możesz napisać zamiast tego?",
+            )
+            return
 
     text_lower = user_message.lower()
 
