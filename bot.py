@@ -49,6 +49,7 @@ from tools.campaign_creator import (
     approve_and_launch_campaign, cancel_campaign_draft, validate_campaign_params,
     get_meta_account_id, generate_campaign_expert_analysis,
 )
+from tools.voice_transcription import transcribe_slack_audio, SLACK_AUDIO_MIMES
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1018,6 +1019,24 @@ def handle_message_events(body, say, logger):
 
     user_message = event.get("text", "")
     user_id      = event.get("user")
+
+    # === GŁOSÓWKI: transkrybuj pliki audio z Whisper ===
+    _event_files = event.get("files") or []
+    _audio_files = [f for f in _event_files if f.get("mimetype", "") in SLACK_AUDIO_MIMES
+                    or f.get("subtype") == "slack_audio"]
+    if _audio_files:
+        _transcripts = []
+        for _af in _audio_files:
+            _tr = transcribe_slack_audio(_af["id"])
+            if _tr:
+                _transcripts.append(_tr)
+        if _transcripts:
+            _tr_text = " ".join(_transcripts)
+            user_message = (user_message + " " + _tr_text).strip() if user_message else _tr_text
+
+    # Guard: jeśli wiadomość nadal pusta (sama głosówka bez tekstu i bez transkrypcji) — pomiń
+    if not user_message.strip() and _audio_files:
+        return
 
     text_lower = user_message.lower()
 

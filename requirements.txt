@@ -9,3 +9,5 @@ pyzmail36
 google-ads==29.1.0
 Pillow
 requests
+openai-whisper
+imageio-ffmpeg
