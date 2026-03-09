@@ -168,14 +168,26 @@ def _classify_campaigns(meta_campaigns, google_campaigns):
 
 
 def _build_main_message(date_label, total_spend, total_reach, avg_ctr,
-                         total_conversions, campaign_count, obj_alerts, skipped_count):
+                         total_conversions, campaign_count, obj_alerts, skipped_count,
+                         meta_count=0, google_count=0):
     """Buduje krótką wiadomość główną (widoczna na kanale)."""
     skipped_note = f" _(+{skipped_count} poniżej 20 PLN pominięto)_" if skipped_count > 0 else ""
 
+    if meta_count > 0 and google_count > 0:
+        platform_label = "META + GOOGLE ADS"
+    elif google_count > 0:
+        platform_label = "GOOGLE ADS"
+    else:
+        platform_label = "META ADS"
+
+    platform_breakdown = ""
+    if meta_count > 0 and google_count > 0:
+        platform_breakdown = f" _(Meta: {meta_count} | Google: {google_count})_"
+
     lines = [
-        f"📊 *META ADS – DRE | {date_label}*{skipped_note}",
+        f"📊 *{platform_label} – DRE | {date_label}*{skipped_note}",
         "",
-        f"💰 Spend: *{total_spend:.0f} PLN*",
+        f"💰 Spend: *{total_spend:.0f} PLN*{platform_breakdown}",
         f"👥 Reach: *{total_reach:,}*",
         f"📈 Avg CTR: *{avg_ctr:.2f}%*",
         f"🎯 Konwersje: *{total_conversions}*",
@@ -587,6 +599,8 @@ def generate_daily_digest_dre():
             campaign_count=len(all_campaigns),
             obj_alerts=obj_alerts,
             skipped_count=skipped_count,
+            meta_count=len(meta_campaigns),
+            google_count=len(google_data_combined),
         )
 
         thread_msg = _build_thread_message(
