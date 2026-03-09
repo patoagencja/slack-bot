@@ -23,7 +23,6 @@ from tools.meta_ads import meta_ads_tool
 from tools.google_ads import google_ads_tool
 from tools.email_tools import email_tool, get_user_email_config
 from tools.slack_tools import slack_read_channel_tool, slack_read_thread_tool
-from tools.voice_transcription import transcribe_slack_audio
 
 # ── jobs ──────────────────────────────────────────────────────────────────────
 from jobs.performance_analysis import _dispatch_ads_command
@@ -369,9 +368,8 @@ def handle_mention(event, say):
                         _dm_results.append(f"❌ Błąd planowania do {_member['name']}: {_e}")
                 else:
                     try:
-                        _dm_res = app.client.conversations_open(users=_member["slack_id"])
                         app.client.chat_postMessage(
-                            channel=_dm_res["channel"]["id"],
+                            channel=_member["slack_id"],
                             text=_cmd["message"],
                         )
                         _dm_results.append(f"✅ Wysłano do *{_member['name']}*: _{_cmd['message']}_")
@@ -535,16 +533,13 @@ def handle_mention(event, say):
         return
 
     # === CAMPAIGN CREATION: stwórz/zrób kampanię lub upload kreacji ===
-    _has_files       = any(
-        not f.get("mimetype", "").startswith("audio/")
-        for f in event.get("files", [])
-    )
+    _has_files       = bool(event.get('files'))
     _campaign_create_kws = [
         'stwórz kampanię', 'stworz kampanie', 'zrób kampanię', 'zrob kampanie',
         'nową kampanię', 'nowa kampania', 'utwórz kampanię', 'utworz kampanie',
         'create campaign', 'nowa kampan',
     ]
-    if any(kw in msg_lower_m for kw in _campaign_create_kws):
+    if _has_files or any(kw in msg_lower_m for kw in _campaign_create_kws):
         say(text="⏳ Przetwarzam... zaraz wrócę z preview.", thread_ts=thread_ts)
         try:
             # 1. Download files
@@ -928,13 +923,10 @@ def handle_cleanup_slash(ack, respond, command, client):
     errors = 0
     cursor = None
 
-    # Pobierz bot_id i user_id bota
+    # Pobierz bot_id bota
     try:
         auth_info = client.auth_test()
-        bot_id = auth_info.get("bot_id")        # format B...
-        bot_user_id = auth_info.get("user_id")  # format U...
-        app_id = auth_info.get("app_id")        # format A...
-        logger.info(f"cleanup: bot_id={bot_id} bot_user_id={bot_user_id} app_id={app_id}")
+        bot_id = auth_info.get("bot_id") or auth_info.get("user_id")
     except Exception as e:
         respond(f"❌ Nie udało się pobrać auth info: {e}")
         return
@@ -952,43 +944,18 @@ def handle_cleanup_slash(ack, respond, command, client):
         messages = resp.get("messages", [])
         for msg in messages:
             is_bot_msg = (
-                (bot_id and msg.get("bot_id") == bot_id)
-                or msg.get("user") == bot_user_id
-                or (app_id and msg.get("app_id") == app_id)
+                msg.get("bot_id") == bot_id
+                or (msg.get("subtype") in ("bot_message",) and msg.get("bot_id") == bot_id)
             )
-            logger.debug(f"cleanup msg ts={msg.get('ts')} bot_id={msg.get('bot_id')} user={msg.get('user')} app_id={msg.get('app_id')} -> is_bot={is_bot_msg}")
-            if is_bot_msg:
-                try:
-                    client.chat_delete(channel=channel_id, ts=msg["ts"])
-                    deleted += 1
-                    time.sleep(0.3)
-                except Exception as e:
-                    logger.warning(f"cleanup: nie udało się usunąć {msg['ts']}: {e}")
-                    errors += 1
-
-            # Sprawdź też wiadomości w threadzie
-            if msg.get("reply_count", 0) > 0:
-                try:
-                    thread_resp = client.conversations_replies(
-                        channel=channel_id, ts=msg["ts"], limit=200
-                    )
-                    for reply in thread_resp.get("messages", [])[1:]:  # [0] to parent
-                        is_bot_reply = (
-                            (bot_id and reply.get("bot_id") == bot_id)
-                            or reply.get("user") == bot_user_id
-                            or (app_id and reply.get("app_id") == app_id)
-                        )
-                        if not is_bot_reply:
-                            continue
-                        try:
-                            client.chat_delete(channel=channel_id, ts=reply["ts"])
-                            deleted += 1
-                            time.sleep(0.3)
-                        except Exception as e:
-                            logger.warning(f"cleanup: nie udało się usunąć reply {reply['ts']}: {e}")
-                            errors += 1
-                except Exception as e:
-                    logger.warning(f"cleanup: conversations_replies error dla {msg['ts']}: {e}")
+            if not is_bot_msg:
+                continue
+            try:
+                client.chat_delete(channel=channel_id, ts=msg["ts"])
+                deleted += 1
+                time.sleep(0.3)  # rate limit
+            except Exception as e:
+                logger.warning(f"cleanup: nie udało się usunąć {msg['ts']}: {e}")
+                errors += 1
 
         if resp.get("has_more") and resp.get("response_metadata", {}).get("next_cursor"):
             cursor = resp["response_metadata"]["next_cursor"]
@@ -1014,17 +981,12 @@ def handle_message_events(body, say, logger):
     logger.info(body)
     event = body["event"]
 
-    # Helper: wiadomość użytkownika zostaje w Chat jako top-level,
-    # bot odpowiada jako thread pod tą wiadomością (event['ts']).
-    # Jeśli użytkownik pisze już w wątku, odpowiedź trafia do tego samego wątku.
+    # Helper: zawsze odpowiada w głównym kanale DM (Chat tab), bez thread_ts.
+    # Slack Bolt's say() może automatycznie dodawać thread_ts z eventu,
+    # co powoduje że odpowiedzi trafiają do History zamiast do Chat.
     def _say_dm(text="", **_kw):
         _txt = text or _kw.get("text", "")
-        _thread = event.get("thread_ts") or event["ts"]
-        app.client.chat_postMessage(
-            channel=event.get("channel"),
-            text=_txt,
-            thread_ts=_thread,
-        )
+        app.client.chat_postMessage(channel=event.get("channel"), text=_txt)
 
     if event.get("channel_type") == "im" and event.get("user") in _ctx.checkin_responses:
         user_id_ci  = event["user"]
@@ -1054,42 +1016,8 @@ def handle_message_events(body, say, logger):
     if event.get("subtype") == "bot_message":
         return
 
-    user_message = event.get("text", "") or ""
+    user_message = event.get("text", "")
     user_id      = event.get("user")
-
-    # === GŁOSÓWKI: transkrybuj pliki audio → tekst ===
-    # Slack wysyła pliki jako "files" (array) lub "file" (singular, starszy format).
-    # Natywne głosówki mogą mieć mimetype audio/* lub video/mp4 (Slack clips).
-    _all_event_files = list(event.get("files", []))
-    if event.get("file"):
-        _all_event_files.append(event["file"])
-    _audio_files = [
-        f for f in _all_event_files
-        if (f.get("mimetype", "").startswith("audio/")
-            or f.get("mimetype", "") in ("video/mp4", "video/webm")
-            or f.get("subtype") == "slack_audio"
-            or f.get("filetype") in ("mp4", "m4a", "webm", "ogg"))
-    ]
-    if _all_event_files:
-        logger.info(f"PLIKI W EVENCIE: {[{'id': f.get('id'), 'mimetype': f.get('mimetype'), 'filetype': f.get('filetype'), 'subtype': f.get('subtype')} for f in _all_event_files]}")
-    if _audio_files:
-        _transcripts = []
-        for _af in _audio_files:
-            _tx = transcribe_slack_audio(_af["id"])
-            if _tx:
-                _transcripts.append(_tx)
-            else:
-                logger.warning(f"Nie udało się transkrybować głosówki {_af.get('id')}")
-        if _transcripts:
-            _voice_text = " ".join(_transcripts)
-            user_message = f"{user_message} {_voice_text}".strip() if user_message else _voice_text
-            logger.info(f"Głosówka → tekst: {user_message[:120]!r}")
-        elif _audio_files and not _transcripts:
-            app.client.chat_postMessage(
-                channel=event.get("channel"),
-                text="🎙️ Otrzymałem głosówkę, ale nie udało mi się jej przetranskrybować. Możesz napisać zamiast tego?",
-            )
-            return
 
     text_lower = user_message.lower()
 
@@ -1192,9 +1120,8 @@ def handle_message_events(body, say, logger):
                             _dm_results.append(f"❌ Błąd planowania do {_member['name']}: {_e}")
                     else:
                         try:
-                            _dm_res2 = app.client.conversations_open(users=_member["slack_id"])
                             app.client.chat_postMessage(
-                                channel=_dm_res2["channel"]["id"],
+                                channel=_member["slack_id"],
                                 text=_cmd["message"],
                             )
                             _dm_results.append(f"✅ Wysłano do *{_member['name']}*: _{_cmd['message']}_")
