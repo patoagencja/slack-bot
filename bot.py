@@ -1014,15 +1014,17 @@ def handle_message_events(body, say, logger):
     logger.info(body)
     event = body["event"]
 
-    # Helper: odpowiada w tym samym wątku co wiadomość użytkownika (thread_ts z eventu).
-    # Dzięki temu odpowiedź trafia do właściwego wątku w History,
-    # zamiast tworzyć nową sesję.
+    # Helper: wiadomość użytkownika zostaje w Chat jako top-level,
+    # bot odpowiada jako thread pod tą wiadomością (event['ts']).
+    # Jeśli użytkownik pisze już w wątku, odpowiedź trafia do tego samego wątku.
     def _say_dm(text="", **_kw):
         _txt = text or _kw.get("text", "")
-        _kw_msg = {"channel": event.get("channel"), "text": _txt}
-        if event.get("thread_ts"):
-            _kw_msg["thread_ts"] = event["thread_ts"]
-        app.client.chat_postMessage(**_kw_msg)
+        _thread = event.get("thread_ts") or event["ts"]
+        app.client.chat_postMessage(
+            channel=event.get("channel"),
+            text=_txt,
+            thread_ts=_thread,
+        )
 
     if event.get("channel_type") == "im" and event.get("user") in _ctx.checkin_responses:
         user_id_ci  = event["user"]
