@@ -949,15 +949,37 @@ def handle_cleanup_slash(ack, respond, command, client):
                 (bot_id and msg.get("bot_id") == bot_id)
                 or msg.get("user") == bot_user_id
             )
-            if not is_bot_msg:
-                continue
-            try:
-                client.chat_delete(channel=channel_id, ts=msg["ts"])
-                deleted += 1
-                time.sleep(0.3)  # rate limit
-            except Exception as e:
-                logger.warning(f"cleanup: nie udało się usunąć {msg['ts']}: {e}")
-                errors += 1
+            if is_bot_msg:
+                try:
+                    client.chat_delete(channel=channel_id, ts=msg["ts"])
+                    deleted += 1
+                    time.sleep(0.3)
+                except Exception as e:
+                    logger.warning(f"cleanup: nie udało się usunąć {msg['ts']}: {e}")
+                    errors += 1
+
+            # Sprawdź też wiadomości w threadzie
+            if msg.get("reply_count", 0) > 0:
+                try:
+                    thread_resp = client.conversations_replies(
+                        channel=channel_id, ts=msg["ts"], limit=200
+                    )
+                    for reply in thread_resp.get("messages", [])[1:]:  # [0] to parent
+                        is_bot_reply = (
+                            (bot_id and reply.get("bot_id") == bot_id)
+                            or reply.get("user") == bot_user_id
+                        )
+                        if not is_bot_reply:
+                            continue
+                        try:
+                            client.chat_delete(channel=channel_id, ts=reply["ts"])
+                            deleted += 1
+                            time.sleep(0.3)
+                        except Exception as e:
+                            logger.warning(f"cleanup: nie udało się usunąć reply {reply['ts']}: {e}")
+                            errors += 1
+                except Exception as e:
+                    logger.warning(f"cleanup: conversations_replies error dla {msg['ts']}: {e}")
 
         if resp.get("has_more") and resp.get("response_metadata", {}).get("next_cursor"):
             cursor = resp["response_metadata"]["next_cursor"]
