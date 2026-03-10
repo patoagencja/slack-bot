@@ -13,37 +13,53 @@ logger = logging.getLogger(__name__)
 
 MEDIA_CHANNEL_ID = os.environ.get("MEDIA_CHANNEL_ID", "C0AKFBL2JR1")
 
-AD_NEWS_PROMPT = """Przeszukaj internet i znajdź najnowsze nowości (z ostatnich 7 dni) dotyczące:
-1. Meta Ads (Facebook Ads, Instagram Ads) — nowe funkcje, zmiany w algorytmie, aktualizacje platformy
-2. Google Ads — nowe funkcje, zmiany w kampaniach, aktualizacje
-3. TikTok Ads — nowe formaty, zmiany, aktualizacje platformy
+NEWS_PROMPT = """Przeszukaj internet i przygotuj cotygodniowy raport na Slacka po polsku o najważniejszych nowościach z ostatnich 7 dni w:
+- Meta Ads
+- Google Ads
+- TikTok Ads
+- AI w reklamie
 
-Dla każdej platformy podaj max 3 najważniejsze nowości w formacie:
-• [Krótki tytuł] — [1-2 zdania opisu co się zmieniło i dlaczego to ważne dla reklamodawców]
+Skup się na zmianach, które mają praktyczne znaczenie dla performance marketingu: nowe funkcje, rollouty, testy, zmiany w targetowaniu, atrybucji, automatyzacji, kreacjach, raportowaniu i zastosowaniu AI w reklamie.
 
-Odpowiedz po polsku. Bądź konkretny i praktyczny — skupiaj się na rzeczach, które mają realny wpływ na prowadzenie kampanii."""
+Zasady:
+- korzystaj głównie z oficjalnych źródeł i renomowanych mediów branżowych,
+- nie duplikuj tych samych newsów,
+- nie dodawaj plotek bez potwierdzenia,
+- pokazuj tylko najważniejsze i najbardziej użyteczne informacje,
+- przy każdym newsie podaj: co się zmieniło, dlaczego to ważne, kogo dotyczy, status, rekomendację i źródło,
+- jeśli coś jest tylko testem lub zapowiedzią, zaznacz to wyraźnie.
 
-AI_NEWS_PROMPT = """Przeszukaj internet i znajdź najnowsze nowości (z ostatnich 7 dni) dotyczące:
-- Nowych narzędzi AI dla marketerów i agencji reklamowych
-- Aktualizacji istniejących narzędzi AI (ChatGPT, Claude, Gemini, Midjourney, itp.)
-- Nowych funkcji AI w platformach reklamowych (Meta AI, Google AI features, itp.)
-- Ciekawych zastosowań AI w digital marketingu
+Struktura wiadomości:
+1. Nagłówek z datą
+2. Najważniejsze 3 newsy tygodnia
+3. Meta Ads
+4. Google Ads
+5. TikTok Ads
+6. AI w reklamie
+7. Co warto przetestować
+8. Co to oznacza dla naszego zespołu
+9. Linki do źródeł
 
-Podaj max 4 najważniejsze nowości w formacie:
-• [Nazwa narzędzia / tytuł] — [1-2 zdania opisu co nowego i jak można to wykorzystać w pracy]
+Styl:
+- konkretny,
+- krótki,
+- praktyczny,
+- gotowy do wklejenia na Slacka,
+- bez tabel,
+- bez lania wody.
 
-Odpowiedz po polsku. Skup się na praktycznych zastosowaniach w agencji marketingowej."""
+Zwróć tylko finalną wiadomość na Slack."""
 
 
 def _fetch_with_web_search(prompt: str) -> str:
     """Wywołuje Claude z narzędziem web_search i zwraca skondensowaną odpowiedź."""
     response = _ctx.claude.messages.create(
         model="claude-sonnet-4-5-20251001",
-        max_tokens=1500,
+        max_tokens=4000,
         tools=[{
             "type": "web_search_20250305",
             "name": "web_search",
-            "max_uses": 5,
+            "max_uses": 10,
         }],
         messages=[{"role": "user", "content": prompt}],
     )
@@ -55,34 +71,13 @@ def _fetch_with_web_search(prompt: str) -> str:
 def generate_industry_news_digest() -> str:
     """Generuje tygodniowy digest nowości branżowych."""
     now = datetime.now()
-    week_label = now.strftime("%d.%m.%Y")
-
-    logger.info("🔍 Szukam nowości reklamowych...")
+    logger.info("🔍 Szukam nowości branżowych...")
     try:
-        ad_news = _fetch_with_web_search(AD_NEWS_PROMPT)
+        digest = _fetch_with_web_search(NEWS_PROMPT)
     except Exception as e:
-        logger.error(f"Błąd pobierania nowości reklamowych: {e}")
-        ad_news = "_Nie udało się pobrać nowości reklamowych._"
-
-    logger.info("🤖 Szukam nowości AI...")
-    try:
-        ai_news = _fetch_with_web_search(AI_NEWS_PROMPT)
-    except Exception as e:
-        logger.error(f"Błąd pobierania nowości AI: {e}")
-        ai_news = "_Nie udało się pobrać nowości AI._"
-
-    digest = (
-        f"📰 *Tygodniowy przegląd branżowy* | {week_label}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"📢 *Nowości reklamowe — Meta / Google / TikTok Ads*\n\n"
-        f"{ad_news}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🤖 *AI Tools & Features*\n\n"
-        f"{ai_news}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"_Digest wygenerowany automatycznie przez Sebol • {now.strftime('%d.%m.%Y %H:%M')}_"
-    )
-    return digest
+        logger.error(f"Błąd pobierania nowości: {e}")
+        digest = f"❌ Nie udało się wygenerować digestu: {e}"
+    return digest + f"\n\n_Wygenerowano przez Sebol • {now.strftime('%d.%m.%Y %H:%M')}_"
 
 
 def weekly_industry_news():
