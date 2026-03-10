@@ -11,7 +11,7 @@ import _ctx
 
 logger = logging.getLogger(__name__)
 
-MEDIA_CHANNEL_ID = os.environ.get("MEDIA_CHANNEL_ID", "")
+MEDIA_CHANNEL_ID = os.environ.get("MEDIA_CHANNEL_ID", "C0AKFBL2JR1")
 
 AD_NEWS_PROMPT = """Przeszukaj internet i znajdź najnowsze nowości (z ostatnich 7 dni) dotyczące:
 1. Meta Ads (Facebook Ads, Instagram Ads) — nowe funkcje, zmiany w algorytmie, aktualizacje platformy
