@@ -360,8 +360,9 @@ def handle_mention(event, say):
                 if _cmd["time"]:
                     _ts = _parse_schedule_time(_cmd["time"])
                     try:
+                        _dm_ch = app.client.conversations_open(users=_member["slack_id"])["channel"]["id"]
                         app.client.chat_scheduleMessage(
-                            channel=_member["slack_id"],
+                            channel=_dm_ch,
                             text=_cmd["message"],
                             post_at=_ts,
                         )
@@ -370,8 +371,9 @@ def handle_mention(event, say):
                         _dm_results.append(f"❌ Błąd planowania do {_member['name']}: {_e}")
                 else:
                     try:
+                        _dm_ch = app.client.conversations_open(users=_member["slack_id"])["channel"]["id"]
                         app.client.chat_postMessage(
-                            channel=_member["slack_id"],
+                            channel=_dm_ch,
                             text=_cmd["message"],
                         )
                         _dm_results.append(f"✅ Wysłano do *{_member['name']}*: _{_cmd['message']}_")
@@ -1159,8 +1161,9 @@ def handle_message_events(body, say, logger):
                     if _cmd["time"]:
                         try:
                             _ts = _parse_schedule_time(_cmd["time"])
+                            _dm_ch = app.client.conversations_open(users=_member["slack_id"])["channel"]["id"]
                             app.client.chat_scheduleMessage(
-                                channel=_member["slack_id"],
+                                channel=_dm_ch,
                                 text=_cmd["message"],
                                 post_at=_ts,
                             )
@@ -1169,8 +1172,9 @@ def handle_message_events(body, say, logger):
                             _dm_results.append(f"❌ Błąd planowania do {_member['name']}: {_e}")
                     else:
                         try:
+                            _dm_ch = app.client.conversations_open(users=_member["slack_id"])["channel"]["id"]
                             app.client.chat_postMessage(
-                                channel=_member["slack_id"],
+                                channel=_dm_ch,
                                 text=_cmd["message"],
                             )
                             _dm_results.append(f"✅ Wysłano do *{_member['name']}*: _{_cmd['message']}_")

@@ -25,11 +25,13 @@ def daily_email_summary_slack():
     try:
         logger.info("📧 Generuję Daily Email Summary...")
 
+        dm_channel = _ctx.app.client.conversations_open(users=DANIEL_USER_ID)["channel"]["id"]
+
         result = email_tool(user_id=DANIEL_USER_ID, action="read", limit=50, folder="INBOX")
 
         if "error" in result:
             _ctx.app.client.chat_postMessage(
-                channel=DANIEL_USER_ID,
+                channel=dm_channel,
                 text=f"📧 **Email Summary - {today_str}**\n\n❌ Nie udało się pobrać emaili: {result['error']}"
             )
             return
@@ -66,7 +68,7 @@ def daily_email_summary_slack():
                 for em in unreplied[:5]:
                     days = em.get('days_waiting', '?')
                     no_email_msg += f"  • *{em['subject']}* — od: {em['from']} _(czeka {days}d)_\n"
-            _ctx.app.client.chat_postMessage(channel=DANIEL_USER_ID, text=no_email_msg)
+            _ctx.app.client.chat_postMessage(channel=dm_channel, text=no_email_msg)
             logger.info("✅ Email Summary wysłany (brak ważnych emaili).")
             return
 
@@ -164,14 +166,14 @@ Odpowiedz TYLKO w formacie JSON:
             if newsletter_count:
                 msg += f"_(pominięto {newsletter_count} newsletterów/spamu)_\n"
 
-        _ctx.app.client.chat_postMessage(channel=DANIEL_USER_ID, text=msg)
+        _ctx.app.client.chat_postMessage(channel=dm_channel, text=msg)
         logger.info(f"✅ Email Summary wysłany! ({len(today_emails)} emaili, {len(important)} ważnych)")
 
     except Exception as e:
         logger.error(f"❌ Błąd daily_email_summary_slack: {e}")
         try:
             _ctx.app.client.chat_postMessage(
-                channel=DANIEL_USER_ID,
+                channel=dm_channel,
                 text=f"📧 **Email Summary - {today_str}**\n\n❌ Błąd generowania podsumowania: {str(e)}"
             )
         except Exception:
