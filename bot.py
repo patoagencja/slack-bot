@@ -1041,8 +1041,9 @@ def handle_message_events(body, say, logger):
             _tr_text = " ".join(_transcripts)
             user_message = (user_message + " " + _tr_text).strip() if user_message else _tr_text
 
-    # Guard: jeśli wiadomość nadal pusta (sama głosówka bez tekstu i bez transkrypcji) — pomiń
+    # Guard: jeśli głosówka bez transkrypcji — poinformuj i zakończ
     if not user_message.strip() and _audio_files:
+        _say_dm("🎤 Otrzymałem głosówkę, ale nie udało mi się jej przetranksrybować. Napisz co chciałeś przekazać — odpiszę od razu!")
         return
 
     text_lower = user_message.lower()
