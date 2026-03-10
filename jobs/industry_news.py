@@ -54,7 +54,7 @@ Zwróć tylko finalną wiadomość na Slack."""
 def _fetch_with_web_search(prompt: str) -> str:
     """Wywołuje Claude z narzędziem web_search i zwraca skondensowaną odpowiedź."""
     response = _ctx.claude.messages.create(
-        model="claude-sonnet-4-5-20251001",
+        model="claude-sonnet-4-6",
         max_tokens=4000,
         tools=[{
             "type": "web_search_20250305",
