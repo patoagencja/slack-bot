@@ -43,6 +43,7 @@ from jobs.standup import (
 from jobs.onboarding import (
     _handle_onboarding_done, check_stale_onboardings, handle_onboard_slash,
 )
+from jobs.industry_news import weekly_industry_news
 from tools.campaign_creator import (
     download_slack_files, upload_creative_to_meta, parse_campaign_request,
     build_meta_targeting, create_campaign_draft, generate_campaign_preview,
@@ -900,6 +901,26 @@ def handle_ads_slash(ack, respond, command):
     _dispatch_ads_command(subcmd, channel_id, extra_text, respond)
 
 
+# ── /news slash command ───────────────────────────────────────────────────────
+
+def _news_worker(respond):
+    from jobs.industry_news import generate_industry_news_digest, MEDIA_CHANNEL_ID
+    try:
+        digest = generate_industry_news_digest()
+        app.client.chat_postMessage(channel=MEDIA_CHANNEL_ID, text=digest)
+        respond(f"✅ Digest wysłany na <#{MEDIA_CHANNEL_ID}>!")
+    except Exception as e:
+        respond(f"❌ Błąd: {e}")
+
+@app.command("/news")
+def handle_news_slash(ack, respond, command):
+    """Ręczne wyzwolenie tygodniowego digestu nowości branżowych."""
+    import threading
+    ack()
+    respond("⏳ Szukam nowości... To może zająć chwilę.")
+    threading.Thread(target=_news_worker, args=(respond,), daemon=True).start()
+
+
 # ── /cleanup slash command ────────────────────────────────────────────────────
 
 @app.command("/cleanup")
@@ -1182,6 +1203,12 @@ def handle_message_events(body, say, logger):
         if user_id in _ctx.campaign_pending:
             _dm_pending    = _ctx.campaign_pending[user_id]
             _dm_pend_state = _dm_pending.get("state", "collecting")
+            _dm_cancel_kws = ["anuluj", "stop", "nie", "nieważne", "nieważne", "zapomnij",
+                               "porzuć kampanię", "cancel", "quit", "wyjdź", "wyjdz"]
+            if any(kw in user_message.lower() for kw in _dm_cancel_kws):
+                del _ctx.campaign_pending[user_id]
+                _say_dm(text="❌ Anulowałem tworzenie kampanii. W czym mogę pomóc?")
+                return
             _dm_msg_l      = user_message.lower().strip()
 
             if _dm_pend_state == "expert_review":
@@ -1246,31 +1273,43 @@ def handle_message_events(body, say, logger):
                             _say_dm(text="Napisz *zaczynaj* żeby zbudować kampanię.")
 
             else:  # state == "collecting"
-                _dm_fill = parse_campaign_request(user_message, [])
-                _dm_pending["params"] = _merge_pending_campaign_params(
-                    _dm_pending["params"], _dm_fill, user_message
-                )
-                _dm_still_miss = _check_missing_campaign_fields(
-                    _dm_pending["params"], _dm_pending.get("files", [])
-                )
-                if _dm_still_miss:
-                    _say_dm(
-                        text="❓ Jeszcze brakuje mi:\n\n"
-                             + "\n".join(f"• {q}" for q in _dm_still_miss)
-                             + "\n\nOdpowiedz — zaraz analizuję i zaczynam! 🚀"
-                    )
+                # Jeśli wiadomość nie wygląda jak odpowiedź kampanijna — porzuć stan i odpowiedz normalnie
+                _camp_answer_kws = [
+                    "klient", "budżet", "link", "url", "cel", "target", "wiek", "płeć", "plec",
+                    "lokalizacja", "zainteresowania", "dre", "instax", "m2", "pato", "fuji",
+                    "zł", "pln", "dzień", "dzien", "https://", "http://", "facebook", "instagram",
+                    "google", "traffic", "konwersje", "zasięg", "zasiag", "sprzedaż", "sprzedaz",
+                ]
+                if not any(kw in user_message.lower() for kw in _camp_answer_kws):
+                    del _ctx.campaign_pending[user_id]
+                    # fall through to normal DM handling
                 else:
-                    _dm_pp = _dm_pending["params"]
-                    _dm_pp["daily_budget"]   = float(_dm_pp.get("daily_budget") or 100)
-                    _dm_pp["objective"]      = _dm_pp.get("objective") or "OUTCOME_TRAFFIC"
-                    _dm_pp["call_to_action"] = _dm_pp.get("call_to_action") or "LEARN_MORE"
-                    _dm_pending["state"]     = "expert_review"
-                    _say_dm(text="🧠 Analizuję kampanię jako ekspert...")
-                    _dm_expert_txt = generate_campaign_expert_analysis(_dm_pp, _dm_pending.get("files", []))
-                    if _dm_expert_txt:
-                        _say_dm(text=_dm_expert_txt)
+                    _dm_fill = parse_campaign_request(user_message, [])
+                    _dm_pending["params"] = _merge_pending_campaign_params(
+                        _dm_pending["params"], _dm_fill, user_message
+                    )
+                    _dm_still_miss = _check_missing_campaign_fields(
+                        _dm_pending["params"], _dm_pending.get("files", [])
+                    )
+                    if _dm_still_miss:
+                        _say_dm(
+                            text="❓ Jeszcze brakuje mi:\n\n"
+                                 + "\n".join(f"• {q}" for q in _dm_still_miss)
+                                 + "\n\nOdpowiedz — zaraz analizuję i zaczynam! 🚀"
+                        )
                     else:
-                        _say_dm(text="Mam wszystko! Napisz *zaczynaj* żeby zbudować kampanię.")
+                        _dm_pp = _dm_pending["params"]
+                        _dm_pp["daily_budget"]   = float(_dm_pp.get("daily_budget") or 100)
+                        _dm_pp["objective"]      = _dm_pp.get("objective") or "OUTCOME_TRAFFIC"
+                        _dm_pp["call_to_action"] = _dm_pp.get("call_to_action") or "LEARN_MORE"
+                        _dm_pending["state"]     = "expert_review"
+                        _say_dm(text="🧠 Analizuję kampanię jako ekspert...")
+                        _dm_expert_txt = generate_campaign_expert_analysis(_dm_pp, _dm_pending.get("files", []))
+                        if _dm_expert_txt:
+                            _say_dm(text=_dm_expert_txt)
+                        else:
+                            _say_dm(text="Mam wszystko! Napisz *zaczynaj* żeby zbudować kampanię.")
+                    return
             return
 
         if _dm_approve_m:
@@ -1510,6 +1549,7 @@ scheduler.add_job(send_daily_team_availability, 'cron', day_of_week='mon-fri', h
 scheduler.add_job(check_stale_onboardings,   'cron', hour=9, minute=30, id='stale_onboardings')
 scheduler.add_job(send_standup_questions,    'cron', day_of_week='mon-fri', hour=9, minute=0,  id='standup_send')
 scheduler.add_job(post_standup_summary,      'cron', day_of_week='mon-fri', hour=9, minute=30, id='standup_summary')
+scheduler.add_job(weekly_industry_news,      'cron', day_of_week='mon',     hour=9, minute=0,  id='industry_news')
 scheduler.start()
 
 print(f"✅ Scheduler załadowany! Jobs: {len(scheduler.get_jobs())}")
