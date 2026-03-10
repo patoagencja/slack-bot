@@ -901,6 +901,22 @@ def handle_ads_slash(ack, respond, command):
     _dispatch_ads_command(subcmd, channel_id, extra_text, respond)
 
 
+# ── /news slash command ───────────────────────────────────────────────────────
+
+@app.command("/news")
+def handle_news_slash(ack, respond, command):
+    """Ręczne wyzwolenie tygodniowego digestu nowości branżowych."""
+    ack()
+    respond("⏳ Szukam nowości... To może zająć chwilę.")
+    from jobs.industry_news import generate_industry_news_digest, MEDIA_CHANNEL_ID
+    try:
+        digest = generate_industry_news_digest()
+        app.client.chat_postMessage(channel=MEDIA_CHANNEL_ID, text=digest)
+        respond(f"✅ Digest wysłany na <#{MEDIA_CHANNEL_ID}>!")
+    except Exception as e:
+        respond(f"❌ Błąd: {e}")
+
+
 # ── /cleanup slash command ────────────────────────────────────────────────────
 
 @app.command("/cleanup")
