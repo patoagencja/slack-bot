@@ -1182,6 +1182,12 @@ def handle_message_events(body, say, logger):
         if user_id in _ctx.campaign_pending:
             _dm_pending    = _ctx.campaign_pending[user_id]
             _dm_pend_state = _dm_pending.get("state", "collecting")
+            _dm_cancel_kws = ["anuluj", "stop", "nie", "nieważne", "nieważne", "zapomnij",
+                               "porzuć kampanię", "cancel", "quit", "wyjdź", "wyjdz"]
+            if any(kw in user_message.lower() for kw in _dm_cancel_kws):
+                del _ctx.campaign_pending[user_id]
+                _say_dm(text="❌ Anulowałem tworzenie kampanii. W czym mogę pomóc?")
+                return
             _dm_msg_l      = user_message.lower().strip()
 
             if _dm_pend_state == "expert_review":
@@ -1246,31 +1252,43 @@ def handle_message_events(body, say, logger):
                             _say_dm(text="Napisz *zaczynaj* żeby zbudować kampanię.")
 
             else:  # state == "collecting"
-                _dm_fill = parse_campaign_request(user_message, [])
-                _dm_pending["params"] = _merge_pending_campaign_params(
-                    _dm_pending["params"], _dm_fill, user_message
-                )
-                _dm_still_miss = _check_missing_campaign_fields(
-                    _dm_pending["params"], _dm_pending.get("files", [])
-                )
-                if _dm_still_miss:
-                    _say_dm(
-                        text="❓ Jeszcze brakuje mi:\n\n"
-                             + "\n".join(f"• {q}" for q in _dm_still_miss)
-                             + "\n\nOdpowiedz — zaraz analizuję i zaczynam! 🚀"
-                    )
+                # Jeśli wiadomość nie wygląda jak odpowiedź kampanijna — porzuć stan i odpowiedz normalnie
+                _camp_answer_kws = [
+                    "klient", "budżet", "link", "url", "cel", "target", "wiek", "płeć", "plec",
+                    "lokalizacja", "zainteresowania", "dre", "instax", "m2", "pato", "fuji",
+                    "zł", "pln", "dzień", "dzien", "https://", "http://", "facebook", "instagram",
+                    "google", "traffic", "konwersje", "zasięg", "zasiag", "sprzedaż", "sprzedaz",
+                ]
+                if not any(kw in user_message.lower() for kw in _camp_answer_kws):
+                    del _ctx.campaign_pending[user_id]
+                    # fall through to normal DM handling
                 else:
-                    _dm_pp = _dm_pending["params"]
-                    _dm_pp["daily_budget"]   = float(_dm_pp.get("daily_budget") or 100)
-                    _dm_pp["objective"]      = _dm_pp.get("objective") or "OUTCOME_TRAFFIC"
-                    _dm_pp["call_to_action"] = _dm_pp.get("call_to_action") or "LEARN_MORE"
-                    _dm_pending["state"]     = "expert_review"
-                    _say_dm(text="🧠 Analizuję kampanię jako ekspert...")
-                    _dm_expert_txt = generate_campaign_expert_analysis(_dm_pp, _dm_pending.get("files", []))
-                    if _dm_expert_txt:
-                        _say_dm(text=_dm_expert_txt)
+                    _dm_fill = parse_campaign_request(user_message, [])
+                    _dm_pending["params"] = _merge_pending_campaign_params(
+                        _dm_pending["params"], _dm_fill, user_message
+                    )
+                    _dm_still_miss = _check_missing_campaign_fields(
+                        _dm_pending["params"], _dm_pending.get("files", [])
+                    )
+                    if _dm_still_miss:
+                        _say_dm(
+                            text="❓ Jeszcze brakuje mi:\n\n"
+                                 + "\n".join(f"• {q}" for q in _dm_still_miss)
+                                 + "\n\nOdpowiedz — zaraz analizuję i zaczynam! 🚀"
+                        )
                     else:
-                        _say_dm(text="Mam wszystko! Napisz *zaczynaj* żeby zbudować kampanię.")
+                        _dm_pp = _dm_pending["params"]
+                        _dm_pp["daily_budget"]   = float(_dm_pp.get("daily_budget") or 100)
+                        _dm_pp["objective"]      = _dm_pp.get("objective") or "OUTCOME_TRAFFIC"
+                        _dm_pp["call_to_action"] = _dm_pp.get("call_to_action") or "LEARN_MORE"
+                        _dm_pending["state"]     = "expert_review"
+                        _say_dm(text="🧠 Analizuję kampanię jako ekspert...")
+                        _dm_expert_txt = generate_campaign_expert_analysis(_dm_pp, _dm_pending.get("files", []))
+                        if _dm_expert_txt:
+                            _say_dm(text=_dm_expert_txt)
+                        else:
+                            _say_dm(text="Mam wszystko! Napisz *zaczynaj* żeby zbudować kampanię.")
+                    return
             return
 
         if _dm_approve_m:
