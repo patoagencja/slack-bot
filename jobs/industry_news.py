@@ -31,14 +31,16 @@ Zasady:
 
 Struktura wiadomości:
 1. Nagłówek z datą
-2. Najważniejsze 3 newsy tygodnia
-3. Meta Ads
-4. Google Ads
-5. TikTok Ads
-6. AI w reklamie
-7. Co warto przetestować
-8. Co to oznacza dla naszego zespołu
-9. Linki do źródeł
+2. *SKRÓT TYGODNIA* — ponumerowana lista wszystkich newsów, każdy w jednym zdaniu (samo sedno: co i dlaczego ważne). Bez rozwinięć.
+3. Rozwinięcia w kolejności z listy:
+   - numer i tytuł newsa
+   - co się zmieniło
+   - dlaczego ważne / kogo dotyczy
+   - status (rollout / test / zapowiedź)
+   - rekomendacja
+   - źródło (link)
+4. Co warto przetestować
+5. Co to oznacza dla naszego zespołu
 
 Styl:
 - konkretny,
