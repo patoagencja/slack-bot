@@ -43,6 +43,7 @@ from jobs.standup import (
 from jobs.onboarding import (
     _handle_onboarding_done, check_stale_onboardings, handle_onboard_slash,
 )
+from jobs.industry_news import weekly_industry_news
 from tools.campaign_creator import (
     download_slack_files, upload_creative_to_meta, parse_campaign_request,
     build_meta_targeting, create_campaign_draft, generate_campaign_preview,
@@ -1528,6 +1529,7 @@ scheduler.add_job(send_daily_team_availability, 'cron', day_of_week='mon-fri', h
 scheduler.add_job(check_stale_onboardings,   'cron', hour=9, minute=30, id='stale_onboardings')
 scheduler.add_job(send_standup_questions,    'cron', day_of_week='mon-fri', hour=9, minute=0,  id='standup_send')
 scheduler.add_job(post_standup_summary,      'cron', day_of_week='mon-fri', hour=9, minute=30, id='standup_summary')
+scheduler.add_job(weekly_industry_news,      'cron', day_of_week='mon',     hour=9, minute=0,  id='industry_news')
 scheduler.start()
 
 print(f"✅ Scheduler załadowany! Jobs: {len(scheduler.get_jobs())}")
