@@ -1014,7 +1014,8 @@ def handle_message_events(body, say, logger):
 
     if event.get("bot_id"):
         return
-    if event.get("subtype") == "bot_message":
+    if event.get("subtype") in ("bot_message", "message_changed", "message_replied",
+                                 "message_deleted", "thread_broadcast"):
         return
 
     user_message = event.get("text", "")
@@ -1331,15 +1332,15 @@ def handle_message_events(body, say, logger):
     # Email summary trigger — wyniki zawsze na DM
     if any(t in text_lower for t in ["test email", "email test", "email summary"]):
         logger.info(f"📧 Email trigger od {user_id}, channel_type={event.get('channel_type')}")
-        say("📧 Uruchamiam Email Summary... wyślę Ci to na DM.")
+        _say_dm("📧 Uruchamiam Email Summary... zaraz wrzucę tutaj.")
         try:
             email_config = get_user_email_config("UTE1RN6SJ")
             if not email_config:
-                say("❌ Brak konfiguracji email (`EMAIL_ACCOUNTS`). Napisz do admina.")
+                _say_dm("❌ Brak konfiguracji email (`EMAIL_ACCOUNTS`). Napisz do admina.")
                 return
             daily_email_summary_slack()
         except Exception as e:
-            say(f"❌ Błąd: `{str(e)}`")
+            _say_dm(f"❌ Błąd: `{str(e)}`")
             logger.error(f"Błąd test email trigger: {e}")
         return
 
