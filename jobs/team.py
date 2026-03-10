@@ -156,20 +156,22 @@ def remove_availability_entries(user_id: str, date_from: str = None, date_to: st
     return removed
 
 
-def _classify_absence_message(text: str, reporter_name: str):
+def _classify_absence_message(text: str, reporter_name: str, msg_date: str = None):
     """
     Klasyfikuje wiadomość o nieobecności — zwraca absent_person + entries.
     Używana przez sync_availability_from_slack do wykrycia czy wiadomość
     dotyczy nadawcy czy kogoś innego (np. 'Piotrka nie będzie w piątek').
+    msg_date: data wiadomości w formacie YYYY-MM-DD (używana jako kontekst "dziś" przy parsowaniu)
     """
-    today_str     = datetime.now().strftime('%Y-%m-%d')
-    today_weekday = datetime.now().strftime('%A')
-    current_year  = datetime.now().year
+    ref_date      = datetime.strptime(msg_date, '%Y-%m-%d') if msg_date else datetime.now()
+    today_str     = ref_date.strftime('%Y-%m-%d')
+    today_weekday = ref_date.strftime('%A')
+    current_year  = ref_date.year
 
     prompt = f"""Analizujesz wiadomość od pracownika "{reporter_name}".
 
 WIADOMOŚĆ: "{text}"
-DZIŚ: {today_str} ({today_weekday}), rok {current_year}
+DZIŚ (data wysłania wiadomości): {today_str} ({today_weekday}), rok {current_year}
 
 CZY nieobecność dotyczy nadawcy ({reporter_name}) czy INNEJ osoby?
 
@@ -179,7 +181,7 @@ Przykłady (nadawca = "Daniel"):
   "Kasia ma urlop 5-10 marca"   → absent_person: "Kasia"
 
 Typy: absent / morning_only / afternoon_only / late_start / early_end / remote / partial
-Zakresy dat → wygeneruj każdy dzień roboczy (pomiń sob/niedz).
+Zakresy dat → wygeneruj KAŻDY dzień roboczy z zakresu (pomiń sob/niedz), nawet jeśli data jest w przeszłości.
 Rok domyślny: {current_year}.
 
 Odpowiedz TYLKO JSON:
@@ -192,7 +194,7 @@ Jeśli brak konkretnych dat: {{"absent_person": null, "absence_entries": []}}"""
     try:
         resp = _ctx.claude.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=400,
+            max_tokens=800,
             messages=[{"role": "user", "content": prompt}]
         )
         raw = resp.content[0].text.strip()
@@ -211,14 +213,14 @@ def sync_availability_from_slack():
     Poprawnie obsługuje wiadomości o nieobecności innej osoby (np. Danio pisze
     'Piotrka nie będzie' → zapisuje pod Piotrkiem, nie Danio).
     """
-    cutoff_ts = str((datetime.now() - timedelta(days=14)).timestamp())
+    cutoff_ts = str((datetime.now() - timedelta(days=30)).timestamp())
     synced_total = 0
     for member in TEAM_MEMBERS:
         try:
             dm = _ctx.app.client.conversations_open(users=member["slack_id"])
             channel_id = dm["channel"]["id"]
             history = _ctx.app.client.conversations_history(
-                channel=channel_id, oldest=cutoff_ts, limit=40
+                channel=channel_id, oldest=cutoff_ts, limit=100
             )
             for msg in history.get("messages", []):
                 if msg.get("bot_id") or msg.get("subtype"):
@@ -229,7 +231,10 @@ def sync_availability_from_slack():
                 if not any(kw in text.lower() for kw in ABSENCE_KEYWORDS):
                     continue
 
-                classified = _classify_absence_message(text, member["name"])
+                # Użyj daty wiadomości jako kontekstu, żeby relative daty ("jutro") były poprawne
+                msg_ts   = msg.get("ts")
+                msg_date = datetime.fromtimestamp(float(msg_ts)).strftime('%Y-%m-%d') if msg_ts else None
+                classified = _classify_absence_message(text, member["name"], msg_date=msg_date)
                 if not classified:
                     continue
                 entries = classified.get("absence_entries", [])
