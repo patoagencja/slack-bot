@@ -1168,7 +1168,10 @@ def handle_message_events(body, say, logger):
         ]
         _dm_approve_m = re.search(r'(zatwierdź|zatwierdz|uruchom)\s+kampanię\s+(\d+)', _dm_text_l)
         _dm_cancel_m  = re.search(r'(anuluj|usuń|usun|skasuj)\s+kampanię\s+(\d+)', _dm_text_l)
-        _dm_has_files = bool(event.get('files'))
+        _dm_has_files = any(
+            f.get("mimetype", "") not in SLACK_AUDIO_MIMES and f.get("subtype") != "slack_audio"
+            for f in event.get("files", [])
+        )
 
         # === PENDING CAMPAIGN (DM): state machine (collecting → expert_review → build) ===
         _DM_CONFIRM_KWS = [
