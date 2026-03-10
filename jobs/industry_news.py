@@ -13,44 +13,27 @@ logger = logging.getLogger(__name__)
 
 MEDIA_CHANNEL_ID = os.environ.get("MEDIA_CHANNEL_ID", "C0AKFBL2JR1")
 
-NEWS_PROMPT = """Przeszukaj internet i przygotuj cotygodniowy raport na Slacka po polsku o najważniejszych nowościach z ostatnich 7 dni w:
-- Meta Ads
-- Google Ads
-- TikTok Ads
-- AI w reklamie
+NEWS_PROMPT = """Przeszukaj internet i znajdź najważniejsze nowości z ostatnich 7 dni w: Meta Ads, Google Ads, TikTok Ads, AI w reklamie.
 
-Skup się na zmianach, które mają praktyczne znaczenie dla performance marketingu: nowe funkcje, rollouty, testy, zmiany w targetowaniu, atrybucji, automatyzacji, kreacjach, raportowaniu i zastosowaniu AI w reklamie.
+Skup się na zmianach praktycznych dla performance marketingu: nowe funkcje, rollouty, testy, zmiany w targetowaniu, atrybucji, automatyzacji, kreacjach.
 
 Zasady:
-- korzystaj głównie z oficjalnych źródeł i renomowanych mediów branżowych,
-- nie duplikuj tych samych newsów,
-- nie dodawaj plotek bez potwierdzenia,
-- pokazuj tylko najważniejsze i najbardziej użyteczne informacje,
-- przy każdym newsie podaj: co się zmieniło, dlaczego to ważne, kogo dotyczy, status, rekomendację i źródło,
-- jeśli coś jest tylko testem lub zapowiedzią, zaznacz to wyraźnie.
+- tylko oficjalne źródła i renomowane media branżowe,
+- nie duplikuj newsów,
+- tylko potwierdzone informacje (testy/zapowiedzi oznacz w treści punktu),
+- maksymalnie 8 punktów.
 
-Struktura wiadomości:
-1. Nagłówek z datą
-2. *SKRÓT TYGODNIA* — ponumerowana lista wszystkich newsów, każdy w jednym zdaniu (samo sedno: co i dlaczego ważne). Bez rozwinięć.
-3. Rozwinięcia w kolejności z listy:
-   - numer i tytuł newsa
-   - co się zmieniło
-   - dlaczego ważne / kogo dotyczy
-   - status (rollout / test / zapowiedź)
-   - rekomendacja
-   - źródło (link)
-4. Co warto przetestować
-5. Co to oznacza dla naszego zespołu
+Format wiadomości:
+📰 Nowości branżowe — {data}
 
-Styl:
-- konkretny,
-- krótki,
-- praktyczny,
-- gotowy do wklejenia na Slacka,
-- bez tabel,
-- bez lania wody.
+1. *Platforma* — co się zmieniło i dlaczego ważne. (test/rollout/zapowiedź jeśli dotyczy)
+2. ...
 
-Zwróć tylko finalną wiadomość na Slack."""
+🔗 Źródła:
+• link1
+• link2
+
+Zwróć WYŁĄCZNIE gotową wiadomość na Slacka, bez żadnego wstępu, komentarzy ani wprowadzenia."""
 
 
 def _fetch_with_web_search(prompt: str) -> str:
