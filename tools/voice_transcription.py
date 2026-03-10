@@ -1,10 +1,10 @@
-"""Transkrypcja wiadomości głosowych ze Slacka przez lokalny model Whisper (bez API)."""
-import io
+"""Transkrypcja wiadomości głosowych ze Slacka przez OpenAI Whisper API."""
 import logging
 import os
 import tempfile
 
 import requests
+from openai import OpenAI
 
 import _ctx
 
@@ -40,36 +40,19 @@ _MIME_TO_EXT = {
     "video/webm":  "webm",
 }
 
-_whisper_model = None
-_WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "tiny")
+_openai_client = None
 
 
-def _setup_ffmpeg():
-    """Ustaw ścieżkę do ffmpeg z imageio-ffmpeg (działa bez apt-get)."""
-    try:
-        import imageio_ffmpeg
-        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-        ffmpeg_dir = os.path.dirname(ffmpeg_exe)
-        os.environ["PATH"] = ffmpeg_dir + ":" + os.environ.get("PATH", "")
-        logger.info(f"ffmpeg z imageio-ffmpeg: {ffmpeg_exe}")
-    except Exception as e:
-        logger.warning(f"imageio-ffmpeg niedostępny, używam systemowego ffmpeg: {e}")
-
-
-def _get_whisper_model():
-    global _whisper_model
-    if _whisper_model is None:
-        _setup_ffmpeg()
-        import whisper
-        logger.info(f"Ładowanie lokalnego modelu Whisper '{_WHISPER_MODEL_SIZE}'...")
-        _whisper_model = whisper.load_model(_WHISPER_MODEL_SIZE)
-        logger.info("Model Whisper załadowany.")
-    return _whisper_model
+def _get_openai_client():
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    return _openai_client
 
 
 def transcribe_slack_audio(file_id: str) -> str | None:
     """
-    Pobiera plik audio ze Slacka i transkrybuje go lokalnym modelem Whisper.
+    Pobiera plik audio ze Slacka i transkrybuje go przez OpenAI Whisper API.
 
     Returns:
         Tekst transkrypcji lub None jeśli to nie audio / wystąpił błąd.
@@ -99,10 +82,15 @@ def transcribe_slack_audio(file_id: str) -> str | None:
             tmp_path = tmp.name
 
         try:
-            model = _get_whisper_model()
-            result = model.transcribe(tmp_path, language="pl")
-            transcript = result["text"].strip()
-            logger.info(f"Whisper transkrypcja gotowa ({len(transcript)} znaków): {transcript[:120]!r}")
+            client = _get_openai_client()
+            with open(tmp_path, "rb") as audio_file:
+                result = client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio_file,
+                    language="pl",
+                )
+            transcript = result.text.strip()
+            logger.info(f"OpenAI Whisper transkrypcja gotowa ({len(transcript)} znaków): {transcript[:120]!r}")
             return transcript
         finally:
             os.unlink(tmp_path)

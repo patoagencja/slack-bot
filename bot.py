@@ -647,6 +647,7 @@ Sebol — asystent agencji marketingowej Pato. Pomagasz w WSZYSTKIM co dotyczy c
 🧠 *Daily Digest* — codziennie o 9:00 raport DRE z benchmarkami i smart rekomendacjami
 📈 *Weekly Learnings* — co poniedziałek i czwartek o 8:30 analiza wzorców kampanii
 ⚡ *Alerty budżetowe* — pilnujesz żeby kampanie nie przebijały budżetu
+🎤 *Głosówki* — rozumiesz wiadomości głosowe ze Slacka (transkrybuję je automatycznie)
 💬 *Ogólna pomoc* — pytania, drafty, pomysły, wszystko co potrzebuje zespół
 
 # GDY KTOŚ SIĘ WITA / PYTA CO UMIESZ
@@ -982,12 +983,18 @@ def handle_message_events(body, say, logger):
     logger.info(body)
     event = body["event"]
 
-    # Helper: zawsze odpowiada w głównym kanale DM (Chat tab), bez thread_ts.
-    # Slack Bolt's say() może automatycznie dodawać thread_ts z eventu,
-    # co powoduje że odpowiedzi trafiają do History zamiast do Chat.
+    # Helper: odpowiada w tym samym wątku co wiadomość usera.
+    # thread_ts = wątek istniejący LUB ts bieżącej wiadomości (tworzy nowy wątek).
+    # Dzięki temu odpowiedź bota jest zawsze w tej samej konwersacji (Chat),
+    # a nie jako osobny wpis w History.
+    _dm_thread_ts = event.get("thread_ts") or event.get("ts")
     def _say_dm(text="", **_kw):
         _txt = text or _kw.get("text", "")
-        app.client.chat_postMessage(channel=event.get("channel"), text=_txt)
+        app.client.chat_postMessage(
+            channel=event.get("channel"),
+            text=_txt,
+            thread_ts=_dm_thread_ts,
+        )
 
     if event.get("channel_type") == "im" and event.get("user") in _ctx.checkin_responses:
         user_id_ci  = event["user"]
@@ -1014,7 +1021,8 @@ def handle_message_events(body, say, logger):
 
     if event.get("bot_id"):
         return
-    if event.get("subtype") == "bot_message":
+    if event.get("subtype") in ("bot_message", "message_changed", "message_replied",
+                                 "message_deleted", "thread_broadcast"):
         return
 
     user_message = event.get("text", "")
@@ -1034,8 +1042,9 @@ def handle_message_events(body, say, logger):
             _tr_text = " ".join(_transcripts)
             user_message = (user_message + " " + _tr_text).strip() if user_message else _tr_text
 
-    # Guard: jeśli wiadomość nadal pusta (sama głosówka bez tekstu i bez transkrypcji) — pomiń
+    # Guard: jeśli głosówka bez transkrypcji — poinformuj i zakończ
     if not user_message.strip() and _audio_files:
+        _say_dm("🎤 Otrzymałem głosówkę, ale nie udało mi się jej przetranksrybować. Napisz co chciałeś przekazać — odpiszę od razu!")
         return
 
     text_lower = user_message.lower()
@@ -1331,15 +1340,15 @@ def handle_message_events(body, say, logger):
     # Email summary trigger — wyniki zawsze na DM
     if any(t in text_lower for t in ["test email", "email test", "email summary"]):
         logger.info(f"📧 Email trigger od {user_id}, channel_type={event.get('channel_type')}")
-        say("📧 Uruchamiam Email Summary... wyślę Ci to na DM.")
+        _say_dm("📧 Uruchamiam Email Summary... zaraz wrzucę tutaj.")
         try:
             email_config = get_user_email_config("UTE1RN6SJ")
             if not email_config:
-                say("❌ Brak konfiguracji email (`EMAIL_ACCOUNTS`). Napisz do admina.")
+                _say_dm("❌ Brak konfiguracji email (`EMAIL_ACCOUNTS`). Napisz do admina.")
                 return
             daily_email_summary_slack()
         except Exception as e:
-            say(f"❌ Błąd: `{str(e)}`")
+            _say_dm(f"❌ Błąd: `{str(e)}`")
             logger.error(f"Błąd test email trigger: {e}")
         return
 

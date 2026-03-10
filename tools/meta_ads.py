@@ -67,7 +67,8 @@ def meta_ads_tool(date_from=None, date_to=None, level="campaign", campaign_name=
                   adset_name=None, ad_name=None, metrics=None, breakdown=None,
                   limit=None, client_name=None):
     """Pobiera dane z Meta Ads API na różnych poziomach dla różnych klientów."""
-    accounts_json = os.environ.get("META_AD_ACCOUNTS", "{}")
+    # Wspieramy oba env vary: META_AD_ACCOUNTS i META_AD_ACCOUNT_ID (fallback)
+    accounts_json = os.environ.get("META_AD_ACCOUNTS") or os.environ.get("META_AD_ACCOUNT_ID", "{}")
     try:
         accounts_map = json.loads(accounts_json)
     except json.JSONDecodeError:
