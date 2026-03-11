@@ -24,3 +24,6 @@ campaign_pending = {}
 # Threads where bot has participated: set of (channel, thread_ts) tuples
 # Allows bot to respond in threads without explicit mention
 bot_threads: set = set()
+
+# /kampania wizard state: user_id → {step, answers, files, source_channel}
+campaign_wizard: dict = {}

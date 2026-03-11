@@ -1181,6 +1181,14 @@ def handle_message_events(body, say, logger):
         elif _ch_id.startswith("G"):
             _ch_type = "group"
     logger.info(f"MSG EVENT → channel_type={_ch_type!r} ch={_ch_id} text={user_message[:60]!r}")
+
+    # === /kampania WIZARD: obsłuż odpowiedzi przed wszystkim innym ===
+    if _ch_type == "im" and user_id in _ctx.campaign_wizard:
+        def _wiz_say(text):
+            app.client.chat_postMessage(channel=_ch_id, text=text)
+        if _handle_campaign_wizard(user_id, user_message, event.get("files") or [], _wiz_say):
+            return
+
     # === STANDUP: przechwytuj odpowiedzi z DM ===
     if _ch_type == "im":
         try:
@@ -1679,6 +1687,274 @@ def handle_message_events(body, say, logger):
 
 app.command("/standup")(handle_standup_slash)
 logger.info("✅ /standup handler zarejestrowany")
+
+
+# ── /kampania slash command ───────────────────────────────────────────────────
+
+WIZARD_STEPS = [
+    {
+        "key": "klient",
+        "q": (
+            "🏢 *Krok 1/9 — Klient*\n"
+            "Dla kogo kampania?\n"
+            "`dre` / `instax` / `m2` / `pato`"
+        ),
+    },
+    {
+        "key": "cel",
+        "q": (
+            "🎯 *Krok 2/9 — Cel kampanii*\n"
+            "`traffic` / `sprzedaż` / `leady` / `rozpoznawalność`"
+        ),
+    },
+    {
+        "key": "budzet",
+        "q": (
+            "💰 *Krok 3/9 — Budżet dzienny*\n"
+            "Ile PLN/dzień? (np. `50` lub `200`)"
+        ),
+    },
+    {
+        "key": "url",
+        "q": (
+            "🔗 *Krok 4/9 — URL docelowy*\n"
+            "Adres strony (np. `dre.eu`) lub napisz `bez linku`"
+        ),
+    },
+    {
+        "key": "czas",
+        "q": (
+            "📅 *Krok 5/9 — Czas trwania*\n"
+            "np. `7 dni` / `14 dni` / `12-20 marca`"
+        ),
+    },
+    {
+        "key": "target",
+        "q": (
+            "👥 *Krok 6/9 — Grupa docelowa*\n"
+            "Wiek, płeć, zainteresowania\n"
+            "np. `kobiety 25-40, zainteresowania: wnętrza, dom`"
+        ),
+    },
+    {
+        "key": "tekst",
+        "q": (
+            "✍️ *Krok 7/9 — Tekst reklamy*\n"
+            "Headline i copy\n"
+            "np. `Nowe drzwi DRE — styl i jakość. Sprawdź ofertę!`"
+        ),
+    },
+    {
+        "key": "kreacje",
+        "q": (
+            "🖼️ *Krok 8/9 — Kreacje*\n"
+            "Wyślij pliki graficzne/wideo LUB napisz:\n"
+            "`pobierz z netu` — pobiorę ze strony klienta\n"
+            "`bez kreacji` — tylko tekst"
+        ),
+    },
+    {
+        "key": "placements",
+        "q": (
+            "📱 *Krok 9/9 — Placements*\n"
+            "`automatic` / `facebook` / `instagram` / `oba`"
+        ),
+    },
+]
+
+
+def _wizard_send_dm(user_id: str, text: str):
+    """Open DM with user and send a message."""
+    try:
+        dm = app.client.conversations_open(users=user_id)
+        dm_channel = dm["channel"]["id"]
+        app.client.chat_postMessage(channel=dm_channel, text=text)
+        return dm_channel
+    except Exception as e:
+        logger.error("_wizard_send_dm error: %s", e)
+        return None
+
+
+def _wizard_summary(answers: dict) -> str:
+    labels = {
+        "klient": "Klient", "cel": "Cel", "budzet": "Budżet dzienny",
+        "url": "URL", "czas": "Czas", "target": "Grupa docelowa",
+        "tekst": "Tekst", "kreacje": "Kreacje", "placements": "Placements",
+    }
+    lines = [f"• *{labels.get(k, k)}:* {v}" for k, v in answers.items()]
+    return "\n".join(lines)
+
+
+@app.command("/kampania")
+def handle_kampania_slash(ack, command, logger):
+    ack()
+    user_id = command["user_id"]
+    source_channel = command.get("channel_id", "")
+
+    # Start wizard state
+    _ctx.campaign_wizard[user_id] = {
+        "step": 0,
+        "answers": {},
+        "files": [],
+        "source_channel": source_channel,
+    }
+
+    intro = (
+        "🚀 *Tworzymy nową kampanię Meta Ads!*\n"
+        "Odpowiedz na 9 pytań — buduję kampanię od razu po ostatnim.\n"
+        "Napisz `anuluj` żeby przerwać w dowolnym momencie.\n\n"
+        + WIZARD_STEPS[0]["q"]
+    )
+    _wizard_send_dm(user_id, intro)
+    logger.info("/kampania started by %s", user_id)
+
+
+logger.info("✅ /kampania handler zarejestrowany")
+
+
+def _handle_campaign_wizard(user_id: str, user_message: str, files: list, say_fn) -> bool:
+    """
+    Handle a DM message for a user who is in the /kampania wizard.
+    Returns True if message was consumed by the wizard, False otherwise.
+    """
+    if user_id not in _ctx.campaign_wizard:
+        return False
+
+    wizard = _ctx.campaign_wizard[user_id]
+    step_idx = wizard["step"]
+
+    # Anulowanie
+    if user_message.strip().lower() in ("anuluj", "cancel", "stop", "przerwij"):
+        del _ctx.campaign_wizard[user_id]
+        say_fn("❌ Tworzenie kampanii anulowane.")
+        return True
+
+    current_step = WIZARD_STEPS[step_idx]
+    key = current_step["key"]
+
+    # Kreacje — obsłuż pliki
+    if key == "kreacje" and files:
+        downloaded = download_slack_files([f["id"] for f in files])
+        wizard["files"].extend(downloaded)
+        wizard["answers"][key] = f"{len(downloaded)} plik(i) załączone"
+    else:
+        wizard["answers"][key] = user_message.strip()
+
+    next_step = step_idx + 1
+
+    # Wszystkie kroki wypełnione → podsumowanie i budowanie
+    if next_step >= len(WIZARD_STEPS):
+        del _ctx.campaign_wizard[user_id]
+        summary = _wizard_summary(wizard["answers"])
+        say_fn(
+            f"✅ *Mam wszystko! Oto podsumowanie:*\n\n{summary}\n\n"
+            "⏳ Buduję kampanię..."
+        )
+        # Build campaign params from wizard answers
+        _build_campaign_from_wizard(user_id, wizard, say_fn)
+        return True
+
+    # Następne pytanie
+    wizard["step"] = next_step
+    say_fn(WIZARD_STEPS[next_step]["q"])
+    return True
+
+
+def _build_campaign_from_wizard(user_id: str, wizard: dict, say_fn):
+    """Convert wizard answers to campaign params and create the campaign."""
+    a = wizard["answers"]
+
+    # Map answers → campaign params
+    _obj_map = {
+        "traffic": "OUTCOME_TRAFFIC",
+        "sprzedaż": "OUTCOME_SALES",
+        "sprzedaz": "OUTCOME_SALES",
+        "leady": "OUTCOME_LEADS",
+        "rozpoznawalność": "OUTCOME_AWARENESS",
+        "rozpoznawalnosc": "OUTCOME_AWARENESS",
+        "awareness": "OUTCOME_AWARENESS",
+    }
+    _placement_map = {
+        "facebook": ["facebook_newsfeed"],
+        "instagram": ["instagram_stream"],
+        "oba": ["facebook_newsfeed", "instagram_stream"],
+        "automatic": [],
+    }
+
+    # Parse budget
+    _budzet_raw = re.sub(r"[^\d.,]", "", a.get("budzet", "50")).replace(",", ".")
+    try:
+        daily_budget = float(_budzet_raw)
+    except ValueError:
+        daily_budget = 50.0
+
+    # Parse duration / dates
+    _czas = a.get("czas", "7 dni").lower()
+    _start = datetime.now().strftime("%Y-%m-%d")
+    _days_match = re.search(r"(\d+)\s*dni", _czas)
+    if _days_match:
+        _end = (datetime.now() + timedelta(days=int(_days_match.group(1)))).strftime("%Y-%m-%d")
+    else:
+        _date_match = re.findall(r"(\d{1,2})[.\-\s]+(\d{1,2})(?:[.\-\s]+(\d{4}))?", _czas)
+        if len(_date_match) >= 2:
+            _m = datetime.now().month
+            _y = datetime.now().year
+            try:
+                _start = datetime(_y, int(_date_match[0][1]) or _m, int(_date_match[0][0])).strftime("%Y-%m-%d")
+                _end   = datetime(_y, int(_date_match[1][1]) or _m, int(_date_match[1][0])).strftime("%Y-%m-%d")
+            except Exception:
+                _end = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+        else:
+            _end = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+
+    params = {
+        "client_name":    a.get("klient", "dre"),
+        "objective":      _obj_map.get(a.get("cel", "traffic").lower(), "OUTCOME_TRAFFIC"),
+        "daily_budget":   daily_budget,
+        "destination_url": a.get("url", ""),
+        "start_date":     _start,
+        "end_date":       _end,
+        "targeting":      {"text": a.get("target", "")},
+        "ad_text":        a.get("tekst", ""),
+        "campaign_name":  f"Kampania {a.get('klient','').upper()} — {datetime.now().strftime('%d.%m.%Y')}",
+        "placements":     _placement_map.get(a.get("placements", "automatic").lower(), []),
+        "call_to_action": "LEARN_MORE",
+    }
+
+    try:
+        account_id = get_meta_account_id(params["client_name"])
+        creatives  = wizard["files"]
+
+        if a.get("kreacje", "").lower() == "pobierz z netu" and params.get("destination_url"):
+            say_fn("🌐 Pobieram kreacje ze strony klienta...")
+            # Use parse_campaign_request to handle web scraping via existing flow
+            _extra = parse_campaign_request(
+                f"pobierz kreacje z {params['destination_url']}", []
+            )
+            if _extra.get("scraped_creatives"):
+                creatives = _extra["scraped_creatives"]
+
+        targeting = build_meta_targeting(params.get("targeting") or {})
+
+        if creatives:
+            say_fn(f"🎨 Uploaduję {len(creatives)} kreacji do Meta...")
+            uploaded = []
+            for name, data, mime in creatives:
+                try:
+                    cr = upload_creative_to_meta(account_id, data, mime, name)
+                    uploaded.append(cr)
+                except Exception as e:
+                    say_fn(f"⚠️ Nie udało się uploadować `{name}`: {e}")
+            creatives = uploaded
+
+        say_fn("📋 Tworzę szkic kampanii w Meta Ads...")
+        draft_ids = create_campaign_draft(account_id, params, creatives, targeting)
+        preview   = generate_campaign_preview(params, params.get("targeting") or {}, len(creatives), draft_ids)
+        say_fn(preview)
+
+    except Exception as e:
+        logger.error("_build_campaign_from_wizard error: %s", e)
+        say_fn(f"❌ Błąd tworzenia kampanii: {e}")
 
 
 # ── scheduler ─────────────────────────────────────────────────────────────────
