@@ -10,3 +10,4 @@ google-ads==29.1.0
 Pillow
 requests
 openai
+google-analytics-data
