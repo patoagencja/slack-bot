@@ -538,7 +538,11 @@ def handle_mention(event, say):
         return
 
     # === CAMPAIGN CREATION: stwórz/zrób kampanię lub upload kreacji ===
-    _has_files       = bool(event.get('files'))
+    # Wyklucz pliki audio (głosówki) — nie są kreacjami kampanii
+    _has_files = any(
+        f.get("mimetype", "") not in SLACK_AUDIO_MIMES and f.get("subtype") != "slack_audio"
+        for f in (event.get('files') or [])
+    )
     _campaign_create_kws = [
         'stwórz kampanię', 'stworz kampanie', 'zrób kampanię', 'zrob kampanie',
         'nową kampanię', 'nowa kampania', 'utwórz kampanię', 'utworz kampanie',
@@ -1132,12 +1136,12 @@ def handle_message_events(body, say, logger):
 
         if user_message.startswith("<@"):
             return
-        _seba_m = re.search(r'\b(seba|sebol)\b', user_message, re.IGNORECASE)
+        _seba_m = re.search(r'\bsebol\w*\b|\bseba\b', user_message, re.IGNORECASE)
         # Głosówka na kanale — traktuj jako trigger bez potrzeby mówienia "seba"
         if not _seba_m and not _audio_files:
             return
         logger.info(f"SEBA TRIGGER → {user_message!r}")
-        _clean = re.sub(r'\b(seba|sebol)\b', "", user_message, count=1, flags=re.IGNORECASE).strip()
+        _clean = re.sub(r'\bsebol\w*\b|\bseba\b', "", user_message, count=1, flags=re.IGNORECASE).strip()
         handle_mention({**event, "text": f"<@SEBOL> {_clean}"}, say)
         return
 
