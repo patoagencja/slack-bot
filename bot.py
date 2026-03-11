@@ -53,6 +53,7 @@ from tools.campaign_creator import (
 )
 from tools.voice_transcription import transcribe_slack_audio, SLACK_AUDIO_MIMES
 from tools.icloud_calendar import icloud_calendar_tool
+from tools.memory import init_memory, remember, recall_as_context, get_history
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -60,6 +61,7 @@ logger = logging.getLogger(__name__)
 # ── initialization ────────────────────────────────────────────────────────────
 _ctx.app    = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 _ctx.claude = Anthropic(api_key=os.environ.get("CLAUDE_API_KEY"))
+init_memory()
 
 app       = _ctx.app       # local alias for @app.event / @app.command decorators
 anthropic = _ctx.claude    # local alias for handle_mention / handle_message_events
@@ -551,6 +553,10 @@ def handle_mention(event, say):
         'stwórz kampanię', 'stworz kampanie', 'zrób kampanię', 'zrob kampanie',
         'nową kampanię', 'nowa kampania', 'utwórz kampanię', 'utworz kampanie',
         'create campaign', 'nowa kampan',
+        'kampania meta', 'kampanię meta', 'kampanie meta',
+        'postaw kampan', 'odpal kampan', 'puść kampan', 'pusc kampan',
+        'kampania dla klienta', 'kampanię dla', 'kampanie dla',
+        'zleć kampan', 'zlec kampan',
     ]
     if _has_files or any(kw in msg_lower_m for kw in _campaign_create_kws):
         say(text="⏳ Przetwarzam... zaraz wrócę z preview.", thread_ts=thread_ts)
@@ -667,6 +673,7 @@ Sebol — asystent agencji marketingowej Pato. Pomagasz w WSZYSTKIM co dotyczy c
 📅 *Kalendarz* — masz dostęp do kalendarza iCloud Daniela: sprawdzasz plan dnia/tygodnia, dodajesz spotkania
 👥 *Team* — pracownicy zgłaszają nieobecności i prośby przez DM, Ty zbierasz i raportujesz Danielowi o 17:00 na #zarzondpato
 📋 *Prośby* — zapisujesz prośby teamu (#ID), Daniel zamyka je przez "@Sebol zamknij #N"
+⛔ ZAKAZ: NIE zapisuj kampanii reklamowych jako "prośby" (#ID). Kampanie tworzysz bezpośrednio — pytaj o brakujące dane i buduj. Prośby (#ID) to TYLKO: urlopy, zakupy, dostępy, spotkania — sprawy wymagające decyzji szefa.
 🧠 *Daily Digest* — codziennie o 9:00 raport DRE z benchmarkami i smart rekomendacjami
 📈 *Weekly Learnings* — co poniedziałek i czwartek o 8:30 analiza wzorców kampanii
 ⚡ *Alerty budżetowe* — pilnujesz żeby kampanie nie przebijały budżetu
@@ -841,6 +848,9 @@ Pytanie → Direct answer → Context → Actionable next step
         user_id = event.get('user')
         history = get_conversation_history(user_id)
 
+        # Store incoming message to long-term memory
+        remember(user_id, channel, event.get("ts", ""), "user", user_message)
+
         contextual_message = (
             (channel_history_ctx + user_message) if channel_history_ctx else user_message
         )
@@ -955,6 +965,8 @@ Pytanie → Direct answer → Context → Actionable next step
                 )
                 save_message_to_history(user_id, "user", user_message)
                 save_message_to_history(user_id, "assistant", response_text)
+                # Store bot reply to long-term memory
+                remember(user_id, channel, event.get("ts", "") + "_bot", "assistant", response_text)
 
                 if is_group_chat and not event.get('thread_ts'):
                     say(text=response_text)
@@ -1277,6 +1289,10 @@ def handle_message_events(body, say, logger):
             'stwórz kampanię', 'stworz kampanie', 'zrób kampanię', 'zrob kampanie',
             'nową kampanię', 'nowa kampania', 'utwórz kampanię', 'utworz kampanie',
             'create campaign', 'nowa kampan',
+            'kampania meta', 'kampanię meta', 'kampanie meta',
+            'postaw kampan', 'odpal kampan', 'puść kampan', 'pusc kampan',
+            'kampania dla klienta', 'kampanię dla', 'kampanie dla',
+            'zleć kampan', 'zlec kampan',
         ]
         _dm_approve_m = re.search(r'(zatwierdź|zatwierdz|uruchom)\s+kampanię\s+(\d+)', _dm_text_l)
         _dm_cancel_m  = re.search(r'(anuluj|usuń|usun|skasuj)\s+kampanię\s+(\d+)', _dm_text_l)
@@ -1485,34 +1501,27 @@ def handle_message_events(body, say, logger):
             logger.error(f"Błąd test email trigger: {e}")
         return
 
-    # ── Fetch last 100 messages from Slack DM for conversation context ──────────
-    try:
-        _hist = app.client.conversations_history(
-            channel=event.get("channel"), limit=100,
-        )
-        _raw = _hist.get("messages", [])[::-1]      # odwróć: najstarsze pierwsze
-        _dm_msgs: list[dict] = []
-        for _m in _raw:
-            if _m.get("ts") == event.get("ts"):
-                continue                             # pomiń aktualną wiadomość
-            _t = (_m.get("text") or "").strip()
-            if not _t:
-                continue
-            _role = "assistant" if (_m.get("bot_id") or _m.get("subtype") == "bot_message") else "user"
-            _dm_msgs.append({"role": _role, "content": _t})
-        _dm_msgs.append({"role": "user", "content": user_message})
-        # Scal consecutive same-role (Anthropic wymaga naprzemiennych ról)
-        _merged: list[dict] = []
-        for _m in _dm_msgs:
-            if _merged and _merged[-1]["role"] == _m["role"]:
-                _merged[-1]["content"] += "\n" + _m["content"]
-            else:
-                _merged.append(dict(_m))
-        while _merged and _merged[0]["role"] != "user":
-            _merged.pop(0)
-        if not _merged:
-            _merged = [{"role": "user", "content": user_message}]
-    except Exception:
+    # Store incoming user message to long-term memory (before building history)
+    remember(user_id, event.get("channel", ""), event.get("ts", ""), "user", user_message)
+
+    # ── Build conversation history from memory DB (full history, like Claude.ai) ──
+    # get_history returns last 500 messages chronologically — covers months of chat
+    _history_msgs = get_history(user_id, limit=500)
+
+    # Append current message if not already last in history
+    if not _history_msgs or _history_msgs[-1]["content"] != user_message:
+        _history_msgs.append({"role": "user", "content": user_message})
+
+    # Merge consecutive same-role messages (Anthropic requires alternating roles)
+    _merged: list[dict] = []
+    for _m in _history_msgs:
+        if _merged and _merged[-1]["role"] == _m["role"]:
+            _merged[-1]["content"] += "\n" + _m["content"]
+        else:
+            _merged.append(dict(_m))
+    while _merged and _merged[0]["role"] != "user":
+        _merged.pop(0)
+    if not _merged:
         _merged = [{"role": "user", "content": user_message}]
 
     _today_dm = datetime.now()
@@ -1520,9 +1529,12 @@ def handle_message_events(body, say, logger):
         f"Dzisiaj: {_today_dm.strftime('%d %B %Y')} ({_today_dm.strftime('%Y-%m-%d')}).\n\n"
         "Jesteś Sebol — asystent agencji marketingowej Pato. Rozmawiasz z pracownikiem przez DM na Slacku.\n"
         "NIE jesteś Claude od Anthropic — jesteś Seblem, botem stworzonym dla agencji Pato.\n"
-        "Pomagasz z kampaniami (Meta Ads / Google Ads), emailami, teamem, raportami i codzienną pracą agencji.\n\n"
+        "Pomagasz z kampaniami (Meta Ads / Google Ads), emailami, kalendarzem, teamem, raportami i codzienną pracą agencji.\n\n"
         "Klienci Meta: 'instax/fuji', 'zbiorcze', 'drzwi dre'. Google: 'dre', 'dre 2024', 'dre 2025', 'm2', 'pato'.\n"
         "Benchmarki Meta: ROAS >3.0, CTR 1.5-2.5%, CPC 3-8 PLN. Google Search: CTR 2-5%, CPC 2-10 PLN.\n\n"
+        "⚠️ KONTEKST ROZMOWY: Czytaj historię wiadomości UWAŻNIE. Odpowiadaj na to co jest AKTUALNIE omawiane — "
+        "jeśli rozmowa dotyczy kalendarza, odpowiadaj o kalendarzu; jeśli emaili — o emailach. "
+        "NIE przekierowuj na kampanie gdy user pyta o coś innego!\n\n"
         "Mów po polsku. Bądź bezpośredni i konkretny — podawaj liczby, nie ogólniki. "
         "Emoji: 📊 💰 🚀 ⚠️ ✅"
     )
@@ -1656,6 +1668,8 @@ def handle_message_events(body, say, logger):
             "Przepraszam, nie mogłem wygenerować odpowiedzi.",
         )
         _say_dm(text=response_text)
+        # Store bot reply to long-term memory
+        remember(user_id, event.get("channel", ""), event.get("ts", "") + "_bot", "assistant", response_text)
     except Exception as e:
         logger.error(f"Błąd DM handler: {e}")
         _say_dm(text=f"Przepraszam, wystąpił błąd: {str(e)}")

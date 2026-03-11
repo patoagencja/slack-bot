@@ -1,6 +1,7 @@
-# Dane runtime (nieobecności, prośby) — nie commituj
+# Dane runtime (nieobecności, prośby, pamięć) — nie commituj
 data/team_availability.json
 data/team_requests.json
+data/memory.db
 
 # Python
 __pycache__/
