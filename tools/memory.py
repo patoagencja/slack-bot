@@ -119,6 +119,33 @@ def recall(query: str, user_id: str = None, limit: int = 12, days: int = 30) -> 
         return []
 
 
+def get_history(user_id: str, limit: int = 500) -> list[dict]:
+    """
+    Returns full conversation history for a user as list of {role, content} dicts,
+    ordered chronologically (oldest first). Ready to pass directly to Claude messages[].
+    Capped at *limit* most recent messages to stay within token limits.
+    """
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT role, content FROM (
+                    SELECT role, content, created_at
+                    FROM memory
+                    WHERE user_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                ) ORDER BY created_at ASC
+                """,
+                (user_id, limit),
+            ).fetchall()
+        return [{"role": r["role"], "content": r["content"]} for r in rows]
+    except Exception as e:
+        logger.warning("memory.get_history error: %s", e)
+        return []
+
+
 def recall_as_context(query: str, user_id: str = None, limit: int = 12) -> str:
     """
     Returns a formatted string ready to inject into Claude's system prompt.

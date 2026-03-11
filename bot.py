@@ -53,7 +53,7 @@ from tools.campaign_creator import (
 )
 from tools.voice_transcription import transcribe_slack_audio, SLACK_AUDIO_MIMES
 from tools.icloud_calendar import icloud_calendar_tool
-from tools.memory import init_memory, remember, recall_as_context
+from tools.memory import init_memory, remember, recall_as_context, get_history
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -851,16 +851,10 @@ Pytanie → Direct answer → Context → Actionable next step
         # Store incoming message to long-term memory
         remember(user_id, channel, event.get("ts", ""), "user", user_message)
 
-        # Inject relevant historical context from memory
-        _mention_memory_ctx = recall_as_context(user_message, user_id=user_id, limit=10)
-
         contextual_message = (
             (channel_history_ctx + user_message) if channel_history_ctx else user_message
         )
         messages = history + [{"role": "user", "content": contextual_message}]
-
-        if _mention_memory_ctx:
-            SYSTEM_PROMPT = SYSTEM_PROMPT + _mention_memory_ctx
 
         while True:
             response = anthropic.messages.create(
@@ -1507,41 +1501,28 @@ def handle_message_events(body, say, logger):
             logger.error(f"Błąd test email trigger: {e}")
         return
 
-    # ── Fetch last 20 messages from Slack DM for conversation context ──────────
-    try:
-        _hist = app.client.conversations_history(
-            channel=event.get("channel"), limit=20,
-        )
-        _raw = _hist.get("messages", [])[::-1]      # odwróć: najstarsze pierwsze
-        _dm_msgs: list[dict] = []
-        for _m in _raw:
-            if _m.get("ts") == event.get("ts"):
-                continue                             # pomiń aktualną wiadomość
-            _t = (_m.get("text") or "").strip()
-            if not _t:
-                continue
-            _role = "assistant" if (_m.get("bot_id") or _m.get("subtype") == "bot_message") else "user"
-            _dm_msgs.append({"role": _role, "content": _t})
-        _dm_msgs.append({"role": "user", "content": user_message})
-        # Scal consecutive same-role (Anthropic wymaga naprzemiennych ról)
-        _merged: list[dict] = []
-        for _m in _dm_msgs:
-            if _merged and _merged[-1]["role"] == _m["role"]:
-                _merged[-1]["content"] += "\n" + _m["content"]
-            else:
-                _merged.append(dict(_m))
-        while _merged and _merged[0]["role"] != "user":
-            _merged.pop(0)
-        if not _merged:
-            _merged = [{"role": "user", "content": user_message}]
-    except Exception:
-        _merged = [{"role": "user", "content": user_message}]
-
-    # Store incoming user message to long-term memory
+    # Store incoming user message to long-term memory (before building history)
     remember(user_id, event.get("channel", ""), event.get("ts", ""), "user", user_message)
 
-    # Retrieve relevant historical context (fast FTS search, doesn't slow down response)
-    _memory_ctx = recall_as_context(user_message, user_id=user_id, limit=12)
+    # ── Build conversation history from memory DB (full history, like Claude.ai) ──
+    # get_history returns last 500 messages chronologically — covers months of chat
+    _history_msgs = get_history(user_id, limit=500)
+
+    # Append current message if not already last in history
+    if not _history_msgs or _history_msgs[-1]["content"] != user_message:
+        _history_msgs.append({"role": "user", "content": user_message})
+
+    # Merge consecutive same-role messages (Anthropic requires alternating roles)
+    _merged: list[dict] = []
+    for _m in _history_msgs:
+        if _merged and _merged[-1]["role"] == _m["role"]:
+            _merged[-1]["content"] += "\n" + _m["content"]
+        else:
+            _merged.append(dict(_m))
+    while _merged and _merged[0]["role"] != "user":
+        _merged.pop(0)
+    if not _merged:
+        _merged = [{"role": "user", "content": user_message}]
 
     _today_dm = datetime.now()
     _dm_system = (
@@ -1554,7 +1535,6 @@ def handle_message_events(body, say, logger):
         "⚠️ KONTEKST ROZMOWY: Czytaj historię wiadomości UWAŻNIE. Odpowiadaj na to co jest AKTUALNIE omawiane — "
         "jeśli rozmowa dotyczy kalendarza, odpowiadaj o kalendarzu; jeśli emaili — o emailach. "
         "NIE przekierowuj na kampanie gdy user pyta o coś innego!\n\n"
-        f"{_memory_ctx}"
         "Mów po polsku. Bądź bezpośredni i konkretny — podawaj liczby, nie ogólniki. "
         "Emoji: 📊 💰 🚀 ⚠️ ✅"
     )
