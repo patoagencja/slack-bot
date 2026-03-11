@@ -538,7 +538,11 @@ def handle_mention(event, say):
         return
 
     # === CAMPAIGN CREATION: stwórz/zrób kampanię lub upload kreacji ===
-    _has_files       = bool(event.get('files'))
+    # Wyklucz pliki audio (głosówki) — nie są kreacjami kampanii
+    _has_files = any(
+        f.get("mimetype", "") not in SLACK_AUDIO_MIMES and f.get("subtype") != "slack_audio"
+        for f in (event.get('files') or [])
+    )
     _campaign_create_kws = [
         'stwórz kampanię', 'stworz kampanie', 'zrób kampanię', 'zrob kampanie',
         'nową kampanię', 'nowa kampania', 'utwórz kampanię', 'utworz kampanie',
