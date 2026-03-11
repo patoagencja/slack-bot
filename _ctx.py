@@ -20,3 +20,7 @@ campaign_drafts = {}
 # Campaign creation pending info: user_id → {params, files, channel, thread_ts, round}
 # Używane gdy bot pyta o brakujące pola przed stworzeniem kampanii
 campaign_pending = {}
+
+# Threads where bot has participated: set of (channel, thread_ts) tuples
+# Allows bot to respond in threads without explicit mention
+bot_threads: set = set()

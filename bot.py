@@ -422,6 +422,9 @@ def handle_mention(event, say):
     thread_ts = event.get('thread_ts', event['ts'])
     _mention_user_id = event.get('user', '')
 
+    # Track thread so bot responds to follow-ups without explicit mention
+    _ctx.bot_threads.add((channel, thread_ts))
+
     # === PENDING CAMPAIGN: state machine (collecting → expert_review → build) ===
     _CONFIRM_KWS = [
         "zaczynaj", "zaczynamy", "dawaj", "buduj", "budujemy", "robimy",
@@ -1187,10 +1190,12 @@ def handle_message_events(body, say, logger):
         if user_message.startswith("<@"):
             return
         _seba_m = re.search(r'\bsebol\w*\b|\bseba\b', user_message, re.IGNORECASE)
+        _msg_thread_ts = event.get("thread_ts")
+        _in_bot_thread = _msg_thread_ts and (event.get("channel"), _msg_thread_ts) in _ctx.bot_threads
         # Głosówka na kanale — traktuj jako trigger bez potrzeby mówienia "seba"
-        if not _seba_m and not _audio_files:
+        if not _seba_m and not _audio_files and not _in_bot_thread:
             return
-        logger.info(f"SEBA TRIGGER → {user_message!r}")
+        logger.info(f"SEBA TRIGGER → {user_message!r} (thread={_in_bot_thread})")
         _clean = re.sub(r'\bsebol\w*\b|\bseba\b', "", user_message, count=1, flags=re.IGNORECASE).strip()
         handle_mention({**event, "text": f"<@SEBOL> {_clean}"}, say)
         return
