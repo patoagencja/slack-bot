@@ -53,6 +53,7 @@ from tools.campaign_creator import (
 )
 from tools.voice_transcription import transcribe_slack_audio, SLACK_AUDIO_MIMES
 from tools.icloud_calendar import icloud_calendar_tool
+from tools.memory import init_memory, remember, recall_as_context
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -60,6 +61,7 @@ logger = logging.getLogger(__name__)
 # ── initialization ────────────────────────────────────────────────────────────
 _ctx.app    = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 _ctx.claude = Anthropic(api_key=os.environ.get("CLAUDE_API_KEY"))
+init_memory()
 
 app       = _ctx.app       # local alias for @app.event / @app.command decorators
 anthropic = _ctx.claude    # local alias for handle_mention / handle_message_events
@@ -1524,6 +1526,12 @@ def handle_message_events(body, say, logger):
     except Exception:
         _merged = [{"role": "user", "content": user_message}]
 
+    # Store incoming user message to long-term memory
+    remember(user_id, event.get("channel", ""), event.get("ts", ""), "user", user_message)
+
+    # Retrieve relevant historical context (fast FTS search, doesn't slow down response)
+    _memory_ctx = recall_as_context(user_message, user_id=user_id, limit=12)
+
     _today_dm = datetime.now()
     _dm_system = (
         f"Dzisiaj: {_today_dm.strftime('%d %B %Y')} ({_today_dm.strftime('%Y-%m-%d')}).\n\n"
@@ -1535,6 +1543,7 @@ def handle_message_events(body, say, logger):
         "⚠️ KONTEKST ROZMOWY: Czytaj historię wiadomości UWAŻNIE. Odpowiadaj na to co jest AKTUALNIE omawiane — "
         "jeśli rozmowa dotyczy kalendarza, odpowiadaj o kalendarzu; jeśli emaili — o emailach. "
         "NIE przekierowuj na kampanie gdy user pyta o coś innego!\n\n"
+        f"{_memory_ctx}"
         "Mów po polsku. Bądź bezpośredni i konkretny — podawaj liczby, nie ogólniki. "
         "Emoji: 📊 💰 🚀 ⚠️ ✅"
     )
@@ -1668,6 +1677,8 @@ def handle_message_events(body, say, logger):
             "Przepraszam, nie mogłem wygenerować odpowiedzi.",
         )
         _say_dm(text=response_text)
+        # Store bot reply to long-term memory
+        remember(user_id, event.get("channel", ""), event.get("ts", "") + "_bot", "assistant", response_text)
     except Exception as e:
         logger.error(f"Błąd DM handler: {e}")
         _say_dm(text=f"Przepraszam, wystąpił błąd: {str(e)}")
