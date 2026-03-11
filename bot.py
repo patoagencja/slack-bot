@@ -400,14 +400,7 @@ def handle_mention(event, say):
 
     # === NIEOBECNOŚCI / PROŚBY via @mention ===
     _mention_uid = event.get('user', '')
-    _campaign_create_kws_early = [
-        'stwórz kampanię', 'stworz kampanie', 'zrób kampanię', 'zrob kampanie',
-        'nową kampanię', 'nowa kampania', 'utwórz kampanię', 'utworz kampanie',
-        'create campaign', 'nowa kampan', 'postaw kampan', 'stwórz kampan',
-        'stworz kampan', 'zrob kampan', 'zrób kampan',
-    ]
-    _is_campaign_msg = any(kw in msg_lower_m for kw in _campaign_create_kws_early)
-    if _mention_uid and not _is_campaign_msg and any(kw in msg_lower_m for kw in EMPLOYEE_MSG_KEYWORDS):
+    if _mention_uid and any(kw in msg_lower_m for kw in EMPLOYEE_MSG_KEYWORDS):
         _mention_name = next(
             (m['name'] for m in TEAM_MEMBERS if m['slack_id'] == _mention_uid), None
         )

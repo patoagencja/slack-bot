@@ -464,9 +464,14 @@ Zasada: jeśli podmiotem zdania jest inne imię niż {user_name} → wpisz to im
 
 ═══ KROK 2: TYP WIADOMOŚCI ═══
 "absence" — informacja o niedostępności (swojej lub kogoś innego).
-"request" — prośba do szefa wymagająca decyzji/działania.
+"request" — prośba do szefa wymagająca decyzji/działania (urlop, zakup, dostęp, spotkanie).
   Uwaga: żarty i casual ("czy mogę iść na kawę") = NIE request, to chat.
-"chat" — wszystko inne.
+  WAŻNE: polecenia operacyjne = ZAWSZE "chat", nigdy "request". Przykłady poleceń operacyjnych:
+    - tworzenie/budowanie kampanii reklamowych ("stwórz kampanię", "zrób kampanię", "postaw kampanię")
+    - analizy danych i raportów ("pokaż wyniki", "jak idą kampanie", "sprawdź")
+    - wysyłanie wiadomości, maili ("napisz do", "wyślij")
+    - wszelkie komendy do bota żeby COŚ ZROBIŁ (nie żeby COŚ ZATWIERDZIŁ szef)
+"chat" — wszystko inne, w tym polecenia operacyjne jak wyżej.
 
 ═══ KROK 3: DLA "absence" — daty ═══
 Typy: absent / morning_only / afternoon_only / late_start / early_end / remote / partial
