@@ -1133,7 +1133,8 @@ def handle_message_events(body, say, logger):
         if user_message.startswith("<@"):
             return
         _seba_m = re.search(r'\b(seba|sebol)\b', user_message, re.IGNORECASE)
-        if not _seba_m:
+        # Głosówka na kanale — traktuj jako trigger bez potrzeby mówienia "seba"
+        if not _seba_m and not _audio_files:
             return
         logger.info(f"SEBA TRIGGER → {user_message!r}")
         _clean = re.sub(r'\b(seba|sebol)\b', "", user_message, count=1, flags=re.IGNORECASE).strip()
