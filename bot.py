@@ -21,6 +21,7 @@ from config.constants import (
 # ── tools ─────────────────────────────────────────────────────────────────────
 from tools.meta_ads import meta_ads_tool
 from tools.google_ads import google_ads_tool
+from tools.google_analytics import google_analytics_tool
 from tools.email_tools import email_tool, get_user_email_config
 from tools.slack_tools import slack_read_channel_tool, slack_read_thread_tool
 
@@ -665,6 +666,7 @@ GOOGLE ADS: "3wm"/"pato" → Agencja | "dre 2024"/"dre24" → DRE 2024 | "dre 20
 Pytanie o kampanie/metryki/spend/ROAS/CTR → WYWOŁAJ narzędzie:
 - get_meta_ads_data() → Facebook/Instagram
 - get_google_ads_data() → Google Ads
+- get_ga4_data() → Google Analytics 4 (ruch na stronie, sesje, konwersje, źródła ruchu, bounce rate)
 NIGDY nie mów "nie mam dostępu" - zawsze najpierw użyj narzędzi!
 
 # TON I STYL
@@ -747,6 +749,22 @@ Pytanie → Direct answer → Context → Actionable next step
                     "ad_name":       {"type": "string", "description": "Filtr po nazwie reklamy."},
                     "metrics":       {"type": "array", "items": {"type": "string"}, "description": "Lista metryk: campaign.name, ad_group.name, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.ctr, metrics.average_cpc"},
                     "limit":         {"type": "integer", "description": "Limit wyników."}
+                },
+                "required": []
+            }
+        },
+        {
+            "name": "get_ga4_data",
+            "description": "Pobiera dane z Google Analytics 4: sesje, użytkownicy, strony, konwersje, przychody, źródła ruchu. Użyj gdy użytkownik pyta o ruch na stronie, GA4, Google Analytics, sesje, bounce rate, źródła ruchu (organic/paid/direct), konwersje z GA4.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "client_name":  {"type": "string", "description": "Nazwa klienta. WYMAGANE. Musi odpowiadać klientowi z GA4_PROPERTY_IDS."},
+                    "date_from":    {"type": "string", "description": "Data początkowa. Format: YYYY-MM-DD, '7daysAgo', '30daysAgo', 'yesterday', lub po polsku: 'ostatni tydzień', 'ostatni miesiąc'."},
+                    "date_to":      {"type": "string", "description": "Data końcowa. Format: YYYY-MM-DD lub 'today'. Domyślnie 'today'."},
+                    "dimensions":   {"type": "array", "items": {"type": "string"}, "description": "Wymiary GA4, np. ['sessionDefaultChannelGroup', 'sessionSourceMedium', 'pagePath', 'deviceCategory', 'country', 'landingPage']. Domyślnie: sessionDefaultChannelGroup + sessionSourceMedium."},
+                    "metrics":      {"type": "array", "items": {"type": "string"}, "description": "Metryki GA4, np. ['sessions', 'totalUsers', 'newUsers', 'screenPageViews', 'bounceRate', 'conversions', 'totalRevenue', 'averageSessionDuration']. Domyślnie wszystkie."},
+                    "limit":        {"type": "integer", "description": "Maksymalna liczba wierszy wyników (domyślnie 20)."}
                 },
                 "required": []
             }
@@ -837,6 +855,15 @@ Pytanie → Direct answer → Context → Actionable next step
                         metrics=tool_input.get('metrics'),
                         limit=tool_input.get('limit'),
                         client_name=tool_input.get('client_name')
+                    )
+                elif tool_name == "get_ga4_data":
+                    tool_result = google_analytics_tool(
+                        client_name=tool_input.get('client_name'),
+                        date_from=tool_input.get('date_from'),
+                        date_to=tool_input.get('date_to'),
+                        dimensions=tool_input.get('dimensions'),
+                        metrics=tool_input.get('metrics'),
+                        limit=tool_input.get('limit', 20),
                     )
                 elif tool_name == "slack_read_channel":
                     tool_result = slack_read_channel_tool(
@@ -1491,6 +1518,22 @@ def handle_message_events(body, say, logger):
                 "required": ["action"],
             },
         },
+        {
+            "name": "get_ga4_data",
+            "description": "Pobiera dane z Google Analytics 4: sesje, użytkownicy, konwersje, źródła ruchu, bounce rate. Użyj gdy pytają o ruch na stronie, GA, analytics.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "client_name": {"type": "string"},
+                    "date_from":   {"type": "string"},
+                    "date_to":     {"type": "string"},
+                    "dimensions":  {"type": "array", "items": {"type": "string"}},
+                    "metrics":     {"type": "array", "items": {"type": "string"}},
+                    "limit":       {"type": "integer"},
+                },
+                "required": [],
+            },
+        },
     ]
 
     try:
@@ -1507,6 +1550,8 @@ def handle_message_events(body, say, logger):
                 _tr = meta_ads_tool(**{k: v for k, v in _tb.input.items() if v is not None})
             elif _tb.name == "get_google_ads_data":
                 _tr = google_ads_tool(**{k: v for k, v in _tb.input.items() if v is not None})
+            elif _tb.name == "get_ga4_data":
+                _tr = google_analytics_tool(**{k: v for k, v in _tb.input.items() if v is not None})
             elif _tb.name == "manage_email":
                 _inp = {k: v for k, v in _tb.input.items() if v is not None and k != "user_id"}
                 _tr  = email_tool(user_id=user_id, **_inp)
