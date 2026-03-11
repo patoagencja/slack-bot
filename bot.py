@@ -1709,6 +1709,23 @@ try:
 except Exception as _e:
     print(f"⚠️ sync_availability_from_slack startup error: {_e}")
 
+# ── memory backfill (runs once in background on startup) ─────────────────────
+import threading, sqlite3 as _sqlite3
+def _run_backfill_if_empty():
+    try:
+        from tools.memory import DB_PATH
+        with _sqlite3.connect(DB_PATH) as _c:
+            _count = _c.execute("SELECT COUNT(*) FROM memory").fetchone()[0]
+        if _count == 0:
+            logger.info("Memory DB empty — running backfill from Slack history...")
+            from tools.memory_backfill import run_backfill
+            run_backfill(days=365)
+        else:
+            logger.info("Memory DB has %d messages — skipping backfill", _count)
+    except Exception as _e:
+        logger.warning("Memory backfill error: %s", _e)
+threading.Thread(target=_run_backfill_if_empty, daemon=True).start()
+
 # ── start ─────────────────────────────────────────────────────────────────────
 
 handler = SocketModeHandler(app, os.environ.get("SLACK_APP_TOKEN"))
