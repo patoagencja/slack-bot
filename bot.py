@@ -640,9 +640,19 @@ def handle_mention(event, say):
     today_formatted = today.strftime('%d %B %Y')
     today_iso       = today.strftime('%Y-%m-%d')
 
+    _sender_uid  = event.get('user', '')
+    _sender_name = next((m['name'] for m in TEAM_MEMBERS if m['slack_id'] == _sender_uid), None)
+    if not _sender_name and _sender_uid:
+        try:
+            _ui = app.client.users_info(user=_sender_uid)
+            _sender_name = _ui['user'].get('real_name') or _ui['user'].get('name') or _sender_uid
+        except Exception:
+            _sender_name = _sender_uid
+    _sender_line = f"\n# NADAWCA\nTa wiadomość pochodzi od: *{_sender_name}* (Slack ID: {_sender_uid}). Zwracaj się do niego po imieniu." if _sender_name else ""
+
     SYSTEM_PROMPT = f"""
 # DATA
-Dzisiaj: {today_formatted} ({today_iso}). Pytania o "styczeń 2026" czy wcześniej = PRZESZŁOŚĆ, masz dane!
+Dzisiaj: {today_formatted} ({today_iso}). Pytania o "styczeń 2026" czy wcześniej = PRZESZŁOŚĆ, masz dane!{_sender_line}
 
 # KIM JESTEŚ
 Sebol — asystent agencji marketingowej Pato. Pomagasz w WSZYSTKIM co dotyczy codziennej pracy agencji: analiza kampanii, organizacja teamu, emaile, raporty, pytania, decyzje. Jesteś częścią teamu — nie jesteś tylko narzędziem do raportów.
