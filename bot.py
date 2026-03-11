@@ -848,10 +848,19 @@ Pytanie → Direct answer → Context → Actionable next step
         user_id = event.get('user')
         history = get_conversation_history(user_id)
 
+        # Store incoming message to long-term memory
+        remember(user_id, channel, event.get("ts", ""), "user", user_message)
+
+        # Inject relevant historical context from memory
+        _mention_memory_ctx = recall_as_context(user_message, user_id=user_id, limit=10)
+
         contextual_message = (
             (channel_history_ctx + user_message) if channel_history_ctx else user_message
         )
         messages = history + [{"role": "user", "content": contextual_message}]
+
+        if _mention_memory_ctx:
+            SYSTEM_PROMPT = SYSTEM_PROMPT + _mention_memory_ctx
 
         while True:
             response = anthropic.messages.create(
@@ -962,6 +971,8 @@ Pytanie → Direct answer → Context → Actionable next step
                 )
                 save_message_to_history(user_id, "user", user_message)
                 save_message_to_history(user_id, "assistant", response_text)
+                # Store bot reply to long-term memory
+                remember(user_id, channel, event.get("ts", "") + "_bot", "assistant", response_text)
 
                 if is_group_chat and not event.get('thread_ts'):
                     say(text=response_text)
