@@ -129,21 +129,33 @@ def icloud_calendar_tool(
             else:
                 end_dt = start_dt + timedelta(days=7)
 
-            events_raw = calendar.date_search(start=start_dt, end=end_dt, expand=True)
+            # Szukaj we wszystkich kalendarzach gdy nie podano konkretnej nazwy
+            cals_to_search = [calendar] if calendar_name else calendars
             events = []
-            for ev in events_raw:
+            cal_names_used = []
+            for cal in cals_to_search:
                 try:
-                    cal_obj = vobject.readOne(ev.data)
-                    if hasattr(cal_obj, "vevent"):
-                        events.append(_parse_event(cal_obj.vevent))
-                except Exception as parse_err:
-                    logger.warning(f"Błąd parsowania wydarzenia: {parse_err}")
+                    events_raw = cal.date_search(start=start_dt, end=end_dt, expand=True)
+                    for ev in events_raw:
+                        try:
+                            cal_obj = vobject.readOne(ev.data)
+                            if hasattr(cal_obj, "vevent"):
+                                events.append(_parse_event(cal_obj.vevent))
+                        except Exception as parse_err:
+                            logger.warning(f"Błąd parsowania wydarzenia: {parse_err}")
+                    try:
+                        props = cal.get_properties([dav.DisplayName()])
+                        cal_names_used.append(props.get("{DAV:}displayname", "?"))
+                    except Exception:
+                        pass
+                except Exception as cal_err:
+                    logger.warning(f"Błąd przeszukiwania kalendarza: {cal_err}")
 
             # Sortuj po dacie startu
             events.sort(key=lambda e: e.get("start") or "")
 
             return {
-                "calendar": cal_display_name,
+                "calendar": ", ".join(cal_names_used) if cal_names_used else cal_display_name,
                 "date_from": start_dt.strftime("%Y-%m-%d"),
                 "date_to": end_dt.strftime("%Y-%m-%d"),
                 "count": len(events),
