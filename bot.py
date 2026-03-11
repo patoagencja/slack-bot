@@ -52,6 +52,7 @@ from tools.campaign_creator import (
     get_meta_account_id, generate_campaign_expert_analysis,
 )
 from tools.voice_transcription import transcribe_slack_audio, SLACK_AUDIO_MIMES
+from tools.icloud_calendar import icloud_calendar_tool
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -810,6 +811,25 @@ Pytanie → Direct answer → Context → Actionable next step
                 "required": ["channel_id", "thread_ts"]
             }
         },
+        {
+            "name": "manage_calendar",
+            "description": "Zarządza kalendarzem iCloud użytkownika. Użyj gdy pyta o swoje spotkania, plan dnia/tygodnia, chce dodać wydarzenie do kalendarza lub sprawdzić co ma zaplanowane.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "action":        {"type": "string", "enum": ["list", "create"], "description": "'list' = pobierz listę wydarzeń, 'create' = utwórz nowe wydarzenie."},
+                    "date_from":     {"type": "string", "description": "Data początkowa zakresu (YYYY-MM-DD). Domyślnie dzisiaj."},
+                    "date_to":       {"type": "string", "description": "Data końcowa zakresu (YYYY-MM-DD). Domyślnie +7 dni."},
+                    "title":         {"type": "string", "description": "Tytuł wydarzenia (wymagane przy action='create')."},
+                    "start":         {"type": "string", "description": "Data i godzina startu (YYYY-MM-DD HH:MM, wymagane przy action='create')."},
+                    "end":           {"type": "string", "description": "Data i godzina końca (YYYY-MM-DD HH:MM, opcjonalne — domyślnie +1h)."},
+                    "location":      {"type": "string", "description": "Miejsce spotkania (opcjonalne)."},
+                    "description":   {"type": "string", "description": "Opis/notatka do wydarzenia (opcjonalne)."},
+                    "calendar_name": {"type": "string", "description": "Nazwa kalendarza iCloud (opcjonalne — jeśli nie podano, używa pierwszego dostępnego)."},
+                },
+                "required": ["action"]
+            }
+        },
     ]
 
     try:
@@ -892,6 +912,23 @@ Pytanie → Direct answer → Context → Actionable next step
                         channel_id=tool_input.get('channel_id'),
                         thread_ts=tool_input.get('thread_ts')
                     )
+                elif tool_name == "manage_calendar":
+                    _cal_user = event.get('user')
+                    _owner_id = os.environ.get("CALENDAR_OWNER_SLACK_ID")
+                    if _owner_id and _cal_user != _owner_id:
+                        tool_result = {"error": "Brak dostępu — kalendarz jest prywatny."}
+                    else:
+                        tool_result = icloud_calendar_tool(
+                            action=tool_input.get('action', 'list'),
+                            date_from=tool_input.get('date_from'),
+                            date_to=tool_input.get('date_to'),
+                            title=tool_input.get('title'),
+                            start=tool_input.get('start'),
+                            end=tool_input.get('end'),
+                            location=tool_input.get('location'),
+                            description=tool_input.get('description'),
+                            calendar_name=tool_input.get('calendar_name'),
+                        )
                 else:
                     tool_result = {"error": "Nieznane narzędzie"}
 
@@ -1550,6 +1587,25 @@ def handle_message_events(body, say, logger):
                 "required": [],
             },
         },
+        {
+            "name": "manage_calendar",
+            "description": "Zarządza kalendarzem iCloud — lista wydarzeń lub tworzenie nowego. Użyj gdy pytają o swój plan dnia/tygodnia, spotkania lub chcą dodać wydarzenie.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "action":        {"type": "string", "enum": ["list", "create"]},
+                    "date_from":     {"type": "string"},
+                    "date_to":       {"type": "string"},
+                    "title":         {"type": "string"},
+                    "start":         {"type": "string"},
+                    "end":           {"type": "string"},
+                    "location":      {"type": "string"},
+                    "description":   {"type": "string"},
+                    "calendar_name": {"type": "string"},
+                },
+                "required": ["action"],
+            },
+        },
     ]
 
     try:
@@ -1571,6 +1627,12 @@ def handle_message_events(body, say, logger):
             elif _tb.name == "manage_email":
                 _inp = {k: v for k, v in _tb.input.items() if v is not None and k != "user_id"}
                 _tr  = email_tool(user_id=user_id, **_inp)
+            elif _tb.name == "manage_calendar":
+                _owner_id = os.environ.get("CALENDAR_OWNER_SLACK_ID")
+                if _owner_id and user_id != _owner_id:
+                    _tr = {"error": "Brak dostępu — kalendarz jest prywatny."}
+                else:
+                    _tr = icloud_calendar_tool(**{k: v for k, v in _tb.input.items() if v is not None})
             else:
                 _tr = {"error": "Nieznane narzędzie"}
             _merged.append({"role": "assistant", "content": _resp.content})

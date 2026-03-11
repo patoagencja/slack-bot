@@ -11,3 +11,5 @@ Pillow
 requests
 openai
 google-analytics-data
+caldav
+vobject
