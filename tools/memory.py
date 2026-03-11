@@ -77,14 +77,17 @@ def _fts_query(text: str) -> str:
     return " OR ".join(escaped)
 
 
-def recall(query: str, user_id: str = None, limit: int = 12) -> list[dict]:
+def recall(query: str, user_id: str = None, limit: int = 12, days: int = 30) -> list[dict]:
     """
     Search memory for messages relevant to *query*.
     Returns list of {role, content, created_at} dicts ordered by relevance.
+    Only searches messages from the last *days* days (default 30).
     """
     fts_q = _fts_query(query)
     if fts_q == '""':
         return []
+    from datetime import timedelta
+    cutoff = (datetime.now() - timedelta(days=days)).isoformat()
     try:
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
@@ -93,22 +96,22 @@ def recall(query: str, user_id: str = None, limit: int = 12) -> list[dict]:
                     """
                     SELECT role, content, created_at
                     FROM memory
-                    WHERE memory MATCH ? AND user_id = ?
+                    WHERE memory MATCH ? AND user_id = ? AND created_at >= ?
                     ORDER BY rank
                     LIMIT ?
                     """,
-                    (fts_q, user_id, limit),
+                    (fts_q, user_id, cutoff, limit),
                 ).fetchall()
             else:
                 rows = conn.execute(
                     """
                     SELECT role, content, created_at
                     FROM memory
-                    WHERE memory MATCH ?
+                    WHERE memory MATCH ? AND created_at >= ?
                     ORDER BY rank
                     LIMIT ?
                     """,
-                    (fts_q, limit),
+                    (fts_q, cutoff, limit),
                 ).fetchall()
         return [dict(r) for r in rows]
     except Exception as e:
