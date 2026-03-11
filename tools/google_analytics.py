@@ -55,6 +55,9 @@ def google_analytics_tool(
 ):
     """Pobiera dane z Google Analytics 4 dla danego klienta."""
     if not _ga4_client:
+        logger.error("GA4: _ga4_client is None — brak credentiali. GOOGLE_APPLICATION_CREDENTIALS=%s, GOOGLE_APPLICATION_CREDENTIALS_JSON=%s",
+                     bool(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")),
+                     bool(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")))
         return {"error": "GA4 API nie jest skonfigurowane. Ustaw GOOGLE_APPLICATION_CREDENTIALS lub GOOGLE_APPLICATION_CREDENTIALS_JSON."}
 
     properties_json = os.environ.get("GA4_PROPERTY_IDS", "{}")
@@ -144,5 +147,5 @@ def google_analytics_tool(
         }
 
     except Exception as e:
-        logger.error(f"Błąd pobierania danych GA4: {e}")
-        return {"error": str(e)}
+        logger.error(f"Błąd pobierania danych GA4 (client={client_name}, property={property_id}): {e}", exc_info=True)
+        return {"error": f"GA4 API error dla '{client_name}' (property {property_id}): {e}"}
