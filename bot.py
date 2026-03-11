@@ -259,7 +259,7 @@ _GROUP_CHAT_RULES = (
 @app.event("app_mention")
 def handle_mention(event, say):
     user_message = event['text']
-    user_message = ' '.join(user_message.split()[1:])  # Usuń wzmianke bota
+    user_message = re.sub(r'<@[A-Z0-9]+>', '', user_message).strip()  # Usuń wszystkie wzmianki bota
 
     msg_lower_m = user_message.lower()
 
