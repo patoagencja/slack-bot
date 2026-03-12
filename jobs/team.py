@@ -371,8 +371,21 @@ def _next_request_id():
 
 
 def save_request(user_id, user_name, category, summary, original_message):
-    """Zapisuje nową prośbę i zwraca jej ID."""
+    """Zapisuje nową prośbę i zwraca jej ID. Pomija duplikaty (ta sama treść w ciągu 5 min)."""
     requests = _load_requests()
+    # Deduplication: skip if identical original_message from same user in last 5 min
+    cutoff_dt = datetime.now() - timedelta(minutes=5)
+    for r in requests:
+        if (r.get("user_id") == user_id
+                and r.get("original_message", "").strip() == original_message.strip()
+                and r.get("status") == "pending"):
+            try:
+                created = datetime.fromisoformat(r["created_at"])
+                if created >= cutoff_dt:
+                    logger.info(f"Duplicate request skipped for {user_name}: {summary[:60]!r}")
+                    return r["id"]  # Return existing ID silently
+            except Exception:
+                pass
     req_id   = _next_request_id()
     requests.append({
         "id":               req_id,

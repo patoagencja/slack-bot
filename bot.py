@@ -66,6 +66,12 @@ _ctx.claude = Anthropic(api_key=os.environ.get("CLAUDE_API_KEY"))
 init_memory()
 _ctx.load_wizard_state()  # Restore wizard sessions that survived restart
 
+# Odtwórz nieobecności z historii Slacka po restarcie (Render usuwa pliki)
+try:
+    sync_availability_from_slack()
+except Exception as _sync_err:
+    logger.warning("startup sync_availability_from_slack failed: %s", _sync_err)
+
 app       = _ctx.app       # local alias for @app.event / @app.command decorators
 anthropic = _ctx.claude    # local alias for handle_mention / handle_message_events
 
