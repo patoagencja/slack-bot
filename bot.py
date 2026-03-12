@@ -1028,7 +1028,7 @@ def handle_message_events(body, say, logger):
         if _ch_id == _gwiz_ch and _msg_tts == _gwiz_tts:
             def _gwiz_say(text):
                 _google_wizard_post(user_id, text)
-            if _handle_google_campaign_wizard(user_id, user_message, _gwiz_say):
+            if _handle_google_campaign_wizard(user_id, user_message, event.get("files") or [], _gwiz_say):
                 return
 
     # === /kampaniameta WIZARD: obsłuż odpowiedzi z wątku na kanale ===
@@ -2301,7 +2301,7 @@ def handle_kampaniagoogle_slash(ack, command, logger):
     if extra_context:
         def _init_say(text):
             app.client.chat_postMessage(channel=source_channel, thread_ts=thread_ts, text=text)
-        _handle_google_campaign_wizard(user_id, None, _init_say)
+        _handle_google_campaign_wizard(user_id, None, [], _init_say)
 
     logger.info("/kampaniagoogle (%s) started by %s in %s", mode, user_id, source_channel)
 
@@ -2309,7 +2309,7 @@ def handle_kampaniagoogle_slash(ack, command, logger):
 logger.info("✅ /kampaniagoogle handler zarejestrowany")
 
 
-def _handle_google_campaign_wizard(user_id: str, user_message: str | None, say_fn) -> bool:
+def _handle_google_campaign_wizard(user_id: str, user_message: str | None, files: list = None, say_fn=None) -> bool:
     """
     Handle a channel thread reply for a user in the /kampaniagoogle wizard.
     Uses Claude to drive the conversation dynamically.
@@ -2317,6 +2317,12 @@ def _handle_google_campaign_wizard(user_id: str, user_message: str | None, say_f
     user_message=None means the message was already appended (e.g. from slash command extra context).
     Returns True if message was consumed by the wizard, False otherwise.
     """
+    if files is None:
+        files = []
+    # Support old call signature: (user_id, msg, say_fn) without files
+    if callable(files):
+        say_fn = files
+        files = []
     if user_id not in _ctx.google_campaign_wizard:
         return False
 
@@ -2343,8 +2349,16 @@ def _handle_google_campaign_wizard(user_id: str, user_message: str | None, say_f
             say_fn("🔵 OK — przechodzimy w tryb PRO. Teraz zrobię pełny setup kampanii.\nKontynuuję z danymi które już mam.")
             return True
 
-        # Dodaj wiadomość użytkownika do historii
-        wizard["messages"].append({"role": "user", "content": user_message})
+        # Build message content with file info
+        content = user_message
+        if files:
+            file_names = [f.get("name", "plik") for f in files]
+            content += f"\n[Załączone pliki: {', '.join(file_names)}]"
+            _file_ids = [f["id"] for f in files]
+            downloaded = download_slack_files(_file_ids) if _file_ids else []
+            wizard.setdefault("files", []).extend(downloaded)
+
+        wizard["messages"].append({"role": "user", "content": content})
 
     # --- Wybierz system prompt na podstawie trybu ---
     if current_mode == "auto":
