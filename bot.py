@@ -64,6 +64,7 @@ logger = logging.getLogger(__name__)
 _ctx.app    = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 _ctx.claude = Anthropic(api_key=os.environ.get("CLAUDE_API_KEY"))
 init_memory()
+_ctx.load_wizard_state()  # Restore wizard sessions that survived restart
 
 app       = _ctx.app       # local alias for @app.event / @app.command decorators
 anthropic = _ctx.claude    # local alias for handle_mention / handle_message_events
@@ -2094,7 +2095,9 @@ def handle_kampaniameta_slash(ack, command, logger):
         "thread_ts": thread_ts,
         "mode": mode,
         "resolved_mode": mode if mode != "auto" else "",
+        "files": [],
     }
+    _ctx.save_wizard_state()
 
     # Track thread so follow-ups work even if wizard state is lost
     _ctx.bot_threads.add((source_channel, thread_ts))
@@ -2271,12 +2274,14 @@ def _handle_meta_campaign_wizard(user_id: str, user_message: str | None, files: 
             if _words & _LAUNCH_KEYWORDS:
                 camp_id = wizard.get("draft_campaign_id")
                 del _ctx.meta_campaign_wizard[user_id]
+                _ctx.save_wizard_state()
                 say_fn("🚀 Uruchamiam kampanię...")
                 say_fn(approve_and_launch_campaign(camp_id))
                 return True
             if _words & _CANCEL_KEYWORDS:
                 camp_id = wizard.get("draft_campaign_id")
                 del _ctx.meta_campaign_wizard[user_id]
+                _ctx.save_wizard_state()
                 say_fn("❌ Kampania anulowana.")
                 cancel_campaign_draft(camp_id)
                 return True
@@ -2292,6 +2297,7 @@ def _handle_meta_campaign_wizard(user_id: str, user_message: str | None, files: 
 
         if msg_lower in ("anuluj", "cancel", "stop", "przerwij"):
             del _ctx.meta_campaign_wizard[user_id]
+            _ctx.save_wizard_state()
             say_fn("❌ Tworzenie kampanii Meta Ads anulowane.")
             return True
 
@@ -2383,6 +2389,7 @@ def _handle_meta_campaign_wizard(user_id: str, user_message: str | None, files: 
                     if not _account_id:
                         say_fn(f"⚠️ Nie znalazłem konta Meta dla klienta `{_params.get('client_name')}`. Sprawdź konfigurację.")
                         del _ctx.meta_campaign_wizard[user_id]
+                        _ctx.save_wizard_state()
                         return True
                     say_fn("📋 Tworzę szkic kampanii w Meta Ads...")
                     _targeting = build_meta_targeting(_params.get("targeting") or {})
@@ -2410,13 +2417,16 @@ def _handle_meta_campaign_wizard(user_id: str, user_message: str | None, files: 
                     # Keep wizard alive — wait for user to confirm launch or cancel
                     wizard["state"] = "awaiting_approval"
                     wizard["draft_campaign_id"] = _draft.get("campaign_id")
+                    _ctx.save_wizard_state()
                 except Exception as _de:
                     logger.error("Meta wizard draft creation error: %s", _de, exc_info=True)
                     say_fn(f"❌ Błąd tworzenia draftu: {_de}")
                     del _ctx.meta_campaign_wizard[user_id]
+                    _ctx.save_wizard_state()
             else:
                 logger.warning("Meta wizard: no JSON found in completion response — deleting wizard")
                 del _ctx.meta_campaign_wizard[user_id]
+                _ctx.save_wizard_state()
         else:
             say_fn(assistant_text)
 

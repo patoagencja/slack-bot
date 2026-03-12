@@ -37,3 +37,58 @@ meta_campaign_wizard: dict = {}
 # Voice transcription cache: (channel, msg_ts) → transcribed text
 # Allows thread handlers to recover voice message content from history
 voice_cache: dict = {}
+
+
+# ── Wizard state persistence ──────────────────────────────────────────────────
+import json as _json
+import os as _os
+
+_WIZARD_STATE_FILE = _os.path.join(
+    _os.path.dirname(_os.path.abspath(__file__)), "data", "wizard_state.json"
+)
+
+
+def _wizard_to_json(wizard: dict) -> dict:
+    """Serialize wizard state — skip binary files (not JSON-serializable)."""
+    return {k: v for k, v in wizard.items() if k != "files"}
+
+
+def save_wizard_state():
+    """Persist all wizard states to disk so they survive restarts."""
+    try:
+        payload = {
+            "meta":   {uid: _wizard_to_json(w) for uid, w in meta_campaign_wizard.items()},
+            "google": {uid: _wizard_to_json(w) for uid, w in google_campaign_wizard.items()},
+            "kampania": {uid: _wizard_to_json(w) for uid, w in campaign_wizard.items()},
+        }
+        _os.makedirs(_os.path.dirname(_WIZARD_STATE_FILE), exist_ok=True)
+        with open(_WIZARD_STATE_FILE, "w", encoding="utf-8") as f:
+            _json.dump(payload, f, ensure_ascii=False)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("save_wizard_state failed: %s", e)
+
+
+def load_wizard_state():
+    """Restore wizard states from disk after restart."""
+    try:
+        if not _os.path.exists(_WIZARD_STATE_FILE):
+            return
+        with open(_WIZARD_STATE_FILE, encoding="utf-8") as f:
+            payload = _json.load(f)
+        for uid, w in payload.get("meta", {}).items():
+            w.setdefault("files", [])
+            meta_campaign_wizard[uid] = w
+        for uid, w in payload.get("google", {}).items():
+            w.setdefault("files", [])
+            google_campaign_wizard[uid] = w
+        for uid, w in payload.get("kampania", {}).items():
+            w.setdefault("files", [])
+            campaign_wizard[uid] = w
+        restored = sum(len(payload.get(k, {})) for k in ("meta", "google", "kampania"))
+        if restored:
+            import logging
+            logging.getLogger(__name__).info("Restored %d wizard session(s) from disk", restored)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("load_wizard_state failed: %s", e)
