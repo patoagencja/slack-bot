@@ -1008,6 +1008,11 @@ def handle_message_events(body, say, logger):
             _ch_type = "group"
     logger.info(f"MSG EVENT → channel_type={_ch_type!r} ch={_ch_id} text={user_message[:60]!r}")
 
+    # Pliki kreacji (bez audio — głosówki transkrybowane osobno wyżej)
+    _creative_files = [f for f in _event_files
+                       if f.get("mimetype", "") not in SLACK_AUDIO_MIMES
+                       and f.get("subtype") != "slack_audio"]
+
     # === /kampania WIZARD: obsłuż odpowiedzi z wątku na kanale ===
     if user_id in _ctx.campaign_wizard:
         _wiz = _ctx.campaign_wizard[user_id]
@@ -1017,7 +1022,7 @@ def handle_message_events(body, say, logger):
         if _ch_id == _wiz_ch and _msg_tts == _wiz_tts:
             def _wiz_say(text):
                 _wizard_post(user_id, text)
-            if _handle_campaign_wizard(user_id, user_message, event.get("files") or [], _wiz_say):
+            if _handle_campaign_wizard(user_id, user_message, _creative_files, _wiz_say):
                 return
 
     # === /kampaniagoogle WIZARD: obsłuż odpowiedzi z wątku na kanale ===
@@ -1029,7 +1034,7 @@ def handle_message_events(body, say, logger):
         if _ch_id == _gwiz_ch and _msg_tts == _gwiz_tts:
             def _gwiz_say(text):
                 _google_wizard_post(user_id, text)
-            if _handle_google_campaign_wizard(user_id, user_message, event.get("files") or [], _gwiz_say):
+            if _handle_google_campaign_wizard(user_id, user_message, _creative_files, _gwiz_say):
                 return
 
     # === /kampaniameta WIZARD: obsłuż odpowiedzi z wątku na kanale ===
@@ -1041,7 +1046,7 @@ def handle_message_events(body, say, logger):
         if _ch_id == _mwiz_ch and _msg_tts == _mwiz_tts:
             def _mwiz_say(text):
                 _meta_wizard_post(user_id, text)
-            if _handle_meta_campaign_wizard(user_id, user_message, event.get("files") or [], _mwiz_say):
+            if _handle_meta_campaign_wizard(user_id, user_message, _creative_files, _mwiz_say):
                 return
 
     # === STANDUP: przechwytuj odpowiedzi z DM ===
