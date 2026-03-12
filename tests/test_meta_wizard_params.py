@@ -86,10 +86,29 @@ class TestClientNameDetection:
         p = fn({"mode": "simple", "campaign_name": "m2 nieruchomości", "landing_page_url": ""}, {})
         assert p["client_name"] == "m2"
 
-    def test_unknown_defaults_to_dre(self):
+    def test_unknown_returns_none(self):
+        """Unknown client now returns None so the wizard can ask the user."""
         fn = get_fn()
         p = fn({"mode": "simple", "campaign_name": "Nieznany klient", "landing_page_url": ""}, {})
-        assert p["client_name"] == "dre"
+        assert p["client_name"] is None
+
+    def test_patoagencja_url_does_not_match_pato_client(self):
+        """Agency's own domain should never trigger 'pato' client detection."""
+        fn = get_fn()
+        p = fn({"mode": "simple", "campaign_name": "test kampania dre", "landing_page_url": "patoagencja.com"}, {})
+        assert p["client_name"] == "dre"  # campaign name wins
+
+    def test_patoagencja_url_alone_returns_none(self):
+        """Only the agency domain in URL → cannot detect client → returns None."""
+        fn = get_fn()
+        p = fn({"mode": "simple", "campaign_name": "test kampania", "landing_page_url": "patoagencja.com"}, {})
+        assert p["client_name"] is None
+
+    def test_explicit_client_name_field(self):
+        """explicit client_name JSON field is respected."""
+        fn = get_fn()
+        p = fn({"mode": "simple", "client_name": "instax", "campaign_name": "random name", "landing_page_url": ""}, {})
+        assert p["client_name"] == "instax"
 
 
 # ── Budget parsing ─────────────────────────────────────────────────────────────

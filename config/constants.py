@@ -120,6 +120,7 @@ ONBOARDING_CHECKLIST = [
 # ── ABSENCE / REQUESTS LABELS ──────────────────────────────────────────────────
 ABSENCE_KEYWORDS = [
     "nie będzie", "nie bedzie", "nie ma mnie", "nie będę", "nie bede",
+    "nie ma go", "nie ma jej", "nie ma", "nie będzie go", "nie bedzie go",
     "urlop", "wolne", "nieobecn", "będę tylko", "bede tylko",
     "będę od", "bede od", "będę do", "bede do",
     "wychodzę wcześniej", "wychodze wczesniej", "wcześniej wychodzę",
