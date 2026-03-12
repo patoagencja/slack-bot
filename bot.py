@@ -2370,8 +2370,8 @@ def _handle_meta_campaign_wizard(user_id: str, user_message: str | None, files: 
                         }
                         _preview = generate_campaign_preview(_params, _tgt_preview, len(_creatives), _draft)
                         say_fn(_preview)
-                        wizard["state"] = "awaiting_approval"
-                        wizard["draft_campaign_id"] = _draft.get("campaign_id")
+                        say_fn("✅ Kampania jest w Meta Ads — *wyłączona*. Włącz ją ręcznie w panelu kiedy będziesz gotowy.")
+                        del _ctx.meta_campaign_wizard[user_id]
                         _ctx.save_wizard_state()
                     except Exception as _de:
                         logger.error("Meta wizard (asking_client) draft creation error: %s", _de, exc_info=True)
@@ -2518,9 +2518,8 @@ def _handle_meta_campaign_wizard(user_id: str, user_message: str | None, files: 
                     }
                     _preview = generate_campaign_preview(_params, _tgt_preview, len(_creatives), _draft)
                     say_fn(_preview)
-                    # Keep wizard alive — wait for user to confirm launch or cancel
-                    wizard["state"] = "awaiting_approval"
-                    wizard["draft_campaign_id"] = _draft.get("campaign_id")
+                    say_fn("✅ Kampania jest w Meta Ads — *wyłączona*. Włącz ją ręcznie w panelu kiedy będziesz gotowy.")
+                    del _ctx.meta_campaign_wizard[user_id]
                     _ctx.save_wizard_state()
                 except Exception as _de:
                     logger.error("Meta wizard draft creation error: %s", _de, exc_info=True)

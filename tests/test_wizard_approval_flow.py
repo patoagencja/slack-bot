@@ -138,8 +138,11 @@ class TestWizardNotDeletedBeforeApproval:
                 mock_claude.return_value.content = [MagicMock(text=completion_text)]
                 bot._handle_meta_campaign_wizard("U123", "uruchom na koncie dre", [], say)
 
-        # Wizard must still exist in awaiting_approval state
-        assert "U123" in _ctx.meta_campaign_wizard, \
-            "CRITICAL: Wizard was deleted before user confirmed launch!"
-        assert _ctx.meta_campaign_wizard["U123"]["state"] == "awaiting_approval"
-        assert _ctx.meta_campaign_wizard["U123"]["draft_campaign_id"] == "CAMP_999"
+        # Wizard is cleaned up after successful draft creation (campaign is left PAUSED in Meta)
+        assert "U123" not in _ctx.meta_campaign_wizard, \
+            "Wizard should be deleted after draft creation — campaign is left paused in Meta"
+        # Preview and done message must have been sent
+        say.assert_any_call("📋 Preview OK")
+        done_calls = [str(c) for c in say.call_args_list]
+        assert any("wyłączona" in c or "włącz" in c.lower() for c in done_calls), \
+            "Bot should tell user campaign is paused/disabled"
