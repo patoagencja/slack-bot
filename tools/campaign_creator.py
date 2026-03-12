@@ -49,7 +49,7 @@ _ALLOWED_TYPES = {
     "video/mp4":      "mp4",
     "video/quicktime": "mov",
 }
-_MAX_FILE_SIZE = 8 * 1024 * 1024  # 8 MB
+_MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB (video creatives can be large)
 
 
 # ── ETAP 1: FILE HANDLING ──────────────────────────────────────────────────────
