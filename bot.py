@@ -2111,6 +2111,100 @@ def handle_kampaniameta_slash(ack, command, logger):
 logger.info("✅ /kampaniameta handler zarejestrowany")
 
 
+def _meta_wizard_json_to_params(wjson: dict, wizard: dict) -> dict:
+    """Convert /kampaniameta wizard completion JSON to create_campaign_draft params."""
+    mode = wjson.get("mode", "simple")
+
+    # ── Detect client_name from name/url/context ─────────────────────────────
+    _name_raw  = (wjson.get("campaign_name") or "").lower()
+    _url_raw   = (wjson.get("landing_page_url") or wjson.get("website_url") or "").lower()
+    _ctx_text  = _name_raw + " " + _url_raw
+    client_name = None
+    for _k in ("dre", "instax", "m2", "pato"):
+        if _k in _ctx_text:
+            client_name = _k
+            break
+    if not client_name:
+        client_name = "dre"
+
+    # ── Budget ────────────────────────────────────────────────────────────────
+    _budget_raw = wjson.get("daily_budget") or wjson.get("budget_daily") or "10"
+    try:
+        daily_budget = float(re.sub(r"[^\d.,]", "", str(_budget_raw)).replace(",", "."))
+    except Exception:
+        daily_budget = 10.0
+
+    # ── Objective ─────────────────────────────────────────────────────────────
+    _OBJ_MAP = {
+        "TRAFFIC": "OUTCOME_TRAFFIC", "LEADS": "OUTCOME_LEADS",
+        "SALES": "OUTCOME_SALES", "ENGAGEMENT": "OUTCOME_ENGAGEMENT",
+        "AWARENESS": "OUTCOME_AWARENESS", "APP_PROMOTION": "OUTCOME_APP_PROMOTION",
+        "MESSAGES": "OUTCOME_ENGAGEMENT",
+    }
+    _obj_raw = (wjson.get("objective") or "TRAFFIC").upper().replace("OUTCOME_", "")
+    objective = _OBJ_MAP.get(_obj_raw, f"OUTCOME_{_obj_raw}" if not _obj_raw.startswith("OUTCOME") else _obj_raw)
+
+    # ── Targeting ─────────────────────────────────────────────────────────────
+    if mode == "simple":
+        _age = (wjson.get("age_range") or "18-65")
+        _age_parts = re.findall(r"\d+", _age)
+        age_min = int(_age_parts[0]) if _age_parts else 18
+        age_max = int(_age_parts[1]) if len(_age_parts) > 1 else 65
+        _gender_raw = (wjson.get("gender") or "all").lower()
+        genders = [2] if any(k in _gender_raw for k in ("kobi", "female", "women")) else \
+                  [1] if any(k in _gender_raw for k in ("mężcz", "mezcz", "male", "men")) else []
+        _locs = [wjson.get("country") or "Polska"]
+        interests = wjson.get("interests") or []
+    else:  # pro
+        _age = (wjson.get("age_range") or "18-65")
+        _age_parts = re.findall(r"\d+", _age)
+        age_min = int(_age_parts[0]) if _age_parts else 18
+        age_max = int(_age_parts[1]) if len(_age_parts) > 1 else 65
+        _gender_raw = (wjson.get("gender") or "all").lower()
+        genders = [2] if any(k in _gender_raw for k in ("kobi", "female", "women")) else \
+                  [1] if any(k in _gender_raw for k in ("mężcz", "mezcz", "male", "men")) else []
+        _locs = wjson.get("location") or ["Polska"]
+        interests = []
+        for _aud in (wjson.get("audiences") or []):
+            if isinstance(_aud, dict):
+                interests += _aud.get("interests", [])
+            elif isinstance(_aud, str):
+                interests.append(_aud)
+
+    # ── Creative text ─────────────────────────────────────────────────────────
+    _creative = wjson.get("creative") or {}
+    ad_text  = _creative.get("primary_text") or (_creative.get("texts") or [None])[0] or ""
+    headline = _creative.get("headline") or (_creative.get("headlines") or [None])[0] or ""
+    cta      = (_creative.get("cta") or "LEARN_MORE").upper().replace(" ", "_")
+
+    # ── Dates ─────────────────────────────────────────────────────────────────
+    _sched     = wjson.get("schedule") or {}
+    start_date = _sched.get("start_date") or datetime.now().strftime("%Y-%m-%d")
+    end_date   = _sched.get("end_date") or None
+
+    return {
+        "client_name":     client_name,
+        "campaign_name":   wjson.get("campaign_name") or f"Kampania {client_name.upper()} — {datetime.now().strftime('%d.%m.%Y')}",
+        "objective":       objective,
+        "daily_budget":    daily_budget,
+        "destination_url": _url_raw or "",
+        "website_url":     _url_raw or "",
+        "ad_text":         ad_text,
+        "ad_copy":         ad_text,
+        "headline":        headline,
+        "call_to_action":  cta,
+        "start_date":      start_date,
+        "end_date":        end_date,
+        "targeting": {
+            "age_min":   age_min,
+            "age_max":   age_max,
+            "genders":   genders,
+            "interests": interests,
+            "locations": _locs,
+        },
+    }
+
+
 def _handle_meta_campaign_wizard(user_id: str, user_message: str | None, files: list, say_fn) -> bool:
     """
     Handle a channel thread reply for a user in the /kampaniameta wizard.
@@ -2195,9 +2289,39 @@ def _handle_meta_campaign_wizard(user_id: str, user_message: str | None, files: 
             wizard["messages"] = wizard["messages"][-30:]
 
         if "===KAMPANIA_META_GOTOWA===" in assistant_text:
+            clean_text = assistant_text.replace("===KAMPANIA_META_GOTOWA===", "").strip()
+            say_fn(clean_text)
+            # Spróbuj wyciągnąć JSON i stworzyć draft w Meta
+            _json_match = re.search(r"```json\s*(\{.*?\})\s*```", assistant_text, re.DOTALL)
+            if _json_match:
+                try:
+                    _wjson = json.loads(_json_match.group(1))
+                    _params = _meta_wizard_json_to_params(_wjson, wizard)
+                    _account_id = get_meta_account_id(_params.get("client_name", ""))
+                    if _account_id:
+                        say_fn("📋 Tworzę szkic kampanii w Meta Ads...")
+                        _targeting = build_meta_targeting(_params.get("targeting") or {})
+                        _creatives_raw = wizard.get("files", [])
+                        _creatives = []
+                        if _creatives_raw:
+                            say_fn(f"🎨 Uploaduję {len(_creatives_raw)} kreacji do Meta...")
+                            for _fname, _fdata, _fmime in _creatives_raw:
+                                try:
+                                    _cr = upload_creative_to_meta(_account_id, _fdata, _fmime, _fname)
+                                    _creatives.append(_cr)
+                                except Exception as _uce:
+                                    say_fn(f"⚠️ Nie udało się uploadować `{_fname}`: {_uce}")
+                        _draft = create_campaign_draft(_account_id, _params, _creatives, _targeting)
+                        _preview = generate_campaign_preview(_params, _params.get("targeting") or {}, len(_creatives), _draft)
+                        say_fn(_preview)
+                        del _ctx.meta_campaign_wizard[user_id]
+                        return True
+                    else:
+                        say_fn(f"⚠️ Nie znalazłem konta Meta dla klienta `{_params.get('client_name')}`. Sprawdź konfigurację.")
+                except Exception as _de:
+                    logger.error("Meta wizard draft creation error: %s", _de, exc_info=True)
+                    say_fn(f"❌ Błąd tworzenia draftu: {_de}")
             del _ctx.meta_campaign_wizard[user_id]
-            final_text = assistant_text.replace("===KAMPANIA_META_GOTOWA===", "").strip()
-            say_fn(f"✅ *Kampania Meta Ads gotowa!*\n\n{final_text}")
         else:
             say_fn(assistant_text)
 
