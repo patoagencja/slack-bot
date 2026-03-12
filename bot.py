@@ -1019,6 +1019,18 @@ def handle_message_events(body, say, logger):
             if _handle_campaign_wizard(user_id, user_message, event.get("files") or [], _wiz_say):
                 return
 
+    # === /kampaniagoogle WIZARD: obsłuż odpowiedzi z wątku na kanale ===
+    if user_id in _ctx.google_campaign_wizard:
+        _gwiz = _ctx.google_campaign_wizard[user_id]
+        _gwiz_ch  = _gwiz.get("source_channel")
+        _gwiz_tts = _gwiz.get("thread_ts")
+        _msg_tts  = event.get("thread_ts")
+        if _ch_id == _gwiz_ch and _msg_tts == _gwiz_tts:
+            def _gwiz_say(text):
+                _google_wizard_post(user_id, text)
+            if _handle_google_campaign_wizard(user_id, user_message, _gwiz_say):
+                return
+
     # === STANDUP: przechwytuj odpowiedzi z DM ===
     if _ch_type == "im":
         try:
@@ -1609,6 +1621,199 @@ def _build_campaign_from_wizard(user_id: str, wizard: dict, say_fn):
     except Exception as e:
         logger.error("_build_campaign_from_wizard error: %s", e)
         say_fn(f"❌ Błąd tworzenia kampanii: {e}")
+
+
+# ── /kampaniagoogle — Claude-driven Google Ads wizard ─────────────────────────
+
+GOOGLE_CAMPAIGN_SYSTEM_PROMPT = """\
+Jesteś ekspertem Google Ads i asystentem do tworzenia kampanii reklamowych w Slacku (Sebol).
+Twoje zachowanie:
+1. Po rozpoczęciu procesu prowadzisz rozmowę etapami.
+2. Najpierw ustalasz typ kampanii i cel biznesowy.
+3. Następnie zadajesz szczegółowe pytania zależne od typu kampanii.
+4. Nie zakładasz niczego samodzielnie, jeśli użytkownik tego nie potwierdził.
+5. Zawsze wykrywasz braki, niejasności, sprzeczności i dopytujesz.
+6. Kończysz dopiero wtedy, gdy masz pełen komplet informacji operacyjnych.
+
+Styl prowadzenia rozmowy:
+- Krótko, jasno, etapami, bez lania wody, ale bardzo konkretnie.
+- Po polsku, naturalnie — jak kolega z agencji.
+- Zadawaj pytania w partiach po kilka (3–6), nie 40 naraz.
+- Jeśli odpowiedź jest zbyt ogólna — dopytuj.
+- Jeśli coś jest sprzeczne — wytknij i poproś o doprecyzowanie.
+
+Typy kampanii: Search, Performance Max, Display, Video/YouTube, Demand Gen, Shopping, App.
+Jeśli user nie wie jaki typ — zrób diagnozę i zaproponuj.
+
+Etapy rozmowy:
+RUNDA 1 — cel, oferta, rynek, budżet, typ kampanii
+RUNDA 2 — landing page, odbiorcy, tracking, KPI, harmonogram
+RUNDA 3 — pytania zależne od typu kampanii (słowa kluczowe/feed/kreacje/odbiorcy)
+RUNDA 4 — brakujące elementy kreatywne, techniczne, wykluczenia
+RUNDA 5 — finalne podsumowanie i potwierdzenie kompletności
+
+Wymagane pola przed finalizacją:
+- typ kampanii, cel, budżet, lokalizacja, język, konwersja/KPI
+- URL docelowy, targetowanie/słowa kluczowe/odbiorcy
+- materiały reklamowe, wykluczenia, harmonogram
+
+WAŻNE — Sygnał zakończenia:
+Gdy masz KOMPLET danych i użytkownik potwierdzi, wygeneruj odpowiedź z DOKŁADNIE takim znacznikiem:
+===KAMPANIA_GOOGLE_GOTOWA===
+A pod nim 4 sekcje:
+1. **Podsumowanie kampanii** — typ, cel, oferta, grupa docelowa, rynek, budżet, KPI, start
+2. **Struktura kampanii** — kampania, grupy reklam/asset groups, słowa kluczowe/odbiorcy/produkty, reklamy/assets, rozszerzenia
+3. **Ryzyka / checklista** — braki, ryzyka, rekomendacje, elementy do weryfikacji technicznej
+4. **Dane do utworzenia kampanii — JSON**:
+```json
+{
+  "campaign_name": "", "campaign_type": "", "business_goal": "",
+  "conversion_goal": "", "brand_name": "", "website_url": "",
+  "landing_page_url": "", "country": "", "locations": [],
+  "languages": [], "daily_budget": "", "monthly_budget": "",
+  "bidding_strategy": "", "target_cpa": "", "target_roas": "",
+  "start_date": "", "end_date": "", "audiences": [],
+  "remarketing_lists": [], "customer_match": false,
+  "keywords": [], "negative_keywords": [],
+  "placements": [], "excluded_placements": [],
+  "product_feed": {"merchant_center": false, "feed_available": false,
+    "feed_scope": "", "included_products": [], "excluded_products": []},
+  "asset_groups": [],
+  "ads": {"headlines": [], "long_headlines": [], "descriptions": [],
+    "paths": [], "call_to_action": "", "images": [], "logos": [], "videos": []},
+  "extensions": {"sitelinks": [], "callouts": [], "structured_snippets": [],
+    "phone": "", "location_extension": false, "promotion_extension": []},
+  "schedule": {"ad_schedule": [], "devices": [], "frequency_cap": ""},
+  "tracking": {"ga4": false, "gtm": false, "google_tag": false,
+    "conversion_tracking": false, "conversion_actions": []},
+  "compliance": {"legal_restrictions": [], "brand_restrictions": [],
+    "excluded_terms": [], "excluded_brands": []},
+  "notes": [], "missing_items": [], "ready_to_create": false
+}
+```
+
+Pytania obowiązkowe niezależnie od typu:
+1. Firma/marka, 2. Produkt/usługa, 3. Cel kampanii, 4. Najważniejsza konwersja,
+5. Budżet, 6. Rynek docelowy, 7. Landing page, 8. Oferta/przewaga,
+9. Odbiorca, 10. Materiały kreatywne, 11. Ograniczenia brandowe/prawne,
+12. KPI sukcesu, 13. Tracking/konwersje gotowe?, 14. Data startu,
+15. Data zakończenia?, 16. Listy remarketingowe?, 17. Wykluczenia?,
+18. Pełna automatyzacja czy kontrolowana struktura?
+
+Szczegółowe pytania per typ kampanii:
+- Search: brand/niebrand, strategia stawek, frazy (główne/poboczne/long-tail/wykluczenia), dopasowania, RSA (10-15 nagłówków, 4 opisy, ścieżki URL), rozszerzenia, harmonogram
+- Performance Max: feed/Merchant Center, asset groups (nagłówki/opisy/obrazy/logo/video), audience signals, URL expansion
+- Display: prospecting/remarketing, segmenty, placementy, responsive display ads, częstotliwość
+- Video/YouTube: materiały video, formaty, CPV/tCPA, inventory type, companion banner
+- Demand Gen: custom segments, kreacje (poziome/pionowe/kwadratowe), asset groups
+- Shopping: Merchant Center, feed, custom labels, podział (marka/kategoria/marża), priorytety
+- App: platforma, link do sklepu, Firebase/SDK, eventy in-app, target CPI/CPA
+
+Nigdy nie finalizuj po ogólnikowej odpowiedzi. Zawsze doprecyzowuj.
+"""
+
+
+def _google_wizard_post(user_id: str, text: str):
+    """Post Google wizard message to source_channel in wizard thread."""
+    wizard = _ctx.google_campaign_wizard.get(user_id)
+    if not wizard:
+        return
+    ch = wizard.get("source_channel")
+    ts = wizard.get("thread_ts")
+    try:
+        app.client.chat_postMessage(channel=ch, thread_ts=ts, text=text)
+    except Exception as e:
+        logger.error("_google_wizard_post error: %s", e)
+
+
+@app.command("/kampaniagoogle")
+def handle_kampaniagoogle_slash(ack, command, logger):
+    ack()
+    user_id = command["user_id"]
+    source_channel = command.get("channel_id", "")
+
+    intro = (
+        "🔵 *Tworzymy nową kampanię Google Ads!*\n"
+        "Przeprowadzę Cię przez cały proces krok po kroku.\n"
+        "Napisz `anuluj` żeby przerwać w dowolnym momencie.\n\n"
+        "Zaczynamy. Odpowiedz proszę na te 5 pytań:\n\n"
+        "1️⃣ Jaki jest główny cel kampanii? _(sprzedaż / leady / telefony / ruch / świadomość / wizyty w sklepie / instalacje apki)_\n"
+        "2️⃣ Co dokładnie reklamujemy? _(produkt / usługa / oferta)_\n"
+        "3️⃣ Na jaki rynek kierujemy? _(kraj / miasta / regiony)_\n"
+        "4️⃣ Jaki masz budżet dzienny lub miesięczny?\n"
+        "5️⃣ Jaki typ kampanii chcesz? _(Search / Performance Max / Display / Video / Demand Gen / Shopping / App — lub 'nie wiem')_"
+    )
+    try:
+        resp = app.client.chat_postMessage(channel=source_channel, text=intro)
+        thread_ts = resp["ts"]
+    except Exception as e:
+        logger.error("/kampaniagoogle post error: %s", e)
+        return
+
+    _ctx.google_campaign_wizard[user_id] = {
+        "messages": [
+            {"role": "assistant", "content": intro},
+        ],
+        "source_channel": source_channel,
+        "thread_ts": thread_ts,
+    }
+    logger.info("/kampaniagoogle started by %s in %s thread %s", user_id, source_channel, thread_ts)
+
+
+logger.info("✅ /kampaniagoogle handler zarejestrowany")
+
+
+def _handle_google_campaign_wizard(user_id: str, user_message: str, say_fn) -> bool:
+    """
+    Handle a channel thread reply for a user in the /kampaniagoogle wizard.
+    Uses Claude to drive the conversation dynamically.
+    Returns True if message was consumed by the wizard, False otherwise.
+    """
+    if user_id not in _ctx.google_campaign_wizard:
+        return False
+
+    wizard = _ctx.google_campaign_wizard[user_id]
+
+    # Anulowanie
+    if user_message.strip().lower() in ("anuluj", "cancel", "stop", "przerwij"):
+        del _ctx.google_campaign_wizard[user_id]
+        say_fn("❌ Tworzenie kampanii Google Ads anulowane.")
+        return True
+
+    # Dodaj wiadomość użytkownika do historii
+    wizard["messages"].append({"role": "user", "content": user_message})
+
+    try:
+        response = _ctx.claude.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=3000,
+            system=GOOGLE_CAMPAIGN_SYSTEM_PROMPT,
+            messages=wizard["messages"],
+        )
+        assistant_text = response.content[0].text
+
+        # Zapisz odpowiedź Claude do historii
+        wizard["messages"].append({"role": "assistant", "content": assistant_text})
+
+        # Trim historii jeśli za długa (zachowaj ostatnie 30 wiadomości)
+        if len(wizard["messages"]) > 30:
+            wizard["messages"] = wizard["messages"][-30:]
+
+        # Sprawdź czy kampania jest gotowa
+        if "===KAMPANIA_GOOGLE_GOTOWA===" in assistant_text:
+            # Wyczyść stan wizarda
+            del _ctx.google_campaign_wizard[user_id]
+            # Wyślij finalne podsumowanie (bez markera)
+            final_text = assistant_text.replace("===KAMPANIA_GOOGLE_GOTOWA===", "").strip()
+            say_fn(f"✅ *Kampania Google Ads gotowa!*\n\n{final_text}")
+        else:
+            say_fn(assistant_text)
+
+    except Exception as e:
+        logger.error("Google campaign wizard Claude error: %s", e)
+        say_fn(f"❌ Błąd komunikacji z AI: {e}")
+
+    return True
 
 
 # ── scheduler ─────────────────────────────────────────────────────────────────
