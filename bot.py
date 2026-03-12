@@ -1747,8 +1747,13 @@ Shopping:
 Jeśli user poda od razu dużo danych (np. "kampania yt budżet 50 zł Polska 18-34 film: link strona: link")
 — NIE pytaj więcej, od razu generuj output.
 
-Jeśli user zacznie prosić o strategię lub szczegółowy setup, zaproponuj:
-"Możemy przejść w tryb PRO i zrobić pełny setup kampanii — napisz `pro`."
+PRZEŁĄCZENIE NA PRO:
+Jeśli w trakcie rozmowy okaże się że temat jest złożony (user nie wie czego chce, chce strategii,
+ma 2+ cele/segmenty, pyta o ROAS/CPA/remarketing/segmentację), ZACZNIJ odpowiedź od:
+===SWITCH:PRO===
+Tu już wchodzimy w bardziej rozbudowany setup. Przełączam na tryb PRO, żeby dobrze dobrać strukturę.
+
+Jeśli user sam napisze "pro" — nie musisz nic robić, system obsłuży to automatycznie.
 
 WAŻNE — Sygnał zakończenia:
 Gdy masz wystarczające dane, wygeneruj odpowiedź z DOKŁADNIE takim znacznikiem:
@@ -1786,6 +1791,56 @@ A pod nim 3 sekcje:
 """
 
 _SIMPLE_TRIGGERS = {"simple", "szybka", "quick", "prosta", "szybko", "szybki"}
+_PRO_TRIGGERS = {"pro", "full", "szczegolowo", "szczegółowo", "pelny", "pełny"}
+
+GOOGLE_CAMPAIGN_AUTO_PROMPT = """\
+Jesteś ekspertem Google Ads w Slacku (Sebol). Twoja rola: analiza intencji użytkownika i wybór trybu pracy.
+
+Użytkownik właśnie zaczął tworzenie kampanii Google Ads komendą /kampaniagoogle.
+Przeanalizuj jego PIERWSZĄ wiadomość i zdecyduj, czy chce:
+- **SIMPLE** — szybkie odpalenie prostej kampanii
+- **PRO** — pełny, strategiczny setup
+
+ZASADY WYBORU:
+
+Wybierz SIMPLE jeśli:
+- User chce "szybko", "prosto", "bez pytań", "minimum", "tylko odpal", "na szybko"
+- User od razu podaje komplet danych: typ, budżet, lokalizacja, materiał, URL
+- Prosty jednoelementowy setup (jeden film na YT, jedna kampania brand search, itp.)
+- Sygnały: "wrzuć kampanię", "mam film i link", "zrób prostą kampanię"
+
+Wybierz PRO jeśli:
+- User nie wie jaki typ kampanii wybrać
+- User chce rekomendacji, strategii, struktury
+- Są 2+ cele, segmenty, produkty/usługi
+- Sygnały: "strategia", "struktura", "dobierz", "zoptymalizuj", "ROAS", "CPA",
+  "remarketing", "audience signals", "segmentacja", "rozpisz", "porządnie"
+- User mówi o sklepie z feedem, wieloproduktowym PMax, brand/non-brand split
+
+Domyślnie:
+- Proste wejścia → SIMPLE
+- Niejasne i złożone → PRO
+
+NIE PYTAJ użytkownika "chcesz simple czy pro?" — sam zdecyduj.
+
+FORMAT ODPOWIEDZI:
+Twoja odpowiedź MUSI zaczynać się od jednego z tych znaczników (sam w linii):
+===MODE:SIMPLE===
+lub
+===MODE:PRO===
+
+Po znaczniku napisz odpowiedni komunikat startowy i PIERWSZE pytania.
+
+Jeśli SIMPLE:
+"Jasne — lecimy szybko. Zbieram tylko minimum potrzebne do odpalenia kampanii."
+Potem minimalny zestaw pytań (6-7) zależny od tego co user już podał.
+
+Jeśli PRO:
+"Jasne — zrobimy pełny setup. Najpierw zbiorę podstawy kampanii, potem dopytam o szczegóły."
+Potem 5 pytań startowych (cel, oferta, rynek, budżet, typ kampanii).
+
+Jeśli user podał już dane — NIE pytaj o nie ponownie, po prostu potwierdź i pytaj o brakujące.
+"""
 
 
 def _google_wizard_post(user_id: str, text: str):
@@ -1806,16 +1861,28 @@ def handle_kampaniagoogle_slash(ack, command, logger):
     ack()
     user_id = command["user_id"]
     source_channel = command.get("channel_id", "")
-    cmd_text = (command.get("text") or "").strip().lower()
+    cmd_text = (command.get("text") or "").strip()
+    cmd_lower = cmd_text.lower()
+    cmd_words = cmd_lower.split()
 
-    # Detect SIMPLE mode from command args
-    is_simple = any(t in cmd_text.split() for t in _SIMPLE_TRIGGERS)
-    # Auto-detect: if user wrote extra context after trigger word, pass it as first message
+    # 1. Detect explicit mode from command args
+    explicit_simple = any(t in cmd_words for t in _SIMPLE_TRIGGERS)
+    explicit_pro = any(t in cmd_words for t in _PRO_TRIGGERS)
+
+    if explicit_simple:
+        mode = "simple"
+    elif explicit_pro:
+        mode = "pro"
+    else:
+        mode = "auto"
+
+    # Strip mode triggers from text to get extra context
     extra_context = cmd_text
-    for t in _SIMPLE_TRIGGERS:
-        extra_context = extra_context.replace(t, "").strip()
+    for t in (_SIMPLE_TRIGGERS | _PRO_TRIGGERS):
+        extra_context = re.sub(rf'\b{re.escape(t)}\b', '', extra_context, flags=re.IGNORECASE).strip()
 
-    if is_simple:
+    # Build intro based on resolved mode
+    if mode == "simple":
         intro = (
             "⚡ *Szybka kampania Google Ads — tryb SIMPLE*\n"
             "Zbierzemy tylko najważniejsze dane i jedziemy.\n"
@@ -1828,9 +1895,9 @@ def handle_kampaniagoogle_slash(ack, command, logger):
             "5️⃣ Link docelowy?\n"
             "6️⃣ Jakie materiały reklamowe masz? _(nagłówki / opisy / link do filmu / obrazy)_"
         )
-    else:
+    elif mode == "pro":
         intro = (
-            "🔵 *Tworzymy nową kampanię Google Ads!*\n"
+            "🔵 *Tworzymy nową kampanię Google Ads — tryb PRO*\n"
             "Przeprowadzę Cię przez cały proces krok po kroku.\n"
             "Napisz `anuluj` żeby przerwać w dowolnym momencie.\n\n"
             "Zaczynamy. Odpowiedz proszę na te 5 pytań:\n\n"
@@ -1839,6 +1906,14 @@ def handle_kampaniagoogle_slash(ack, command, logger):
             "3️⃣ Na jaki rynek kierujemy? _(kraj / miasta / regiony)_\n"
             "4️⃣ Jaki masz budżet dzienny lub miesięczny?\n"
             "5️⃣ Jaki typ kampanii chcesz? _(Search / Performance Max / Display / Video / Demand Gen / Shopping / App — lub 'nie wiem')_"
+        )
+    else:  # auto
+        intro = (
+            "🔵 *Tworzymy kampanię Google Ads!*\n"
+            "Napisz `anuluj` żeby przerwać w dowolnym momencie.\n\n"
+            "Powiedz mi co chcesz zrobić — dopasuję proces do potrzeb.\n"
+            "Możesz np. podać od razu typ kampanii, budżet, link i materiały,\n"
+            "albo opisać cel i pomogę dobrać najlepsze rozwiązanie."
         )
 
     try:
@@ -1849,7 +1924,6 @@ def handle_kampaniagoogle_slash(ack, command, logger):
         return
 
     messages = [{"role": "assistant", "content": intro}]
-    # If user provided extra context with the command, inject it
     if extra_context:
         messages.append({"role": "user", "content": extra_context})
 
@@ -1857,16 +1931,17 @@ def handle_kampaniagoogle_slash(ack, command, logger):
         "messages": messages,
         "source_channel": source_channel,
         "thread_ts": thread_ts,
-        "mode": "simple" if is_simple else "pro",
+        "mode": mode,              # "auto", "simple", "pro"
+        "resolved_mode": mode if mode != "auto" else "",  # filled after auto-detection
     }
 
-    # If extra context was provided, immediately process it through Claude
+    # If extra context was provided, immediately process through Claude
     if extra_context:
         def _init_say(text):
             app.client.chat_postMessage(channel=source_channel, thread_ts=thread_ts, text=text)
         _handle_google_campaign_wizard(user_id, None, _init_say)
 
-    logger.info("/kampaniagoogle (%s) started by %s in %s", "simple" if is_simple else "pro", user_id, source_channel)
+    logger.info("/kampaniagoogle (%s) started by %s in %s", mode, user_id, source_channel)
 
 
 logger.info("✅ /kampaniagoogle handler zarejestrowany")
@@ -1876,6 +1951,7 @@ def _handle_google_campaign_wizard(user_id: str, user_message: str | None, say_f
     """
     Handle a channel thread reply for a user in the /kampaniagoogle wizard.
     Uses Claude to drive the conversation dynamically.
+    Supports AUTO/SIMPLE/PRO modes with automatic resolution and switching.
     user_message=None means the message was already appended (e.g. from slash command extra context).
     Returns True if message was consumed by the wizard, False otherwise.
     """
@@ -1883,6 +1959,7 @@ def _handle_google_campaign_wizard(user_id: str, user_message: str | None, say_f
         return False
 
     wizard = _ctx.google_campaign_wizard[user_id]
+    current_mode = wizard.get("resolved_mode") or wizard.get("mode", "auto")
 
     if user_message is not None:
         msg_lower = user_message.strip().lower()
@@ -1893,9 +1970,9 @@ def _handle_google_campaign_wizard(user_id: str, user_message: str | None, say_f
             say_fn("❌ Tworzenie kampanii Google Ads anulowane.")
             return True
 
-        # Przełącz tryb SIMPLE → PRO
-        if msg_lower == "pro" and wizard.get("mode") == "simple":
-            wizard["mode"] = "pro"
+        # Jawne przełączenie SIMPLE → PRO
+        if msg_lower in ("pro", "full", "szczegolowo", "szczegółowo") and current_mode == "simple":
+            wizard["resolved_mode"] = "pro"
             wizard["messages"].append({"role": "user", "content": "Chcę przejść w pełny tryb PRO."})
             wizard["messages"].append({"role": "assistant", "content": (
                 "🔵 OK — przechodzimy w tryb PRO. Teraz zrobię pełny setup kampanii.\n"
@@ -1907,11 +1984,14 @@ def _handle_google_campaign_wizard(user_id: str, user_message: str | None, say_f
         # Dodaj wiadomość użytkownika do historii
         wizard["messages"].append({"role": "user", "content": user_message})
 
-    # Wybierz system prompt na podstawie trybu
-    system_prompt = (
-        GOOGLE_CAMPAIGN_SIMPLE_PROMPT if wizard.get("mode") == "simple"
-        else GOOGLE_CAMPAIGN_SYSTEM_PROMPT
-    )
+    # --- Wybierz system prompt na podstawie trybu ---
+    if current_mode == "auto":
+        # Pierwszy raz — Claude analizuje intencję i wybiera tryb
+        system_prompt = GOOGLE_CAMPAIGN_AUTO_PROMPT
+    elif current_mode == "simple":
+        system_prompt = GOOGLE_CAMPAIGN_SIMPLE_PROMPT
+    else:  # pro
+        system_prompt = GOOGLE_CAMPAIGN_SYSTEM_PROMPT
 
     try:
         response = _ctx.claude.messages.create(
@@ -1922,7 +2002,28 @@ def _handle_google_campaign_wizard(user_id: str, user_message: str | None, say_f
         )
         assistant_text = response.content[0].text
 
-        # Zapisz odpowiedź Claude do historii
+        # --- AUTO MODE: resolve mode from Claude's response ---
+        if current_mode == "auto":
+            if "===MODE:SIMPLE===" in assistant_text:
+                wizard["resolved_mode"] = "simple"
+                assistant_text = assistant_text.replace("===MODE:SIMPLE===", "").strip()
+                logger.info("Google wizard AUTO → SIMPLE for user %s", user_id)
+            elif "===MODE:PRO===" in assistant_text:
+                wizard["resolved_mode"] = "pro"
+                assistant_text = assistant_text.replace("===MODE:PRO===", "").strip()
+                logger.info("Google wizard AUTO → PRO for user %s", user_id)
+            else:
+                # Fallback: jeśli Claude nie dał markera, zakładamy PRO
+                wizard["resolved_mode"] = "pro"
+                logger.warning("Google wizard AUTO: no mode marker, defaulting to PRO for user %s", user_id)
+
+        # --- Detect SIMPLE→PRO switch suggested by Claude ---
+        if "===SWITCH:PRO===" in assistant_text:
+            wizard["resolved_mode"] = "pro"
+            assistant_text = assistant_text.replace("===SWITCH:PRO===", "").strip()
+            logger.info("Google wizard SIMPLE → PRO switch for user %s", user_id)
+
+        # Zapisz odpowiedź Claude do historii (bez markerów)
         wizard["messages"].append({"role": "assistant", "content": assistant_text})
 
         # Trim historii jeśli za długa (zachowaj ostatnie 30 wiadomości)
