@@ -364,6 +364,76 @@ def save_campaign_results(client, campaign, metrics, actions_taken=None):
     _save_history_raw(data)
 
 
+def backfill_campaign_history(client: str, days_back: int = 90):
+    """
+    Fetch historical per-day campaign data from Meta Ads and store it locally.
+    Skips days that already have data. Safe to call repeatedly.
+    """
+    date_from = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+    date_to   = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+
+    logger.info(f"[backfill] {client}: fetching {date_from} → {date_to}")
+    result = meta_ads_tool(
+        date_from=date_from,
+        date_to=date_to,
+        level="campaign",
+        client_name=client,
+        metrics=[
+            'campaign_name', 'spend', 'impressions', 'clicks',
+            'ctr', 'cpc', 'frequency', 'purchase_roas', 'conversions',
+        ],
+    )
+
+    if isinstance(result, dict) and ("error" in result or "message" in result):
+        logger.warning(f"[backfill] {client}: {result}")
+        return
+
+    rows = result if isinstance(result, list) else result.get("data", [])
+    saved = 0
+    for row in rows:
+        date = row.get("date_start")
+        campaign_name = row.get("campaign_name")
+        if not date or not campaign_name:
+            continue
+        metrics = {
+            "ctr":         row.get("ctr"),
+            "cpc":         row.get("cpc"),
+            "roas":        row.get("purchase_roas"),
+            "frequency":   row.get("frequency"),
+            "spend":       row.get("spend", 0),
+            "conversions": row.get("conversions", 0),
+            "impressions": row.get("impressions", 0),
+            "clicks":      row.get("clicks", 0),
+            "platform":    "meta",
+        }
+        # save_campaign_results uses today's date — override directly
+        raw = _load_history_raw()
+        raw.setdefault(client, {"campaigns": {}, "predictions": []})
+        raw[client].setdefault("campaigns", {})
+        raw[client]["campaigns"].setdefault(campaign_name, [])
+        # Skip if entry for this date already exists
+        existing = raw[client]["campaigns"][campaign_name]
+        if any(e.get("date") == date for e in existing):
+            continue
+        dow = datetime.strptime(date, '%Y-%m-%d').strftime('%A').lower()
+        entry = {
+            "date": date, "day_of_week": dow,
+            "is_weekend": dow in ["saturday", "sunday"],
+            **metrics,
+            "actions_taken": [],
+        }
+        existing.append(entry)
+        # Trim retention
+        cutoff = (datetime.now() - timedelta(days=HISTORY_RETENTION_DAYS)).strftime('%Y-%m-%d')
+        raw[client]["campaigns"][campaign_name] = [
+            e for e in existing if e.get("date", "") >= cutoff
+        ]
+        _save_history_raw(raw)
+        saved += 1
+
+    logger.info(f"[backfill] {client}: saved {saved} new day-rows")
+
+
 def load_campaign_history(client, campaign=None, days_back=30):
     """Loads campaign history. Returns list (single) or dict (all)."""
     data = _load_history_raw()

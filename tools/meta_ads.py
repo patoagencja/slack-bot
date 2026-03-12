@@ -134,6 +134,7 @@ def meta_ads_tool(date_from=None, date_to=None, level="campaign", campaign_name=
             'time_range': {'since': date_from, 'until': date_to},
             'level': level,
             'fields': metrics,
+            'time_increment': 1,
         }
         if breakdown:
             params['breakdowns'] = [breakdown] if isinstance(breakdown, str) else breakdown
@@ -147,6 +148,10 @@ def meta_ads_tool(date_from=None, date_to=None, level="campaign", campaign_name=
         data = []
         for insight in insights:
             item = {}
+            # Always carry date when time_increment=1
+            for _df in ('date_start', 'date_stop'):
+                if insight.get(_df):
+                    item[_df] = insight[_df]
             for metric in metrics:
                 value = insight.get(metric)
                 if value is not None:
