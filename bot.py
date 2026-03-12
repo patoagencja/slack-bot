@@ -672,7 +672,6 @@ Pytanie → Direct answer → Context → Actionable next step
 
     try:
         user_id = event.get('user')
-        history = get_conversation_history(user_id)
 
         # Store incoming message to long-term memory
         remember(user_id, channel, event.get("ts", ""), "user", user_message)
@@ -680,6 +679,42 @@ Pytanie → Direct answer → Context → Actionable next step
         contextual_message = (
             (channel_history_ctx + user_message) if channel_history_ctx else user_message
         )
+
+        # For threaded messages: use thread context instead of global conversation history
+        # This prevents old campaign data from bleeding into new thread conversations
+        _event_thread_ts = event.get("thread_ts")
+        if _event_thread_ts:
+            try:
+                _thread_result = app.client.conversations_replies(
+                    channel=channel, ts=_event_thread_ts, limit=20
+                )
+                _thread_msgs = _thread_result.get("messages", [])
+                _bot_uid = None
+                try:
+                    _bot_uid = app.client.auth_test()["user_id"]
+                except Exception:
+                    pass
+                history = []
+                for _tmsg in _thread_msgs:
+                    _t_text = _tmsg.get("text", "")
+                    if not _t_text:
+                        _t_ts = _tmsg.get("ts", "")
+                        _t_text = _ctx.voice_cache.get((channel, _t_ts), "")
+                        if not _t_text:
+                            continue
+                    if _tmsg.get("user") == _bot_uid or _tmsg.get("bot_id"):
+                        history.append({"role": "assistant", "content": _t_text})
+                    else:
+                        history.append({"role": "user", "content": _t_text})
+                # Remove last user msg if it duplicates current message (will be added below)
+                if history and history[-1]["role"] == "user":
+                    history.pop()
+            except Exception as e:
+                logger.warning("Failed to fetch thread history: %s", e)
+                history = get_conversation_history(user_id)
+        else:
+            history = get_conversation_history(user_id)
+
         messages = history + [{"role": "user", "content": contextual_message}]
 
         while True:
@@ -1011,7 +1046,11 @@ def handle_message_events(body, say, logger):
             _ch_type = "channel"
         elif _ch_id.startswith("G"):
             _ch_type = "group"
-    logger.info(f"MSG EVENT → channel_type={_ch_type!r} ch={_ch_id} text={user_message[:60]!r}")
+    logger.info(f"MSG EVENT → channel_type={_ch_type!r} ch={_ch_id} text={user_message[:60]!r}"
+                f" thread_ts={event.get('thread_ts')!r}"
+                f" wizards=[meta={user_id in _ctx.meta_campaign_wizard}"
+                f" google={user_id in _ctx.google_campaign_wizard}"
+                f" kampania={user_id in _ctx.campaign_wizard}]")
 
     # Pliki kreacji (bez audio — głosówki transkrybowane osobno wyżej)
     _creative_files = [f for f in _event_files
@@ -1036,6 +1075,7 @@ def handle_message_events(body, say, logger):
         _gwiz_ch  = _gwiz.get("source_channel")
         _gwiz_tts = _gwiz.get("thread_ts")
         _msg_tts  = event.get("thread_ts")
+        logger.info(f"GOOGLE WIZARD CHECK → user={user_id} ch_match={_ch_id == _gwiz_ch} ts_match={_msg_tts == _gwiz_tts} (event_ts={_msg_tts} wiz_ts={_gwiz_tts})")
         if _ch_id == _gwiz_ch and _msg_tts == _gwiz_tts:
             def _gwiz_say(text):
                 _google_wizard_post(user_id, text)
@@ -1048,6 +1088,7 @@ def handle_message_events(body, say, logger):
         _mwiz_ch  = _mwiz.get("source_channel")
         _mwiz_tts = _mwiz.get("thread_ts")
         _msg_tts  = event.get("thread_ts")
+        logger.info(f"META WIZARD CHECK → user={user_id} ch_match={_ch_id == _mwiz_ch} ts_match={_msg_tts == _mwiz_tts} (event_ts={_msg_tts} wiz_ts={_mwiz_tts})")
         if _ch_id == _mwiz_ch and _msg_tts == _mwiz_tts:
             def _mwiz_say(text):
                 _meta_wizard_post(user_id, text)
@@ -1742,6 +1783,9 @@ META_CAMPAIGN_PRO_PROMPT = """\
 You are a Meta Ads campaign creation assistant in Slack (Sebol). PRO mode — full professional workflow.
 Respond in Polish. Be concrete, structured, helpful.
 
+CRITICAL RULE: NEVER invent, assume or fill in data the user did not explicitly provide.
+If something is missing — ASK. Do NOT copy data from previous conversations. Each session starts fresh.
+
 PRO Mode Workflow — follow these stages in order. Do NOT skip stages.
 
 Stage 1 — Business Basics:
@@ -1813,13 +1857,17 @@ Respond in Polish. Be short, direct.
 
 SIMPLE mode: collect only essential data, avoid long questionnaires, avoid strategic consulting.
 
+CRITICAL RULE: NEVER invent, assume or fill in data the user did not explicitly provide.
+If the user didn't mention targeting (age, gender, interests, location, placement) — ASK for it or use broad targeting.
+Do NOT copy data from previous conversations. Each campaign wizard session starts fresh.
+
 Required fields:
 - campaign objective (Leads/Sales/Traffic/Engagement/Video views/Messages/App installs)
 - daily budget
 - country or location
 - landing page URL
 - creative assets (video/image + primary text + headline + CTA)
-- basic audience (age, gender, interests — all optional, broad targeting OK)
+- basic audience (age, gender, interests — if user doesn't specify, use broad targeting and say so)
 
 Ask all questions in ONE round (max 6-7 questions).
 If user already provided data — do NOT ask again, just confirm and ask for missing items.
@@ -1855,6 +1903,9 @@ Then provide 3 sections:
 META_CAMPAIGN_AUTO_PROMPT = """\
 You are a Meta Ads campaign creation assistant in Slack (Sebol).
 Respond in Polish. Your job: analyze user's FIRST message and choose between SIMPLE and PRO mode.
+
+CRITICAL RULE: NEVER invent, assume or fill in data the user did not explicitly provide.
+Each wizard session starts completely fresh — no data from previous conversations.
 
 Choose SIMPLE if:
 - User wants speed: "szybko", "prosta kampania", "bez pytań", "minimum", "tylko odpal", "na szybko"
@@ -1978,6 +2029,11 @@ def handle_kampaniameta_slash(ack, command, logger):
         "resolved_mode": mode if mode != "auto" else "",
     }
 
+    # Track thread so follow-ups work even if wizard state is lost
+    _ctx.bot_threads.add((source_channel, thread_ts))
+    # Clear old conversation history — prevent data leaking from previous campaigns
+    _ctx.conversation_history.pop(user_id, None)
+
     if extra_context:
         def _init_say(text):
             app.client.chat_postMessage(channel=source_channel, thread_ts=thread_ts, text=text)
@@ -2090,6 +2146,10 @@ def _handle_meta_campaign_wizard(user_id: str, user_message: str | None, files: 
 
 GOOGLE_CAMPAIGN_SYSTEM_PROMPT = """\
 Jesteś ekspertem Google Ads i asystentem do tworzenia kampanii reklamowych w Slacku (Sebol).
+
+KRYTYCZNA ZASADA: NIGDY nie wymyślaj, nie zakładaj i nie uzupełniaj danych których użytkownik NIE podał.
+Każda sesja wizarda zaczyna się od zera — nie kopiuj danych z poprzednich rozmów.
+
 Twoje zachowanie:
 1. Po rozpoczęciu procesu prowadzisz rozmowę etapami.
 2. Najpierw ustalasz typ kampanii i cel biznesowy.
@@ -2179,6 +2239,10 @@ Nigdy nie finalizuj po ogólnikowej odpowiedzi. Zawsze doprecyzowuj.
 GOOGLE_CAMPAIGN_SIMPLE_PROMPT = """\
 Jesteś ekspertem Google Ads w Slacku (Sebol). Działasz w trybie SIMPLE — szybkie kampanie.
 
+KRYTYCZNA ZASADA: NIGDY nie wymyślaj danych których użytkownik NIE podał.
+Jeśli brakuje targetowania, lokalizacji, grupy wiekowej — ZAPYTAJ, nie uzupełniaj sam.
+Każda sesja zaczyna się od zera — nie kopiuj danych z poprzednich rozmów.
+
 Zasady:
 - Zbieraj TYLKO krytyczne dane — nie rób pełnego audytu.
 - Zadaj wszystkie pytania w jednej rundzie (maks 7 pytań).
@@ -2258,6 +2322,9 @@ _PRO_TRIGGERS = {"pro", "full", "szczegolowo", "szczegółowo", "pelny", "pełny
 
 GOOGLE_CAMPAIGN_AUTO_PROMPT = """\
 Jesteś ekspertem Google Ads w Slacku (Sebol). Twoja rola: analiza intencji użytkownika i wybór trybu pracy.
+
+KRYTYCZNA ZASADA: NIGDY nie wymyślaj danych których użytkownik NIE podał.
+Każda sesja zaczyna się od zera — nie kopiuj danych z poprzednich rozmów.
 
 Użytkownik właśnie zaczął tworzenie kampanii Google Ads komendą /kampaniagoogle.
 Przeanalizuj jego PIERWSZĄ wiadomość i zdecyduj, czy chce:
@@ -2397,6 +2464,11 @@ def handle_kampaniagoogle_slash(ack, command, logger):
         "mode": mode,              # "auto", "simple", "pro"
         "resolved_mode": mode if mode != "auto" else "",  # filled after auto-detection
     }
+
+    # Track thread so follow-ups work even if wizard state is lost
+    _ctx.bot_threads.add((source_channel, thread_ts))
+    # Clear old conversation history — prevent data leaking from previous campaigns
+    _ctx.conversation_history.pop(user_id, None)
 
     # If extra context was provided, immediately process through Claude
     if extra_context:
