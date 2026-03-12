@@ -1057,6 +1057,25 @@ def handle_message_events(body, say, logger):
                        if f.get("mimetype", "") not in SLACK_AUDIO_MIMES
                        and f.get("subtype") != "slack_audio"]
 
+    # === #tworzenie-kampanii: każdy wątek = izolowany kontekst kampanii (sprawdź PRZED wizardami) ===
+    _ch_type_early = event.get("channel_type") or ""
+    if not _ch_type_early:
+        _ch_id_early = event.get("channel", "")
+        if _ch_id_early.startswith("C"):
+            _ch_type_early = "channel"
+        elif _ch_id_early.startswith("G"):
+            _ch_type_early = "group"
+    _ch_id_early = event.get("channel", "")
+    _msg_thread_ts_early = event.get("thread_ts")
+    _is_campaign_ch_early = CAMPAIGN_CHANNEL_ID and _ch_id_early == CAMPAIGN_CHANNEL_ID
+    _seba_m_early = re.search(r'\bsebol\w*\b|\bseba\b', user_message, re.IGNORECASE)
+    if (_ch_type_early in ("channel", "group", "mpim")
+            and _is_campaign_ch_early
+            and _msg_thread_ts_early
+            and not _seba_m_early):
+        _handle_campaign_channel_thread(event, user_message, say)
+        return
+
     # === /kampania WIZARD: obsłuż odpowiedzi z wątku na kanale ===
     if user_id in _ctx.campaign_wizard:
         _wiz = _ctx.campaign_wizard[user_id]
@@ -1752,9 +1771,16 @@ def _handle_campaign_channel_thread(event, user_message, say):
     # Pobierz historię wątku z Slacka
     try:
         result = app.client.conversations_replies(
-            channel=channel, ts=thread_ts, limit=20
+            channel=channel, ts=thread_ts, limit=50
         )
         thread_msgs = result.get("messages", [])
+        # If paginated (next_cursor), fetch the rest to capture most recent messages
+        while result.get("response_metadata", {}).get("next_cursor"):
+            result = app.client.conversations_replies(
+                channel=channel, ts=thread_ts, limit=50,
+                cursor=result["response_metadata"]["next_cursor"]
+            )
+            thread_msgs.extend(result.get("messages", []))
     except Exception as e:
         logger.error("campaign channel thread fetch error: %s", e)
         thread_msgs = []
