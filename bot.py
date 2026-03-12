@@ -1862,6 +1862,9 @@ If something is missing — ASK. Do NOT copy data from previous conversations. E
 
 PRO Mode Workflow — follow these stages in order. Do NOT skip stages.
 
+Stage 0 — Client Identification:
+- CRITICAL: Always identify the client first. Extract from user message (e.g. "dre", "drzwi dre", "instax", "m2", "pato"). If the landing_page_url is "patoagencja.com" — that is the AGENCY's own website, NOT the client. If unclear — ASK. Fill "client_name" in the JSON.
+
 Stage 1 — Business Basics:
 - What product/service are we advertising?
 - What is the main business goal?
@@ -1914,7 +1917,7 @@ Then provide 4 sections:
 4. **JSON**:
 ```json
 {
-  "mode": "pro", "campaign_name": "", "objective": "", "business_goal": "",
+  "mode": "pro", "client_name": "", "campaign_name": "", "objective": "", "business_goal": "",
   "budget_daily": "", "location": [], "audiences": [], "lookalike_audiences": [],
   "remarketing": [],
   "creative": {"images": [], "videos": [], "texts": [], "headlines": [], "cta": ""},
@@ -1936,6 +1939,7 @@ If the user didn't mention targeting (age, gender, interests, location, placemen
 Do NOT copy data from previous conversations. Each campaign wizard session starts fresh.
 
 Required fields:
+- client name (who is the campaign for: dre/instax/m2/pato — ALWAYS extract from user message or ask if not provided)
 - campaign objective (Leads/Sales/Traffic/Engagement/Video views/Messages/App installs)
 - daily budget
 - country or location
@@ -1943,11 +1947,13 @@ Required fields:
 - creative assets (video/image + primary text + headline + CTA)
 - basic audience (age, gender, interests — if user doesn't specify, use broad targeting and say so)
 
+CRITICAL: Always fill "client_name" in the JSON. Extract from: campaign name, user's messages, context (e.g. "dre", "drzwi dre", "instax", "m2", "pato"). If the landing_page_url is "patoagencja.com" — that is the AGENCY's own website, NOT the client name. If client is unknown — ASK.
+
 Ask all questions in ONE round (max 6-7 questions).
 If user already provided data — do NOT ask again, just confirm and ask for missing items.
 If user provides everything upfront — skip questions entirely, go straight to output.
 
-Only probe if missing: budget, creative, URL, or objective.
+Only probe if missing: client, budget, creative, URL, or objective.
 
 SWITCHING TO PRO:
 If conversation becomes complex (user wants strategy, multiple audiences, funnel design,
@@ -1964,7 +1970,7 @@ Then provide 3 sections:
 3. **JSON**:
 ```json
 {
-  "mode": "simple", "campaign_name": "", "objective": "", "daily_budget": "",
+  "mode": "simple", "client_name": "", "campaign_name": "", "objective": "", "daily_budget": "",
   "country": "", "age_range": "", "gender": "", "interests": [],
   "landing_page_url": "",
   "creative": {"type": "", "images": [], "videos": [], "primary_text": "", "headline": "", "cta": ""},
@@ -2126,17 +2132,32 @@ def _meta_wizard_json_to_params(wjson: dict, wizard: dict) -> dict:
     mode = wjson.get("mode", "simple")
 
     # ── Detect client_name from name/url/context ─────────────────────────────
-    _name_raw = (wjson.get("campaign_name") or "").lower()
+    _name_raw = (wjson.get("campaign_name") or wjson.get("client_name") or "").lower()
     _url_raw  = (wjson.get("landing_page_url") or wjson.get("website_url") or "").lower()
-    _ctx_text = _name_raw + " " + _url_raw
+    # Exclude agency's own domain from client detection
+    _url_for_client = "" if "patoagencja" in _url_raw else _url_raw
     client_name = None
-    for _k in ("dre", "instax", "m2", "pato"):
-        if _k in _ctx_text:
-            client_name = _k
-            break
+    # Check explicit client_name field first
+    _explicit = (wjson.get("client_name") or "").lower().strip()
+    if _explicit:
+        for _k in ("dre", "drzwi dre", "instax", "m2", "pato"):
+            if _k in _explicit or _explicit in _k:
+                client_name = "drzwi dre" if _k in ("dre", "drzwi dre") else _k
+                break
+    # Then campaign name, then URL (agency domain excluded)
     if not client_name:
-        logger.warning("_meta_wizard_json_to_params: cannot detect client_name, defaulting to dre")
-        client_name = "dre"
+        for _k, _aliases in (
+            ("dre", ("dre", "drzwi")),
+            ("instax", ("instax",)),
+            ("m2", ("m2",)),
+            ("pato", ("pato",)),
+        ):
+            if any(a in _name_raw for a in _aliases) or any(a in _url_for_client for a in _aliases):
+                client_name = _k
+                break
+    if not client_name:
+        logger.warning("_meta_wizard_json_to_params: cannot detect client_name from wjson=%s", list(wjson.keys()))
+        client_name = None  # Caller must handle: ask user
 
     # ── Budget ────────────────────────────────────────────────────────────────
     _budget_raw = wjson.get("daily_budget") or wjson.get("budget_daily") or "10"
@@ -2298,6 +2319,76 @@ def _handle_meta_campaign_wizard(user_id: str, user_message: str | None, files: 
             )
         return True
 
+    # ── ASKING CLIENT STATE: waiting for user to specify which client ─────────
+    if wizard.get("state") == "asking_client":
+        if user_message is not None:
+            _cl_msg = user_message.strip().lower()
+            _detected_client = None
+            for _k, _aliases in (
+                ("dre", ("dre", "drzwi")),
+                ("instax", ("instax",)),
+                ("m2", ("m2",)),
+                ("pato", ("pato",)),
+            ):
+                if any(a in _cl_msg for a in _aliases):
+                    _detected_client = _k
+                    break
+            if _detected_client:
+                _pending_wjson = wizard.get("pending_wjson")
+                if _pending_wjson:
+                    _pending_wjson["client_name"] = _detected_client
+                    wizard.pop("state", None)
+                    wizard.pop("pending_wjson", None)
+                    _account_id = get_meta_account_id(_detected_client)
+                    if not _account_id:
+                        say_fn(f"⚠️ Nie znalazłem konta Meta dla klienta `{_detected_client}`. Sprawdź konfigurację.")
+                        del _ctx.meta_campaign_wizard[user_id]
+                        _ctx.save_wizard_state()
+                        return True
+                    try:
+                        _params = _meta_wizard_json_to_params(_pending_wjson, wizard)
+                        _params["client_name"] = _detected_client  # ensure correct client
+                        say_fn("📋 Tworzę szkic kampanii w Meta Ads...")
+                        _targeting = build_meta_targeting(_params.get("targeting") or {})
+                        _creatives_raw = wizard.get("files", [])
+                        _creatives = []
+                        if _creatives_raw:
+                            say_fn(f"🎨 Uploaduję {len(_creatives_raw)} kreacji do Meta...")
+                            for _fname, _fdata, _fmime in _creatives_raw:
+                                try:
+                                    _cr = upload_creative_to_meta(_account_id, _fdata, _fmime, _fname)
+                                    _creatives.append(_cr)
+                                except Exception as _uce:
+                                    say_fn(f"⚠️ Nie udało się uploadować `{_fname}`: {_uce}")
+                        _draft = create_campaign_draft(_account_id, _params, _creatives, _targeting)
+                        _tgt_preview = {
+                            "gender":    _params["targeting"]["gender"],
+                            "age_min":   _params["targeting"]["age_min"],
+                            "age_max":   _params["targeting"]["age_max"],
+                            "locations": _params["targeting"]["locations"],
+                            "interests": _params["targeting"]["interests"],
+                        }
+                        _preview = generate_campaign_preview(_params, _tgt_preview, len(_creatives), _draft)
+                        say_fn(_preview)
+                        wizard["state"] = "awaiting_approval"
+                        wizard["draft_campaign_id"] = _draft.get("campaign_id")
+                        _ctx.save_wizard_state()
+                    except Exception as _de:
+                        logger.error("Meta wizard (asking_client) draft creation error: %s", _de, exc_info=True)
+                        say_fn(f"❌ Błąd tworzenia draftu: {_de}")
+                        del _ctx.meta_campaign_wizard[user_id]
+                        _ctx.save_wizard_state()
+                else:
+                    del _ctx.meta_campaign_wizard[user_id]
+                    _ctx.save_wizard_state()
+                    say_fn("❌ Nie mam danych kampanii. Uruchom `/kampaniameta` od nowa.")
+            else:
+                say_fn(
+                    "❓ Nie rozpoznałem klienta. Podaj jeden z: *dre*, *instax*, *m2*, *pato*\n"
+                    "Np. napisz: `dre` lub `drzwi dre`"
+                )
+        return True
+
     if user_message is not None:
         msg_lower = user_message.strip().lower()
 
@@ -2391,11 +2482,18 @@ def _handle_meta_campaign_wizard(user_id: str, user_message: str | None, files: 
             if _wjson:
                 try:
                     _params = _meta_wizard_json_to_params(_wjson, wizard)
-                    _account_id = get_meta_account_id(_params.get("client_name", ""))
-                    if not _account_id:
-                        say_fn(f"⚠️ Nie znalazłem konta Meta dla klienta `{_params.get('client_name')}`. Sprawdź konfigurację.")
-                        del _ctx.meta_campaign_wizard[user_id]
+                    _detected_client = _params.get("client_name")
+                    _account_id = get_meta_account_id(_detected_client or "") if _detected_client else ""
+                    if not _detected_client or not _account_id:
+                        # Can't auto-detect client — ask user instead of silently failing
+                        wizard["state"] = "asking_client"
+                        wizard["pending_wjson"] = _wjson
                         _ctx.save_wizard_state()
+                        _reason = f"klient `{_detected_client}` nie ma skonfigurowanego konta Meta" if (_detected_client and not _account_id) else "nie rozpoznałem klienta"
+                        say_fn(
+                            f"❓ {_reason.capitalize()}.\n"
+                            f"Napisz dla kogo kampania: *dre*, *instax*, *m2* lub *pato*"
+                        )
                         return True
                     say_fn("📋 Tworzę szkic kampanii w Meta Ads...")
                     _targeting = build_meta_targeting(_params.get("targeting") or {})
