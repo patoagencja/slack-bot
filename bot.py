@@ -1075,10 +1075,14 @@ def handle_message_events(body, say, logger):
         # #tworzenie-kampanii: bot odpowiada na każdy wątek (bez potrzeby @mention)
         _is_campaign_ch = CAMPAIGN_CHANNEL_ID and _ch_id == CAMPAIGN_CHANNEL_ID
         _in_campaign_thread = _is_campaign_ch and _msg_thread_ts
-        # Głosówka na kanale — traktuj jako trigger bez potrzeby mówienia "seba"
-        if not _seba_m and not _audio_files and not _in_bot_thread and not _in_campaign_thread:
+        if _in_campaign_thread and not _seba_m:
+            # Dedykowany handler — tylko kontekst kampanijny, bez memory/tools
+            _handle_campaign_channel_thread(event, user_message, say)
             return
-        logger.info(f"SEBA TRIGGER → {user_message!r} (thread={_in_bot_thread}, campaign_ch={_in_campaign_thread})")
+        # Głosówka na kanale — traktuj jako trigger bez potrzeby mówienia "seba"
+        if not _seba_m and not _audio_files and not _in_bot_thread:
+            return
+        logger.info(f"SEBA TRIGGER → {user_message!r} (thread={_in_bot_thread})")
         _clean = re.sub(r'\bsebol\w*\b|\bseba\b', "", user_message, count=1, flags=re.IGNORECASE).strip()
         handle_mention({**event, "text": f"<@SEBOL> {_clean}"}, say)
         return
@@ -1642,6 +1646,80 @@ def _build_campaign_from_wizard(user_id: str, wizard: dict, say_fn):
     except Exception as e:
         logger.error("_build_campaign_from_wizard error: %s", e)
         say_fn(f"❌ Błąd tworzenia kampanii: {e}")
+
+
+# ── #tworzenie-kampanii: dedykowany handler wątków ────────────────────────────
+
+CAMPAIGN_CHANNEL_SYSTEM_PROMPT = """\
+Jesteś Sebol — asystent agencji marketingowej Pato, specjalista od tworzenia kampanii reklamowych.
+Rozmawiasz na kanale #tworzenie-kampanii.
+
+TWOJA ROLA: Pomagasz tworzyć nowe kampanie Meta Ads i Google Ads.
+Każda rozmowa w wątku = nowa kampania. NIE odwołuj się do żadnych istniejących kampanii.
+
+Zachowanie:
+- Traktuj każdy wątek jako osobny brief na nową kampanię
+- Zbieraj dane potrzebne do utworzenia kampanii (cel, budżet, targetowanie, kreacje, link, placements)
+- Bądź konkretny, krótki, po polsku
+- Jeśli user podał dużo danych — potwierdź co masz i pytaj o brakujące
+- Jeśli user podał mało — zadaj 5-6 kluczowych pytań
+- NIE szukaj danych w pamięci, NIE odwołuj się do istniejących kampanii
+- NIE używaj narzędzi (Meta API, Google Ads itp.) — tylko zbieraj brief
+
+Gdy masz komplet danych, podsumuj kampanię i zapytaj czy uruchamiamy.
+"""
+
+
+def _handle_campaign_channel_thread(event, user_message, say):
+    """Handle messages in #tworzenie-kampanii threads — campaign-only context."""
+    channel = event.get("channel", "")
+    thread_ts = event.get("thread_ts", "")
+    user_id = event.get("user", "")
+
+    # Pobierz historię wątku z Slacka
+    try:
+        result = app.client.conversations_replies(
+            channel=channel, ts=thread_ts, limit=20
+        )
+        thread_msgs = result.get("messages", [])
+    except Exception as e:
+        logger.error("campaign channel thread fetch error: %s", e)
+        thread_msgs = []
+
+    # Zbuduj historię konwersacji z wątku
+    bot_user_id = None
+    try:
+        bot_user_id = app.client.auth_test()["user_id"]
+    except Exception:
+        pass
+
+    messages = []
+    for msg in thread_msgs:
+        msg_text = msg.get("text", "")
+        if not msg_text:
+            continue
+        if msg.get("user") == bot_user_id or msg.get("bot_id"):
+            messages.append({"role": "assistant", "content": msg_text})
+        else:
+            messages.append({"role": "user", "content": msg_text})
+
+    # Upewnij się że ostatnia wiadomość to user
+    if not messages or messages[-1]["role"] != "user":
+        messages.append({"role": "user", "content": user_message})
+
+    try:
+        response = _ctx.claude.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=2000,
+            system=CAMPAIGN_CHANNEL_SYSTEM_PROMPT,
+            messages=messages,
+        )
+        reply = response.content[0].text
+        say(text=reply, thread_ts=thread_ts)
+        _ctx.bot_threads.add((channel, thread_ts))
+    except Exception as e:
+        logger.error("campaign channel Claude error: %s", e)
+        say(text=f"❌ Błąd: {e}", thread_ts=thread_ts)
 
 
 # ── /kampaniameta — Claude-driven Meta Ads wizard (AUTO/SIMPLE/PRO) ────────────
