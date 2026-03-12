@@ -33,3 +33,7 @@ google_campaign_wizard: dict = {}
 
 # /kampaniameta wizard state: user_id → {messages, source_channel, thread_ts, mode, resolved_mode}
 meta_campaign_wizard: dict = {}
+
+# Voice transcription cache: (channel, msg_ts) → transcribed text
+# Allows thread handlers to recover voice message content from history
+voice_cache: dict = {}

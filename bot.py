@@ -986,6 +986,11 @@ def handle_message_events(body, say, logger):
         if _transcripts:
             _tr_text = " ".join(_transcripts)
             user_message = (user_message + " " + _tr_text).strip() if user_message else _tr_text
+            # Cache transcription for thread history recovery
+            _msg_ts = event.get("ts", "")
+            _msg_ch = event.get("channel", "")
+            if _msg_ts and _msg_ch:
+                _ctx.voice_cache[(_msg_ch, _msg_ts)] = user_message
 
     # Guard: jeśli głosówka bez transkrypcji — poinformuj i zakończ
     if not user_message.strip() and _audio_files:
@@ -1696,15 +1701,24 @@ def _handle_campaign_channel_thread(event, user_message, say):
     messages = []
     for msg in thread_msgs:
         msg_text = msg.get("text", "")
+        # Recover voice message transcriptions from cache
         if not msg_text:
-            continue
+            msg_ts = msg.get("ts", "")
+            cached = _ctx.voice_cache.get((channel, msg_ts), "")
+            if cached:
+                msg_text = cached
+            else:
+                continue
         if msg.get("user") == bot_user_id or msg.get("bot_id"):
             messages.append({"role": "assistant", "content": msg_text})
         else:
             messages.append({"role": "user", "content": msg_text})
 
-    # Upewnij się że ostatnia wiadomość to user
+    # Upewnij się że ostatnia wiadomość to user (np. głosówka z bieżącą transkrypcją)
     if not messages or messages[-1]["role"] != "user":
+        messages.append({"role": "user", "content": user_message})
+    elif user_message and messages[-1]["content"] != user_message:
+        # Bieżąca wiadomość (np. transkrypcja głosówki) nie jest w historii
         messages.append({"role": "user", "content": user_message})
 
     try:
