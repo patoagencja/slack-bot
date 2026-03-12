@@ -21,6 +21,10 @@ HISTORY_RETENTION_DAYS = 90
 _DIGEST_INTERVAL_DAYS  = 3
 
 
+# ── CAMPAIGN CREATION CHANNEL ─────────────────────────────────────────────────
+# Bot answers every message on this channel (no @mention needed), but only in threads.
+CAMPAIGN_CHANNEL_ID = os.environ.get("CAMPAIGN_CHANNEL_ID", "")
+
 # ── STANDUP ────────────────────────────────────────────────────────────────────
 STANDUP_CHANNEL    = os.environ.get("STANDUP_CHANNEL_ID",
                      os.environ.get("GENERAL_CHANNEL_ID", ""))

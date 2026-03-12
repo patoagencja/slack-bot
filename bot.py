@@ -16,6 +16,7 @@ import _ctx
 from config.constants import (
     TEAM_MEMBERS, CHANNEL_CLIENT_MAP,
     EMPLOYEE_MSG_KEYWORDS, REQUEST_CATEGORY_LABELS,
+    CAMPAIGN_CHANNEL_ID,
 )
 
 # ── tools ─────────────────────────────────────────────────────────────────────
@@ -1066,10 +1067,13 @@ def handle_message_events(body, say, logger):
         _seba_m = re.search(r'\bsebol\w*\b|\bseba\b', user_message, re.IGNORECASE)
         _msg_thread_ts = event.get("thread_ts")
         _in_bot_thread = _msg_thread_ts and (event.get("channel"), _msg_thread_ts) in _ctx.bot_threads
+        # #tworzenie-kampanii: bot odpowiada na każdy wątek (bez potrzeby @mention)
+        _is_campaign_ch = CAMPAIGN_CHANNEL_ID and _ch_id == CAMPAIGN_CHANNEL_ID
+        _in_campaign_thread = _is_campaign_ch and _msg_thread_ts
         # Głosówka na kanale — traktuj jako trigger bez potrzeby mówienia "seba"
-        if not _seba_m and not _audio_files and not _in_bot_thread:
+        if not _seba_m and not _audio_files and not _in_bot_thread and not _in_campaign_thread:
             return
-        logger.info(f"SEBA TRIGGER → {user_message!r} (thread={_in_bot_thread})")
+        logger.info(f"SEBA TRIGGER → {user_message!r} (thread={_in_bot_thread}, campaign_ch={_in_campaign_thread})")
         _clean = re.sub(r'\bsebol\w*\b|\bseba\b', "", user_message, count=1, flags=re.IGNORECASE).strip()
         handle_mention({**event, "text": f"<@SEBOL> {_clean}"}, say)
         return
