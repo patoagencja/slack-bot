@@ -2117,15 +2117,16 @@ def _meta_wizard_json_to_params(wjson: dict, wizard: dict) -> dict:
     mode = wjson.get("mode", "simple")
 
     # ── Detect client_name from name/url/context ─────────────────────────────
-    _name_raw  = (wjson.get("campaign_name") or "").lower()
-    _url_raw   = (wjson.get("landing_page_url") or wjson.get("website_url") or "").lower()
-    _ctx_text  = _name_raw + " " + _url_raw
+    _name_raw = (wjson.get("campaign_name") or "").lower()
+    _url_raw  = (wjson.get("landing_page_url") or wjson.get("website_url") or "").lower()
+    _ctx_text = _name_raw + " " + _url_raw
     client_name = None
     for _k in ("dre", "instax", "m2", "pato"):
         if _k in _ctx_text:
             client_name = _k
             break
     if not client_name:
+        logger.warning("_meta_wizard_json_to_params: cannot detect client_name, defaulting to dre")
         client_name = "dre"
 
     # ── Budget ────────────────────────────────────────────────────────────────
@@ -2140,32 +2141,37 @@ def _meta_wizard_json_to_params(wjson: dict, wizard: dict) -> dict:
         "TRAFFIC": "OUTCOME_TRAFFIC", "LEADS": "OUTCOME_LEADS",
         "SALES": "OUTCOME_SALES", "ENGAGEMENT": "OUTCOME_ENGAGEMENT",
         "AWARENESS": "OUTCOME_AWARENESS", "APP_PROMOTION": "OUTCOME_APP_PROMOTION",
-        "MESSAGES": "OUTCOME_ENGAGEMENT",
+        "MESSAGES": "OUTCOME_ENGAGEMENT", "VIDEO_VIEWS": "OUTCOME_ENGAGEMENT",
     }
     _obj_raw = (wjson.get("objective") or "TRAFFIC").upper().replace("OUTCOME_", "")
-    objective = _OBJ_MAP.get(_obj_raw, f"OUTCOME_{_obj_raw}" if not _obj_raw.startswith("OUTCOME") else _obj_raw)
+    objective = _OBJ_MAP.get(_obj_raw, "OUTCOME_TRAFFIC" if _obj_raw not in _OBJ_MAP else f"OUTCOME_{_obj_raw}")
+    if not objective.startswith("OUTCOME_"):
+        objective = "OUTCOME_TRAFFIC"
 
-    # ── Targeting ─────────────────────────────────────────────────────────────
+    # ── Targeting (build_meta_targeting expects gender=string, not genders=list) ──
+    _age = (wjson.get("age_range") or "18-65")
+    _age_parts = re.findall(r"\d+", str(_age))
+    age_min = int(_age_parts[0]) if _age_parts else 18
+    age_max = int(_age_parts[1]) if len(_age_parts) > 1 else 65
+
+    _gender_raw = (wjson.get("gender") or "all").lower()
+    if any(k in _gender_raw for k in ("kobi", "female", "women", "kobieta")):
+        gender_str = "female"
+    elif any(k in _gender_raw for k in ("mężcz", "mezcz", "male", "men", "mężczyzn")):
+        gender_str = "male"
+    else:
+        gender_str = "all"
+
+    # Locations: simple mode uses "country", pro mode uses "location" list
     if mode == "simple":
-        _age = (wjson.get("age_range") or "18-65")
-        _age_parts = re.findall(r"\d+", _age)
-        age_min = int(_age_parts[0]) if _age_parts else 18
-        age_max = int(_age_parts[1]) if len(_age_parts) > 1 else 65
-        _gender_raw = (wjson.get("gender") or "all").lower()
-        genders = [2] if any(k in _gender_raw for k in ("kobi", "female", "women")) else \
-                  [1] if any(k in _gender_raw for k in ("mężcz", "mezcz", "male", "men")) else []
         _locs = [wjson.get("country") or "Polska"]
-        interests = wjson.get("interests") or []
-    else:  # pro
-        _age = (wjson.get("age_range") or "18-65")
-        _age_parts = re.findall(r"\d+", _age)
-        age_min = int(_age_parts[0]) if _age_parts else 18
-        age_max = int(_age_parts[1]) if len(_age_parts) > 1 else 65
-        _gender_raw = (wjson.get("gender") or "all").lower()
-        genders = [2] if any(k in _gender_raw for k in ("kobi", "female", "women")) else \
-                  [1] if any(k in _gender_raw for k in ("mężcz", "mezcz", "male", "men")) else []
-        _locs = wjson.get("location") or ["Polska"]
-        interests = []
+    else:
+        _locs = wjson.get("location") or [wjson.get("country") or "Polska"]
+        if isinstance(_locs, str):
+            _locs = [_locs]
+
+    interests = wjson.get("interests") or []
+    if not interests and mode == "pro":
         for _aud in (wjson.get("audiences") or []):
             if isinstance(_aud, dict):
                 interests += _aud.get("interests", [])
@@ -2174,36 +2180,76 @@ def _meta_wizard_json_to_params(wjson: dict, wizard: dict) -> dict:
 
     # ── Creative text ─────────────────────────────────────────────────────────
     _creative = wjson.get("creative") or {}
-    ad_text  = _creative.get("primary_text") or (_creative.get("texts") or [None])[0] or ""
-    headline = _creative.get("headline") or (_creative.get("headlines") or [None])[0] or ""
-    cta      = (_creative.get("cta") or "LEARN_MORE").upper().replace(" ", "_")
+    ad_copy  = _creative.get("primary_text") or (_creative.get("texts") or [None])[0] or ""
+    _cta_raw = (_creative.get("cta") or "LEARN_MORE").upper().replace(" ", "_")
+    # Normalize CTA to known Meta values
+    _CTA_MAP = {
+        "ODWIEDŹ_STRONĘ": "LEARN_MORE", "ODWIEDZ_STRONE": "LEARN_MORE",
+        "DOWIEDZ_SIĘ_WIĘCEJ": "LEARN_MORE", "DOWIEDZ_SIE_WIECEJ": "LEARN_MORE",
+        "KUP_TERAZ": "SHOP_NOW", "ZAPISZ_SIĘ": "SIGN_UP", "ZAPISZ_SIE": "SIGN_UP",
+        "KONTAKT": "CONTACT_US", "WIADOMOŚĆ": "MESSAGE_PAGE", "WIADOMOSC": "MESSAGE_PAGE",
+    }
+    cta = _CTA_MAP.get(_cta_raw, _cta_raw)
+    if cta not in ("LEARN_MORE", "SHOP_NOW", "SIGN_UP", "GET_QUOTE", "CONTACT_US",
+                   "BOOK_TRAVEL", "MESSAGE_PAGE", "SUBSCRIBE", "DOWNLOAD"):
+        cta = "LEARN_MORE"
+
+    # ── Placements ────────────────────────────────────────────────────────────
+    _placements = wjson.get("placements") or wjson.get("publisher_platforms")
+    publisher_platforms = None
+    placement_positions = None
+    if isinstance(_placements, list) and _placements:
+        _pl_lower = [p.lower() for p in _placements]
+        if "instagram" in _pl_lower and "facebook" not in _pl_lower:
+            publisher_platforms = ["instagram"]
+        elif "facebook" in _pl_lower and "instagram" not in _pl_lower:
+            publisher_platforms = ["facebook"]
 
     # ── Dates ─────────────────────────────────────────────────────────────────
-    _sched     = wjson.get("schedule") or {}
-    start_date = _sched.get("start_date") or datetime.now().strftime("%Y-%m-%d")
-    end_date   = _sched.get("end_date") or None
+    _sched = wjson.get("schedule") or {}
+    _start_raw = _sched.get("start_date") or wjson.get("start_date") or ""
+    _end_raw   = _sched.get("end_date")   or wjson.get("end_date")   or None
+    # Normalize date format to YYYY-MM-DD
+    def _norm_date(d):
+        if not d:
+            return None
+        d = str(d).strip()
+        if re.match(r"\d{4}-\d{2}-\d{2}", d):
+            return d[:10]
+        _dm = re.match(r"(\d{1,2})[./](\d{1,2})(?:[./](\d{4}))?", d)
+        if _dm:
+            y = _dm.group(3) or datetime.now().strftime("%Y")
+            return f"{y}-{int(_dm.group(2)):02d}-{int(_dm.group(1)):02d}"
+        return None
+    start_date = _norm_date(_start_raw) or datetime.now().strftime("%Y-%m-%d")
+    end_date   = _norm_date(_end_raw)
 
     return {
-        "client_name":     client_name,
-        "campaign_name":   wjson.get("campaign_name") or f"Kampania {client_name.upper()} — {datetime.now().strftime('%d.%m.%Y')}",
-        "objective":       objective,
-        "daily_budget":    daily_budget,
-        "destination_url": _url_raw or "",
-        "website_url":     _url_raw or "",
-        "ad_text":         ad_text,
-        "ad_copy":         ad_text,
-        "headline":        headline,
-        "call_to_action":  cta,
-        "start_date":      start_date,
-        "end_date":        end_date,
+        "client_name":         client_name,
+        "campaign_name":       wjson.get("campaign_name") or f"Kampania {client_name.upper()} — {datetime.now().strftime('%d.%m.%Y')}",
+        "objective":           objective,
+        "daily_budget":        daily_budget,
+        "website_url":         _url_raw or "",
+        "ad_copy":             ad_copy,
+        "call_to_action":      cta,
+        "cta_enabled":         bool(ad_copy),
+        "link_enabled":        bool(_url_raw),
+        "publisher_platforms": publisher_platforms,
+        "placement_positions": placement_positions,
+        "start_date":          start_date,
+        "end_date":            end_date,
         "targeting": {
+            "gender":    gender_str,
             "age_min":   age_min,
             "age_max":   age_max,
-            "genders":   genders,
             "interests": interests,
             "locations": _locs,
         },
     }
+
+
+_LAUNCH_KEYWORDS = {"uruchom", "uruchamiaj", "zatwierdź", "zatwierdz", "launch", "tak", "yes", "ok", "go", "lecimy", "wgraj", "deploy"}
+_CANCEL_KEYWORDS = {"anuluj", "cancel", "stop", "przerwij", "nie", "no", "rezygnuję", "rezygnuje"}
 
 
 def _handle_meta_campaign_wizard(user_id: str, user_message: str | None, files: list, say_fn) -> bool:
@@ -2216,6 +2262,30 @@ def _handle_meta_campaign_wizard(user_id: str, user_message: str | None, files: 
 
     wizard = _ctx.meta_campaign_wizard[user_id]
     current_mode = wizard.get("resolved_mode") or wizard.get("mode", "auto")
+
+    # ── AWAITING APPROVAL STATE: draft already created, waiting for launch/cancel ──
+    if wizard.get("state") == "awaiting_approval":
+        if user_message is not None:
+            msg_lower = user_message.strip().lower()
+            _words = set(re.split(r"\W+", msg_lower))
+            if _words & _LAUNCH_KEYWORDS:
+                camp_id = wizard.get("draft_campaign_id")
+                del _ctx.meta_campaign_wizard[user_id]
+                say_fn("🚀 Uruchamiam kampanię...")
+                say_fn(approve_and_launch_campaign(camp_id))
+                return True
+            if _words & _CANCEL_KEYWORDS:
+                camp_id = wizard.get("draft_campaign_id")
+                del _ctx.meta_campaign_wizard[user_id]
+                say_fn("❌ Kampania anulowana.")
+                cancel_campaign_draft(camp_id)
+                return True
+            # User wants to change something — show reminder
+            say_fn(
+                "✏️ Aby wprowadzić zmiany uruchom `/kampaniameta` od nowa.\n"
+                "Napisz *uruchom* żeby uruchomić ten draft lub *anuluj* żeby go usunąć."
+            )
+        return True
 
     if user_message is not None:
         msg_lower = user_message.strip().lower()
@@ -2292,37 +2362,61 @@ def _handle_meta_campaign_wizard(user_id: str, user_message: str | None, files: 
         if "===KAMPANIA_META_GOTOWA===" in assistant_text:
             clean_text = assistant_text.replace("===KAMPANIA_META_GOTOWA===", "").strip()
             say_fn(clean_text)
-            # Spróbuj wyciągnąć JSON i stworzyć draft w Meta
-            _json_match = re.search(r"```json\s*(\{.*?\})\s*```", assistant_text, re.DOTALL)
-            if _json_match:
+            # Robustny parsing JSON — obsłuż ```json ... ```, ``` ... ``` i plain {...}
+            _wjson = None
+            for _pattern in (
+                r"```json\s*(\{[\s\S]*?\})\s*```",
+                r"```\s*(\{[\s\S]*?\})\s*```",
+                r"(\{[\s\S]*\"mode\"[\s\S]*\})",
+            ):
+                _m = re.search(_pattern, assistant_text)
+                if _m:
+                    try:
+                        _wjson = json.loads(_m.group(1))
+                        break
+                    except json.JSONDecodeError:
+                        continue
+            if _wjson:
                 try:
-                    _wjson = json.loads(_json_match.group(1))
                     _params = _meta_wizard_json_to_params(_wjson, wizard)
                     _account_id = get_meta_account_id(_params.get("client_name", ""))
-                    if _account_id:
-                        say_fn("📋 Tworzę szkic kampanii w Meta Ads...")
-                        _targeting = build_meta_targeting(_params.get("targeting") or {})
-                        _creatives_raw = wizard.get("files", [])
-                        _creatives = []
-                        if _creatives_raw:
-                            say_fn(f"🎨 Uploaduję {len(_creatives_raw)} kreacji do Meta...")
-                            for _fname, _fdata, _fmime in _creatives_raw:
-                                try:
-                                    _cr = upload_creative_to_meta(_account_id, _fdata, _fmime, _fname)
-                                    _creatives.append(_cr)
-                                except Exception as _uce:
-                                    say_fn(f"⚠️ Nie udało się uploadować `{_fname}`: {_uce}")
-                        _draft = create_campaign_draft(_account_id, _params, _creatives, _targeting)
-                        _preview = generate_campaign_preview(_params, _params.get("targeting") or {}, len(_creatives), _draft)
-                        say_fn(_preview)
+                    if not _account_id:
+                        say_fn(f"⚠️ Nie znalazłem konta Meta dla klienta `{_params.get('client_name')}`. Sprawdź konfigurację.")
                         del _ctx.meta_campaign_wizard[user_id]
                         return True
-                    else:
-                        say_fn(f"⚠️ Nie znalazłem konta Meta dla klienta `{_params.get('client_name')}`. Sprawdź konfigurację.")
+                    say_fn("📋 Tworzę szkic kampanii w Meta Ads...")
+                    _targeting = build_meta_targeting(_params.get("targeting") or {})
+                    _creatives_raw = wizard.get("files", [])
+                    _creatives = []
+                    if _creatives_raw:
+                        say_fn(f"🎨 Uploaduję {len(_creatives_raw)} kreacji do Meta...")
+                        for _fname, _fdata, _fmime in _creatives_raw:
+                            try:
+                                _cr = upload_creative_to_meta(_account_id, _fdata, _fmime, _fname)
+                                _creatives.append(_cr)
+                            except Exception as _uce:
+                                say_fn(f"⚠️ Nie udało się uploadować `{_fname}`: {_uce}")
+                    _draft = create_campaign_draft(_account_id, _params, _creatives, _targeting)
+                    # generate_campaign_preview expects targeting in build_meta_targeting format
+                    _tgt_preview = {
+                        "gender":    _params["targeting"]["gender"],
+                        "age_min":   _params["targeting"]["age_min"],
+                        "age_max":   _params["targeting"]["age_max"],
+                        "locations": _params["targeting"]["locations"],
+                        "interests": _params["targeting"]["interests"],
+                    }
+                    _preview = generate_campaign_preview(_params, _tgt_preview, len(_creatives), _draft)
+                    say_fn(_preview)
+                    # Keep wizard alive — wait for user to confirm launch or cancel
+                    wizard["state"] = "awaiting_approval"
+                    wizard["draft_campaign_id"] = _draft.get("campaign_id")
                 except Exception as _de:
                     logger.error("Meta wizard draft creation error: %s", _de, exc_info=True)
                     say_fn(f"❌ Błąd tworzenia draftu: {_de}")
-            del _ctx.meta_campaign_wizard[user_id]
+                    del _ctx.meta_campaign_wizard[user_id]
+            else:
+                logger.warning("Meta wizard: no JSON found in completion response — deleting wizard")
+                del _ctx.meta_campaign_wizard[user_id]
         else:
             say_fn(assistant_text)
 
