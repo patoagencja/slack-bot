@@ -1007,12 +1007,17 @@ def handle_message_events(body, say, logger):
             _ch_type = "group"
     logger.info(f"MSG EVENT → channel_type={_ch_type!r} ch={_ch_id} text={user_message[:60]!r}")
 
-    # === /kampania WIZARD: obsłuż odpowiedzi przed wszystkim innym ===
-    if _ch_type == "im" and user_id in _ctx.campaign_wizard:
-        def _wiz_say(text):
-            app.client.chat_postMessage(channel=_ch_id, text=text)
-        if _handle_campaign_wizard(user_id, user_message, event.get("files") or [], _wiz_say):
-            return
+    # === /kampania WIZARD: obsłuż odpowiedzi z wątku na kanale ===
+    if user_id in _ctx.campaign_wizard:
+        _wiz = _ctx.campaign_wizard[user_id]
+        _wiz_ch  = _wiz.get("source_channel")
+        _wiz_tts = _wiz.get("thread_ts")
+        _msg_tts = event.get("thread_ts")
+        if _ch_id == _wiz_ch and _msg_tts == _wiz_tts:
+            def _wiz_say(text):
+                _wizard_post(user_id, text)
+            if _handle_campaign_wizard(user_id, user_message, event.get("files") or [], _wiz_say):
+                return
 
     # === STANDUP: przechwytuj odpowiedzi z DM ===
     if _ch_type == "im":
@@ -1406,16 +1411,17 @@ WIZARD_STEPS = [
 ]
 
 
-def _wizard_send_dm(user_id: str, text: str):
-    """Open DM with user and send a message."""
+def _wizard_post(user_id: str, text: str):
+    """Post wizard message to source_channel in wizard thread."""
+    wizard = _ctx.campaign_wizard.get(user_id)
+    if not wizard:
+        return
+    ch = wizard.get("source_channel")
+    ts = wizard.get("thread_ts")
     try:
-        dm = app.client.conversations_open(users=user_id)
-        dm_channel = dm["channel"]["id"]
-        app.client.chat_postMessage(channel=dm_channel, text=text)
-        return dm_channel
+        app.client.chat_postMessage(channel=ch, thread_ts=ts, text=text)
     except Exception as e:
-        logger.error("_wizard_send_dm error: %s", e)
-        return None
+        logger.error("_wizard_post error: %s", e)
 
 
 def _wizard_summary(answers: dict) -> str:
@@ -1434,22 +1440,27 @@ def handle_kampania_slash(ack, command, logger):
     user_id = command["user_id"]
     source_channel = command.get("channel_id", "")
 
-    # Start wizard state
-    _ctx.campaign_wizard[user_id] = {
-        "step": 0,
-        "answers": {},
-        "files": [],
-        "source_channel": source_channel,
-    }
-
     intro = (
         "🚀 *Tworzymy nową kampanię Meta Ads!*\n"
         "Odpowiedz na 9 pytań — buduję kampanię od razu po ostatnim.\n"
         "Napisz `anuluj` żeby przerwać w dowolnym momencie.\n\n"
         + WIZARD_STEPS[0]["q"]
     )
-    _wizard_send_dm(user_id, intro)
-    logger.info("/kampania started by %s", user_id)
+    try:
+        resp = app.client.chat_postMessage(channel=source_channel, text=intro)
+        thread_ts = resp["ts"]
+    except Exception as e:
+        logger.error("/kampania post error: %s", e)
+        return
+
+    _ctx.campaign_wizard[user_id] = {
+        "step": 0,
+        "answers": {},
+        "files": [],
+        "source_channel": source_channel,
+        "thread_ts": thread_ts,
+    }
+    logger.info("/kampania started by %s in %s thread %s", user_id, source_channel, thread_ts)
 
 
 logger.info("✅ /kampania handler zarejestrowany")
@@ -1457,7 +1468,7 @@ logger.info("✅ /kampania handler zarejestrowany")
 
 def _handle_campaign_wizard(user_id: str, user_message: str, files: list, say_fn) -> bool:
     """
-    Handle a DM message for a user who is in the /kampania wizard.
+    Handle a channel thread reply for a user in the /kampania wizard.
     Returns True if message was consumed by the wizard, False otherwise.
     """
     if user_id not in _ctx.campaign_wizard:
