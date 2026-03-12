@@ -26,7 +26,7 @@ from tools.email_tools import email_tool, get_user_email_config
 from tools.slack_tools import slack_read_channel_tool, slack_read_thread_tool
 
 # ── jobs ──────────────────────────────────────────────────────────────────────
-from jobs.performance_analysis import _dispatch_ads_command
+from jobs.performance_analysis import _dispatch_ads_command, backfill_campaign_history
 from jobs.daily_digest import generate_daily_digest_dre, daily_digest_dre, weekly_learnings_dre
 from jobs.budget_alerts import check_budget_alerts
 from jobs.weekly_reports import weekly_report_dre, send_weekly_reports
@@ -1655,6 +1655,16 @@ def _run_backfill_if_empty():
     except Exception as _e:
         logger.warning("Memory backfill error: %s", _e)
 threading.Thread(target=_run_backfill_if_empty, daemon=True).start()
+
+# ── Meta Ads history backfill (runs once in background on startup) ─────────────
+from config.constants import AD_CLIENTS
+def _run_meta_backfill():
+    for _client in AD_CLIENTS:
+        try:
+            backfill_campaign_history(_client, days_back=90)
+        except Exception as _e:
+            logger.warning("Meta backfill error (%s): %s", _client, _e)
+threading.Thread(target=_run_meta_backfill, daemon=True).start()
 
 # ── start ─────────────────────────────────────────────────────────────────────
 
