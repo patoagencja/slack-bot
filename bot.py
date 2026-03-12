@@ -1696,24 +1696,51 @@ def _build_campaign_from_wizard(user_id: str, wizard: dict, say_fn):
 
 # ── #tworzenie-kampanii: dedykowany handler wątków ────────────────────────────
 
-CAMPAIGN_CHANNEL_SYSTEM_PROMPT = """\
-Jesteś Sebol — asystent agencji marketingowej Pato, specjalista od tworzenia kampanii reklamowych.
-Rozmawiasz na kanale #tworzenie-kampanii.
+def _build_campaign_channel_system_prompt() -> str:
+    from config.constants import META_ACCOUNT_IDS, META_PAGE_IDS
+    account_lines = []
+    seen = set()
+    for key, acc_id in META_ACCOUNT_IDS.items():
+        if acc_id and acc_id not in seen:
+            seen.add(acc_id)
+            account_lines.append(f"  - {key}: {acc_id}")
+    page_lines = []
+    seen_pages = set()
+    for key, page_id in META_PAGE_IDS.items():
+        if page_id and page_id not in seen_pages:
+            seen_pages.add(page_id)
+            page_lines.append(f"  - {key}: {page_id}")
+    accounts_section = (
+        "KONTA META ADS (znasz te dane — NIE pytaj użytkownika o konto):\n"
+        + ("\n".join(account_lines) if account_lines else "  (brak skonfigurowanych kont)")
+    )
+    pages_section = (
+        "STRONY META (Page IDs):\n"
+        + ("\n".join(page_lines) if page_lines else "  (brak skonfigurowanych stron)")
+    ) if page_lines else ""
 
-TWOJA ROLA: Pomagasz tworzyć nowe kampanie Meta Ads i Google Ads.
-Każda rozmowa w wątku = nowa kampania. NIE odwołuj się do żadnych istniejących kampanii.
-
-Zachowanie:
-- Traktuj każdy wątek jako osobny brief na nową kampanię
-- Zbieraj dane potrzebne do utworzenia kampanii (cel, budżet, targetowanie, kreacje, link, placements)
-- Bądź konkretny, krótki, po polsku
-- Jeśli user podał dużo danych — potwierdź co masz i pytaj o brakujące
-- Jeśli user podał mało — zadaj 5-6 kluczowych pytań
-- NIE szukaj danych w pamięci, NIE odwołuj się do istniejących kampanii
-- NIE używaj narzędzi (Meta API, Google Ads itp.) — tylko zbieraj brief
-
-Gdy masz komplet danych, podsumuj kampanię i zapytaj czy uruchamiamy.
-"""
+    return (
+        "Jesteś Sebol — asystent agencji marketingowej Pato, specjalista od tworzenia kampanii reklamowych.\n"
+        "Rozmawiasz na kanale #tworzenie-kampanii.\n"
+        "\n"
+        "TWOJA ROLA: Pomagasz tworzyć nowe kampanie Meta Ads i Google Ads.\n"
+        "Każda rozmowa w wątku = nowa kampania. NIE odwołuj się do żadnych istniejących kampanii.\n"
+        "\n"
+        + accounts_section + "\n"
+        + (pages_section + "\n" if pages_section else "")
+        + "\n"
+        "Zachowanie:\n"
+        "- Traktuj każdy wątek jako osobny brief na nową kampanię\n"
+        "- Zbieraj dane potrzebne do utworzenia kampanii (cel, budżet, targetowanie, kreacje, link, placements)\n"
+        "- Bądź konkretny, krótki, po polsku\n"
+        "- Jeśli user podał dużo danych — potwierdź co masz i pytaj o brakujące\n"
+        "- Jeśli user podał mało — zadaj 5-6 kluczowych pytań\n"
+        "- NIE szukaj danych w pamięci, NIE odwołuj się do istniejących kampanii\n"
+        "- NIE używaj narzędzi (Meta API, Google Ads itp.) — tylko zbieraj brief\n"
+        "- Gdy masz klienta — podaj od razu które konto Meta Ads zostanie użyte (z listy powyżej)\n"
+        "\n"
+        "Gdy masz komplet danych, podsumuj kampanię i zapytaj czy uruchamiamy.\n"
+    )
 
 
 def _handle_campaign_channel_thread(event, user_message, say):
@@ -1766,7 +1793,7 @@ def _handle_campaign_channel_thread(event, user_message, say):
         response = _ctx.claude.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=2000,
-            system=CAMPAIGN_CHANNEL_SYSTEM_PROMPT,
+            system=_build_campaign_channel_system_prompt(),
             messages=messages,
         )
         reply = response.content[0].text
