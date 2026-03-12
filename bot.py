@@ -1019,6 +1019,30 @@ def handle_message_events(body, say, logger):
             if _handle_campaign_wizard(user_id, user_message, event.get("files") or [], _wiz_say):
                 return
 
+    # === /kampaniagoogle WIZARD: obsłuż odpowiedzi z wątku na kanale ===
+    if user_id in _ctx.google_campaign_wizard:
+        _gwiz = _ctx.google_campaign_wizard[user_id]
+        _gwiz_ch  = _gwiz.get("source_channel")
+        _gwiz_tts = _gwiz.get("thread_ts")
+        _msg_tts  = event.get("thread_ts")
+        if _ch_id == _gwiz_ch and _msg_tts == _gwiz_tts:
+            def _gwiz_say(text):
+                _google_wizard_post(user_id, text)
+            if _handle_google_campaign_wizard(user_id, user_message, _gwiz_say):
+                return
+
+    # === /kampaniameta WIZARD: obsłuż odpowiedzi z wątku na kanale ===
+    if user_id in _ctx.meta_campaign_wizard:
+        _mwiz = _ctx.meta_campaign_wizard[user_id]
+        _mwiz_ch  = _mwiz.get("source_channel")
+        _mwiz_tts = _mwiz.get("thread_ts")
+        _msg_tts  = event.get("thread_ts")
+        if _ch_id == _mwiz_ch and _msg_tts == _mwiz_tts:
+            def _mwiz_say(text):
+                _meta_wizard_post(user_id, text)
+            if _handle_meta_campaign_wizard(user_id, user_message, event.get("files") or [], _mwiz_say):
+                return
+
     # === STANDUP: przechwytuj odpowiedzi z DM ===
     if _ch_type == "im":
         try:
@@ -1609,6 +1633,778 @@ def _build_campaign_from_wizard(user_id: str, wizard: dict, say_fn):
     except Exception as e:
         logger.error("_build_campaign_from_wizard error: %s", e)
         say_fn(f"❌ Błąd tworzenia kampanii: {e}")
+
+
+# ── /kampaniameta — Claude-driven Meta Ads wizard (AUTO/SIMPLE/PRO) ────────────
+
+META_CAMPAIGN_PRO_PROMPT = """\
+You are a Meta Ads campaign creation assistant in Slack (Sebol). PRO mode — full professional workflow.
+Respond in Polish. Be concrete, structured, helpful.
+
+PRO Mode Workflow — follow these stages in order. Do NOT skip stages.
+
+Stage 1 — Business Basics:
+- What product/service are we advertising?
+- What is the main business goal?
+- Who is the ideal customer?
+- Which country/market?
+- Campaign objective? (Leads / Sales / Traffic / Engagement / Messages / App installs / Video views)
+- Daily or monthly budget?
+
+Stage 2 — Funnel Structure:
+- Cold audiences, warm audiences, remarketing, or full funnel?
+- Separate campaigns for prospecting / retargeting / lookalikes?
+
+Stage 3 — Offer and Landing Page:
+- Landing page URL?
+- Main offer? (discount, free consultation, ebook, demo, product purchase)
+- What action should users take? (submit form, buy, book call, message)
+
+Stage 4 — Audience Targeting:
+- Locations, age range, gender, languages
+- Audience strategy: interests, lookalikes, remarketing lists, customer lists
+- Website visitors, video viewers, engaged users, past customers?
+
+Stage 5 — Creative Assets:
+- Videos, images, carousel, UGC?
+- Primary text, headline, description, CTA
+- Multiple creatives to test?
+
+Stage 6 — Ad Set Structure:
+- Multiple audiences? Creative testing? Budget split testing?
+- Number of ad sets?
+
+Stage 7 — Optimization:
+- Optimize for which event? (Purchase, Lead, Add to cart, Landing page view, Messages)
+- Is Meta Pixel installed?
+
+Stage 8 — Budget and Schedule:
+- Daily budget or lifetime budget?
+- Start date, end date (optional)?
+
+Ask questions in rounds (4-6 questions per round), not all at once.
+If user gives incomplete answer — ask follow-up. Never guess critical data.
+
+IMPORTANT — Completion signal:
+When you have ALL required data and user confirms, output EXACTLY this marker:
+===KAMPANIA_META_GOTOWA===
+Then provide 4 sections:
+1. **Campaign Summary** — objective, offer, audience, budget, location
+2. **Campaign Structure** — Campaign → Ad Sets → Ads
+3. **Risks / Missing Items** — what needs verification
+4. **JSON**:
+```json
+{
+  "mode": "pro", "campaign_name": "", "objective": "", "business_goal": "",
+  "budget_daily": "", "location": [], "audiences": [], "lookalike_audiences": [],
+  "remarketing": [],
+  "creative": {"images": [], "videos": [], "texts": [], "headlines": [], "cta": ""},
+  "ad_sets": [], "optimization_event": "", "pixel_installed": false,
+  "schedule": {"start_date": "", "end_date": ""},
+  "missing_items": [], "ready_to_create": false
+}
+```
+"""
+
+META_CAMPAIGN_SIMPLE_PROMPT = """\
+You are a Meta Ads campaign creation assistant in Slack (Sebol). SIMPLE mode — fast campaign launch.
+Respond in Polish. Be short, direct.
+
+SIMPLE mode: collect only essential data, avoid long questionnaires, avoid strategic consulting.
+
+Required fields:
+- campaign objective (Leads/Sales/Traffic/Engagement/Video views/Messages/App installs)
+- daily budget
+- country or location
+- landing page URL
+- creative assets (video/image + primary text + headline + CTA)
+- basic audience (age, gender, interests — all optional, broad targeting OK)
+
+Ask all questions in ONE round (max 6-7 questions).
+If user already provided data — do NOT ask again, just confirm and ask for missing items.
+If user provides everything upfront — skip questions entirely, go straight to output.
+
+Only probe if missing: budget, creative, URL, or objective.
+
+SWITCHING TO PRO:
+If conversation becomes complex (user wants strategy, multiple audiences, funnel design,
+CPA/ROAS optimization, creative testing), START your response with:
+===SWITCH:PRO===
+Then explain you're switching to full setup mode.
+
+IMPORTANT — Completion signal:
+When enough data collected, output EXACTLY:
+===KAMPANIA_META_GOTOWA===
+Then provide 3 sections:
+1. **Summary** — objective, budget, location, audience, creative type, landing page
+2. **Campaign Structure** — Campaign → Ad Set → Ad (short)
+3. **JSON**:
+```json
+{
+  "mode": "simple", "campaign_name": "", "objective": "", "daily_budget": "",
+  "country": "", "age_range": "", "gender": "", "interests": [],
+  "landing_page_url": "",
+  "creative": {"type": "", "images": [], "videos": [], "primary_text": "", "headline": "", "cta": ""},
+  "optimization_event": "", "tracking": {"pixel_installed": false},
+  "missing_items": [], "ready_to_create": false
+}
+```
+"""
+
+META_CAMPAIGN_AUTO_PROMPT = """\
+You are a Meta Ads campaign creation assistant in Slack (Sebol).
+Respond in Polish. Your job: analyze user's FIRST message and choose between SIMPLE and PRO mode.
+
+Choose SIMPLE if:
+- User wants speed: "szybko", "prosta kampania", "bez pytań", "minimum", "tylko odpal", "na szybko"
+- User already provides: budget + link + creative + country
+- Simple single-objective campaign (one video ad, one audience, one product)
+- Signals: "wrzuć kampanię", "mam film i link", "zrób prostą kampanię", "just launch it"
+
+Choose PRO if:
+- User wants strategy, advice, or complex structure
+- Multiple products/services, audiences, or funnels
+- Signals: "strategia", "dobierz", "zoptymalizuj", "ROAS", "CPA", "remarketing",
+  "segmentacja", "rozpisz", "dla klienta", "pełny setup", "co wybrać"
+- User doesn't know what campaign type or objective to use
+
+Default: simple for straightforward requests, pro for unclear/complex ones.
+Do NOT ask "which mode do you want?" — decide yourself.
+
+FORMAT: Your response MUST start with one of these markers (alone on a line):
+===MODE:SIMPLE===
+or
+===MODE:PRO===
+
+After the marker, write the appropriate opening message and first questions.
+If SIMPLE: "Jasne — lecimy szybko. Zbieram tylko minimum do odpalenia kampanii." + 6 questions
+If PRO: "Jasne — zrobimy pełny setup. Najpierw zbiorę podstawy." + 5 Stage 1 questions
+
+If user already provided data in their message — do NOT re-ask, confirm and ask only for missing fields.
+"""
+
+_META_SIMPLE_TRIGGERS = {"simple", "szybka", "quick", "prosta", "szybko", "szybki"}
+_META_PRO_TRIGGERS = {"pro", "full", "strategy", "szczegolowo", "szczegółowo", "pelny", "pełny"}
+
+
+def _meta_wizard_post(user_id: str, text: str):
+    """Post Meta wizard message to source_channel in wizard thread."""
+    wizard = _ctx.meta_campaign_wizard.get(user_id)
+    if not wizard:
+        return
+    ch = wizard.get("source_channel")
+    ts = wizard.get("thread_ts")
+    try:
+        app.client.chat_postMessage(channel=ch, thread_ts=ts, text=text)
+    except Exception as e:
+        logger.error("_meta_wizard_post error: %s", e)
+
+
+@app.command("/kampaniameta")
+def handle_kampaniameta_slash(ack, command, logger):
+    ack()
+    user_id = command["user_id"]
+    source_channel = command.get("channel_id", "")
+    cmd_text = (command.get("text") or "").strip()
+    cmd_lower = cmd_text.lower()
+    cmd_words = cmd_lower.split()
+
+    explicit_simple = any(t in cmd_words for t in _META_SIMPLE_TRIGGERS)
+    explicit_pro = any(t in cmd_words for t in _META_PRO_TRIGGERS)
+
+    if explicit_simple:
+        mode = "simple"
+    elif explicit_pro:
+        mode = "pro"
+    else:
+        mode = "auto"
+
+    extra_context = cmd_text
+    for t in (_META_SIMPLE_TRIGGERS | _META_PRO_TRIGGERS):
+        extra_context = re.sub(rf'\b{re.escape(t)}\b', '', extra_context, flags=re.IGNORECASE).strip()
+
+    if mode == "simple":
+        intro = (
+            "⚡ *Szybka kampania Meta Ads — tryb SIMPLE*\n"
+            "Zbierzemy tylko najważniejsze dane i jedziemy.\n"
+            "Napisz `anuluj` żeby przerwać, `pro` żeby przejść w pełny tryb.\n\n"
+            "Potrzebuję kilku rzeczy:\n\n"
+            "1️⃣ Cel kampanii? _(leady / sprzedaż / ruch / zaangażowanie / wyświetlenia video / wiadomości)_\n"
+            "2️⃣ Budżet dzienny?\n"
+            "3️⃣ Kraj / lokalizacja?\n"
+            "4️⃣ Link docelowy?\n"
+            "5️⃣ Kreacja — wyślij plik (obraz/video) lub opisz co masz\n"
+            "6️⃣ Tekst reklamy + nagłówek + CTA"
+        )
+    elif mode == "pro":
+        intro = (
+            "🟣 *Tworzymy kampanię Meta Ads — tryb PRO*\n"
+            "Przeprowadzę Cię przez pełny profesjonalny setup.\n"
+            "Napisz `anuluj` żeby przerwać w dowolnym momencie.\n\n"
+            "Zaczynamy od podstaw:\n\n"
+            "1️⃣ Co reklamujemy? _(produkt / usługa / oferta)_\n"
+            "2️⃣ Jaki jest główny cel biznesowy?\n"
+            "3️⃣ Kto jest idealnym klientem?\n"
+            "4️⃣ Na jaki rynek kierujemy? _(kraj / miasta)_\n"
+            "5️⃣ Cel kampanii? _(leady / sprzedaż / ruch / zaangażowanie / wiadomości / instalacje / video views)_\n"
+            "6️⃣ Budżet dzienny lub miesięczny?"
+        )
+    else:  # auto
+        intro = (
+            "🟣 *Tworzymy kampanię Meta Ads!*\n"
+            "Napisz `anuluj` żeby przerwać w dowolnym momencie.\n\n"
+            "Powiedz mi co chcesz zrobić — dopasuję proces do potrzeb.\n"
+            "Możesz podać od razu dane (cel, budżet, link, kreacja),\n"
+            "albo opisać cel i pomogę zaprojektować kampanię."
+        )
+
+    try:
+        resp = app.client.chat_postMessage(channel=source_channel, text=intro)
+        thread_ts = resp["ts"]
+    except Exception as e:
+        logger.error("/kampaniameta post error: %s", e)
+        return
+
+    messages = [{"role": "assistant", "content": intro}]
+    if extra_context:
+        messages.append({"role": "user", "content": extra_context})
+
+    _ctx.meta_campaign_wizard[user_id] = {
+        "messages": messages,
+        "source_channel": source_channel,
+        "thread_ts": thread_ts,
+        "mode": mode,
+        "resolved_mode": mode if mode != "auto" else "",
+    }
+
+    if extra_context:
+        def _init_say(text):
+            app.client.chat_postMessage(channel=source_channel, thread_ts=thread_ts, text=text)
+        _handle_meta_campaign_wizard(user_id, None, [], _init_say)
+
+    logger.info("/kampaniameta (%s) started by %s in %s", mode, user_id, source_channel)
+
+
+logger.info("✅ /kampaniameta handler zarejestrowany")
+
+
+def _handle_meta_campaign_wizard(user_id: str, user_message: str | None, files: list, say_fn) -> bool:
+    """
+    Handle a channel thread reply for a user in the /kampaniameta wizard.
+    Claude-driven with AUTO/SIMPLE/PRO modes.
+    """
+    if user_id not in _ctx.meta_campaign_wizard:
+        return False
+
+    wizard = _ctx.meta_campaign_wizard[user_id]
+    current_mode = wizard.get("resolved_mode") or wizard.get("mode", "auto")
+
+    if user_message is not None:
+        msg_lower = user_message.strip().lower()
+
+        if msg_lower in ("anuluj", "cancel", "stop", "przerwij"):
+            del _ctx.meta_campaign_wizard[user_id]
+            say_fn("❌ Tworzenie kampanii Meta Ads anulowane.")
+            return True
+
+        if msg_lower in ("pro", "full", "szczegolowo", "szczegółowo") and current_mode == "simple":
+            wizard["resolved_mode"] = "pro"
+            wizard["messages"].append({"role": "user", "content": "Chcę przejść w pełny tryb PRO."})
+            wizard["messages"].append({"role": "assistant", "content": (
+                "🟣 OK — przechodzimy w tryb PRO. Teraz zrobię pełny setup kampanii.\n"
+                "Kontynuuję z danymi które już mam."
+            )})
+            say_fn("🟣 OK — przechodzimy w tryb PRO. Teraz zrobię pełny setup kampanii.\nKontynuuję z danymi które już mam.")
+            return True
+
+        # Build message content with file info
+        content = user_message
+        if files:
+            file_names = [f.get("name", "plik") for f in files]
+            content += f"\n[Załączone pliki: {', '.join(file_names)}]"
+            # Download files for later use
+            _file_ids = [f["id"] for f in files]
+            downloaded = download_slack_files(_file_ids) if _file_ids else []
+            wizard.setdefault("files", []).extend(downloaded)
+
+        wizard["messages"].append({"role": "user", "content": content})
+
+    # Select system prompt
+    if current_mode == "auto":
+        system_prompt = META_CAMPAIGN_AUTO_PROMPT
+    elif current_mode == "simple":
+        system_prompt = META_CAMPAIGN_SIMPLE_PROMPT
+    else:
+        system_prompt = META_CAMPAIGN_PRO_PROMPT
+
+    try:
+        response = _ctx.claude.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=3000,
+            system=system_prompt,
+            messages=wizard["messages"],
+        )
+        assistant_text = response.content[0].text
+
+        # AUTO MODE: resolve mode
+        if current_mode == "auto":
+            if "===MODE:SIMPLE===" in assistant_text:
+                wizard["resolved_mode"] = "simple"
+                assistant_text = assistant_text.replace("===MODE:SIMPLE===", "").strip()
+                logger.info("Meta wizard AUTO → SIMPLE for user %s", user_id)
+            elif "===MODE:PRO===" in assistant_text:
+                wizard["resolved_mode"] = "pro"
+                assistant_text = assistant_text.replace("===MODE:PRO===", "").strip()
+                logger.info("Meta wizard AUTO → PRO for user %s", user_id)
+            else:
+                wizard["resolved_mode"] = "pro"
+                logger.warning("Meta wizard AUTO: no mode marker, defaulting to PRO for user %s", user_id)
+
+        # Detect SIMPLE→PRO switch
+        if "===SWITCH:PRO===" in assistant_text:
+            wizard["resolved_mode"] = "pro"
+            assistant_text = assistant_text.replace("===SWITCH:PRO===", "").strip()
+            logger.info("Meta wizard SIMPLE → PRO switch for user %s", user_id)
+
+        wizard["messages"].append({"role": "assistant", "content": assistant_text})
+
+        if len(wizard["messages"]) > 30:
+            wizard["messages"] = wizard["messages"][-30:]
+
+        if "===KAMPANIA_META_GOTOWA===" in assistant_text:
+            del _ctx.meta_campaign_wizard[user_id]
+            final_text = assistant_text.replace("===KAMPANIA_META_GOTOWA===", "").strip()
+            say_fn(f"✅ *Kampania Meta Ads gotowa!*\n\n{final_text}")
+        else:
+            say_fn(assistant_text)
+
+    except Exception as e:
+        logger.error("Meta campaign wizard Claude error: %s", e)
+        say_fn(f"❌ Błąd komunikacji z AI: {e}")
+
+    return True
+
+
+# ── /kampaniagoogle — Claude-driven Google Ads wizard ─────────────────────────
+
+GOOGLE_CAMPAIGN_SYSTEM_PROMPT = """\
+Jesteś ekspertem Google Ads i asystentem do tworzenia kampanii reklamowych w Slacku (Sebol).
+Twoje zachowanie:
+1. Po rozpoczęciu procesu prowadzisz rozmowę etapami.
+2. Najpierw ustalasz typ kampanii i cel biznesowy.
+3. Następnie zadajesz szczegółowe pytania zależne od typu kampanii.
+4. Nie zakładasz niczego samodzielnie, jeśli użytkownik tego nie potwierdził.
+5. Zawsze wykrywasz braki, niejasności, sprzeczności i dopytujesz.
+6. Kończysz dopiero wtedy, gdy masz pełen komplet informacji operacyjnych.
+
+Styl prowadzenia rozmowy:
+- Krótko, jasno, etapami, bez lania wody, ale bardzo konkretnie.
+- Po polsku, naturalnie — jak kolega z agencji.
+- Zadawaj pytania w partiach po kilka (3–6), nie 40 naraz.
+- Jeśli odpowiedź jest zbyt ogólna — dopytuj.
+- Jeśli coś jest sprzeczne — wytknij i poproś o doprecyzowanie.
+
+Typy kampanii: Search, Performance Max, Display, Video/YouTube, Demand Gen, Shopping, App.
+Jeśli user nie wie jaki typ — zrób diagnozę i zaproponuj.
+
+Etapy rozmowy:
+RUNDA 1 — cel, oferta, rynek, budżet, typ kampanii
+RUNDA 2 — landing page, odbiorcy, tracking, KPI, harmonogram
+RUNDA 3 — pytania zależne od typu kampanii (słowa kluczowe/feed/kreacje/odbiorcy)
+RUNDA 4 — brakujące elementy kreatywne, techniczne, wykluczenia
+RUNDA 5 — finalne podsumowanie i potwierdzenie kompletności
+
+Wymagane pola przed finalizacją:
+- typ kampanii, cel, budżet, lokalizacja, język, konwersja/KPI
+- URL docelowy, targetowanie/słowa kluczowe/odbiorcy
+- materiały reklamowe, wykluczenia, harmonogram
+
+WAŻNE — Sygnał zakończenia:
+Gdy masz KOMPLET danych i użytkownik potwierdzi, wygeneruj odpowiedź z DOKŁADNIE takim znacznikiem:
+===KAMPANIA_GOOGLE_GOTOWA===
+A pod nim 4 sekcje:
+1. **Podsumowanie kampanii** — typ, cel, oferta, grupa docelowa, rynek, budżet, KPI, start
+2. **Struktura kampanii** — kampania, grupy reklam/asset groups, słowa kluczowe/odbiorcy/produkty, reklamy/assets, rozszerzenia
+3. **Ryzyka / checklista** — braki, ryzyka, rekomendacje, elementy do weryfikacji technicznej
+4. **Dane do utworzenia kampanii — JSON**:
+```json
+{
+  "campaign_name": "", "campaign_type": "", "business_goal": "",
+  "conversion_goal": "", "brand_name": "", "website_url": "",
+  "landing_page_url": "", "country": "", "locations": [],
+  "languages": [], "daily_budget": "", "monthly_budget": "",
+  "bidding_strategy": "", "target_cpa": "", "target_roas": "",
+  "start_date": "", "end_date": "", "audiences": [],
+  "remarketing_lists": [], "customer_match": false,
+  "keywords": [], "negative_keywords": [],
+  "placements": [], "excluded_placements": [],
+  "product_feed": {"merchant_center": false, "feed_available": false,
+    "feed_scope": "", "included_products": [], "excluded_products": []},
+  "asset_groups": [],
+  "ads": {"headlines": [], "long_headlines": [], "descriptions": [],
+    "paths": [], "call_to_action": "", "images": [], "logos": [], "videos": []},
+  "extensions": {"sitelinks": [], "callouts": [], "structured_snippets": [],
+    "phone": "", "location_extension": false, "promotion_extension": []},
+  "schedule": {"ad_schedule": [], "devices": [], "frequency_cap": ""},
+  "tracking": {"ga4": false, "gtm": false, "google_tag": false,
+    "conversion_tracking": false, "conversion_actions": []},
+  "compliance": {"legal_restrictions": [], "brand_restrictions": [],
+    "excluded_terms": [], "excluded_brands": []},
+  "notes": [], "missing_items": [], "ready_to_create": false
+}
+```
+
+Pytania obowiązkowe niezależnie od typu:
+1. Firma/marka, 2. Produkt/usługa, 3. Cel kampanii, 4. Najważniejsza konwersja,
+5. Budżet, 6. Rynek docelowy, 7. Landing page, 8. Oferta/przewaga,
+9. Odbiorca, 10. Materiały kreatywne, 11. Ograniczenia brandowe/prawne,
+12. KPI sukcesu, 13. Tracking/konwersje gotowe?, 14. Data startu,
+15. Data zakończenia?, 16. Listy remarketingowe?, 17. Wykluczenia?,
+18. Pełna automatyzacja czy kontrolowana struktura?
+
+Szczegółowe pytania per typ kampanii:
+- Search: brand/niebrand, strategia stawek, frazy (główne/poboczne/long-tail/wykluczenia), dopasowania, RSA (10-15 nagłówków, 4 opisy, ścieżki URL), rozszerzenia, harmonogram
+- Performance Max: feed/Merchant Center, asset groups (nagłówki/opisy/obrazy/logo/video), audience signals, URL expansion
+- Display: prospecting/remarketing, segmenty, placementy, responsive display ads, częstotliwość
+- Video/YouTube: materiały video, formaty, CPV/tCPA, inventory type, companion banner
+- Demand Gen: custom segments, kreacje (poziome/pionowe/kwadratowe), asset groups
+- Shopping: Merchant Center, feed, custom labels, podział (marka/kategoria/marża), priorytety
+- App: platforma, link do sklepu, Firebase/SDK, eventy in-app, target CPI/CPA
+
+Nigdy nie finalizuj po ogólnikowej odpowiedzi. Zawsze doprecyzowuj.
+"""
+
+
+GOOGLE_CAMPAIGN_SIMPLE_PROMPT = """\
+Jesteś ekspertem Google Ads w Slacku (Sebol). Działasz w trybie SIMPLE — szybkie kampanie.
+
+Zasady:
+- Zbieraj TYLKO krytyczne dane — nie rób pełnego audytu.
+- Zadaj wszystkie pytania w jednej rundzie (maks 7 pytań).
+- Jeśli user podał już dane w pierwszej wiadomości — nie pytaj ponownie.
+- Dopytuj TYLKO jeśli brakuje: budżetu, materiału reklamowego, URL lub targetowania.
+- Po polsku, naturalnie, krótko.
+
+Minimalne dane per typ kampanii:
+
+Search:
+1. budżet, 2. kraj/lokalizacja, 3. landing page, 4. 3-10 słów kluczowych, 5. 3 nagłówki, 6. 1-2 opisy
+
+Performance Max:
+1. budżet, 2. kraj, 3. landing page, 4. nagłówki, 5. opisy, 6. obrazy/video (opcjonalne)
+
+Video / YouTube:
+1. link do filmu, 2. landing page, 3. budżet dzienny, 4. kraj/lokalizacja,
+5. wiek odbiorców, 6. zainteresowania (opcjonalne), 7. CTA
+
+Display:
+1. budżet, 2. lokalizacja, 3. landing page, 4. odbiorcy/segmenty, 5. kreacje (obrazy), 6. nagłówki+opisy
+
+Demand Gen:
+1. budżet, 2. kraj, 3. landing page, 4. kreacje (obrazy/video), 5. nagłówki+opisy, 6. odbiorcy
+
+Shopping:
+1. budżet, 2. kraj, 3. Merchant Center aktywne?, 4. zakres produktów, 5. target ROAS (opcjonalny)
+
+Jeśli user poda od razu dużo danych (np. "kampania yt budżet 50 zł Polska 18-34 film: link strona: link")
+— NIE pytaj więcej, od razu generuj output.
+
+PRZEŁĄCZENIE NA PRO:
+Jeśli w trakcie rozmowy okaże się że temat jest złożony (user nie wie czego chce, chce strategii,
+ma 2+ cele/segmenty, pyta o ROAS/CPA/remarketing/segmentację), ZACZNIJ odpowiedź od:
+===SWITCH:PRO===
+Tu już wchodzimy w bardziej rozbudowany setup. Przełączam na tryb PRO, żeby dobrze dobrać strukturę.
+
+Jeśli user sam napisze "pro" — nie musisz nic robić, system obsłuży to automatycznie.
+
+WAŻNE — Sygnał zakończenia:
+Gdy masz wystarczające dane, wygeneruj odpowiedź z DOKŁADNIE takim znacznikiem:
+===KAMPANIA_GOOGLE_GOTOWA===
+A pod nim 3 sekcje:
+1. **Podsumowanie** — typ, budżet, lokalizacja, targetowanie, link docelowy
+2. **Struktura kampanii** — krótka
+3. **JSON** — taki sam format jak w trybie PRO:
+```json
+{
+  "campaign_name": "", "campaign_type": "", "business_goal": "",
+  "conversion_goal": "", "brand_name": "", "website_url": "",
+  "landing_page_url": "", "country": "", "locations": [],
+  "languages": [], "daily_budget": "", "monthly_budget": "",
+  "bidding_strategy": "", "target_cpa": "", "target_roas": "",
+  "start_date": "", "end_date": "", "audiences": [],
+  "remarketing_lists": [], "customer_match": false,
+  "keywords": [], "negative_keywords": [],
+  "placements": [], "excluded_placements": [],
+  "product_feed": {"merchant_center": false, "feed_available": false,
+    "feed_scope": "", "included_products": [], "excluded_products": []},
+  "asset_groups": [],
+  "ads": {"headlines": [], "long_headlines": [], "descriptions": [],
+    "paths": [], "call_to_action": "", "images": [], "logos": [], "videos": []},
+  "extensions": {"sitelinks": [], "callouts": [], "structured_snippets": [],
+    "phone": "", "location_extension": false, "promotion_extension": []},
+  "schedule": {"ad_schedule": [], "devices": [], "frequency_cap": ""},
+  "tracking": {"ga4": false, "gtm": false, "google_tag": false,
+    "conversion_tracking": false, "conversion_actions": []},
+  "compliance": {"legal_restrictions": [], "brand_restrictions": [],
+    "excluded_terms": [], "excluded_brands": []},
+  "notes": [], "missing_items": [], "ready_to_create": false
+}
+```
+"""
+
+_SIMPLE_TRIGGERS = {"simple", "szybka", "quick", "prosta", "szybko", "szybki"}
+_PRO_TRIGGERS = {"pro", "full", "szczegolowo", "szczegółowo", "pelny", "pełny"}
+
+GOOGLE_CAMPAIGN_AUTO_PROMPT = """\
+Jesteś ekspertem Google Ads w Slacku (Sebol). Twoja rola: analiza intencji użytkownika i wybór trybu pracy.
+
+Użytkownik właśnie zaczął tworzenie kampanii Google Ads komendą /kampaniagoogle.
+Przeanalizuj jego PIERWSZĄ wiadomość i zdecyduj, czy chce:
+- **SIMPLE** — szybkie odpalenie prostej kampanii
+- **PRO** — pełny, strategiczny setup
+
+ZASADY WYBORU:
+
+Wybierz SIMPLE jeśli:
+- User chce "szybko", "prosto", "bez pytań", "minimum", "tylko odpal", "na szybko"
+- User od razu podaje komplet danych: typ, budżet, lokalizacja, materiał, URL
+- Prosty jednoelementowy setup (jeden film na YT, jedna kampania brand search, itp.)
+- Sygnały: "wrzuć kampanię", "mam film i link", "zrób prostą kampanię"
+
+Wybierz PRO jeśli:
+- User nie wie jaki typ kampanii wybrać
+- User chce rekomendacji, strategii, struktury
+- Są 2+ cele, segmenty, produkty/usługi
+- Sygnały: "strategia", "struktura", "dobierz", "zoptymalizuj", "ROAS", "CPA",
+  "remarketing", "audience signals", "segmentacja", "rozpisz", "porządnie"
+- User mówi o sklepie z feedem, wieloproduktowym PMax, brand/non-brand split
+
+Domyślnie:
+- Proste wejścia → SIMPLE
+- Niejasne i złożone → PRO
+
+NIE PYTAJ użytkownika "chcesz simple czy pro?" — sam zdecyduj.
+
+FORMAT ODPOWIEDZI:
+Twoja odpowiedź MUSI zaczynać się od jednego z tych znaczników (sam w linii):
+===MODE:SIMPLE===
+lub
+===MODE:PRO===
+
+Po znaczniku napisz odpowiedni komunikat startowy i PIERWSZE pytania.
+
+Jeśli SIMPLE:
+"Jasne — lecimy szybko. Zbieram tylko minimum potrzebne do odpalenia kampanii."
+Potem minimalny zestaw pytań (6-7) zależny od tego co user już podał.
+
+Jeśli PRO:
+"Jasne — zrobimy pełny setup. Najpierw zbiorę podstawy kampanii, potem dopytam o szczegóły."
+Potem 5 pytań startowych (cel, oferta, rynek, budżet, typ kampanii).
+
+Jeśli user podał już dane — NIE pytaj o nie ponownie, po prostu potwierdź i pytaj o brakujące.
+"""
+
+
+def _google_wizard_post(user_id: str, text: str):
+    """Post Google wizard message to source_channel in wizard thread."""
+    wizard = _ctx.google_campaign_wizard.get(user_id)
+    if not wizard:
+        return
+    ch = wizard.get("source_channel")
+    ts = wizard.get("thread_ts")
+    try:
+        app.client.chat_postMessage(channel=ch, thread_ts=ts, text=text)
+    except Exception as e:
+        logger.error("_google_wizard_post error: %s", e)
+
+
+@app.command("/kampaniagoogle")
+def handle_kampaniagoogle_slash(ack, command, logger):
+    ack()
+    user_id = command["user_id"]
+    source_channel = command.get("channel_id", "")
+    cmd_text = (command.get("text") or "").strip()
+    cmd_lower = cmd_text.lower()
+    cmd_words = cmd_lower.split()
+
+    # 1. Detect explicit mode from command args
+    explicit_simple = any(t in cmd_words for t in _SIMPLE_TRIGGERS)
+    explicit_pro = any(t in cmd_words for t in _PRO_TRIGGERS)
+
+    if explicit_simple:
+        mode = "simple"
+    elif explicit_pro:
+        mode = "pro"
+    else:
+        mode = "auto"
+
+    # Strip mode triggers from text to get extra context
+    extra_context = cmd_text
+    for t in (_SIMPLE_TRIGGERS | _PRO_TRIGGERS):
+        extra_context = re.sub(rf'\b{re.escape(t)}\b', '', extra_context, flags=re.IGNORECASE).strip()
+
+    # Build intro based on resolved mode
+    if mode == "simple":
+        intro = (
+            "⚡ *Szybka kampania Google Ads — tryb SIMPLE*\n"
+            "Zbierzemy tylko najważniejsze dane i jedziemy.\n"
+            "Napisz `anuluj` żeby przerwać, `pro` żeby przejść w pełny tryb.\n\n"
+            "Potrzebuję kilku rzeczy:\n\n"
+            "1️⃣ Jaki typ kampanii? _(Search / YouTube / PMax / Display / Demand Gen / Shopping)_\n"
+            "2️⃣ Budżet dzienny lub miesięczny?\n"
+            "3️⃣ Rynek — kraj / miasta?\n"
+            "4️⃣ Cel kampanii? _(sprzedaż / leady / ruch / wyświetlenia)_\n"
+            "5️⃣ Link docelowy?\n"
+            "6️⃣ Jakie materiały reklamowe masz? _(nagłówki / opisy / link do filmu / obrazy)_"
+        )
+    elif mode == "pro":
+        intro = (
+            "🔵 *Tworzymy nową kampanię Google Ads — tryb PRO*\n"
+            "Przeprowadzę Cię przez cały proces krok po kroku.\n"
+            "Napisz `anuluj` żeby przerwać w dowolnym momencie.\n\n"
+            "Zaczynamy. Odpowiedz proszę na te 5 pytań:\n\n"
+            "1️⃣ Jaki jest główny cel kampanii? _(sprzedaż / leady / telefony / ruch / świadomość / wizyty w sklepie / instalacje apki)_\n"
+            "2️⃣ Co dokładnie reklamujemy? _(produkt / usługa / oferta)_\n"
+            "3️⃣ Na jaki rynek kierujemy? _(kraj / miasta / regiony)_\n"
+            "4️⃣ Jaki masz budżet dzienny lub miesięczny?\n"
+            "5️⃣ Jaki typ kampanii chcesz? _(Search / Performance Max / Display / Video / Demand Gen / Shopping / App — lub 'nie wiem')_"
+        )
+    else:  # auto
+        intro = (
+            "🔵 *Tworzymy kampanię Google Ads!*\n"
+            "Napisz `anuluj` żeby przerwać w dowolnym momencie.\n\n"
+            "Powiedz mi co chcesz zrobić — dopasuję proces do potrzeb.\n"
+            "Możesz np. podać od razu typ kampanii, budżet, link i materiały,\n"
+            "albo opisać cel i pomogę dobrać najlepsze rozwiązanie."
+        )
+
+    try:
+        resp = app.client.chat_postMessage(channel=source_channel, text=intro)
+        thread_ts = resp["ts"]
+    except Exception as e:
+        logger.error("/kampaniagoogle post error: %s", e)
+        return
+
+    messages = [{"role": "assistant", "content": intro}]
+    if extra_context:
+        messages.append({"role": "user", "content": extra_context})
+
+    _ctx.google_campaign_wizard[user_id] = {
+        "messages": messages,
+        "source_channel": source_channel,
+        "thread_ts": thread_ts,
+        "mode": mode,              # "auto", "simple", "pro"
+        "resolved_mode": mode if mode != "auto" else "",  # filled after auto-detection
+    }
+
+    # If extra context was provided, immediately process through Claude
+    if extra_context:
+        def _init_say(text):
+            app.client.chat_postMessage(channel=source_channel, thread_ts=thread_ts, text=text)
+        _handle_google_campaign_wizard(user_id, None, _init_say)
+
+    logger.info("/kampaniagoogle (%s) started by %s in %s", mode, user_id, source_channel)
+
+
+logger.info("✅ /kampaniagoogle handler zarejestrowany")
+
+
+def _handle_google_campaign_wizard(user_id: str, user_message: str | None, say_fn) -> bool:
+    """
+    Handle a channel thread reply for a user in the /kampaniagoogle wizard.
+    Uses Claude to drive the conversation dynamically.
+    Supports AUTO/SIMPLE/PRO modes with automatic resolution and switching.
+    user_message=None means the message was already appended (e.g. from slash command extra context).
+    Returns True if message was consumed by the wizard, False otherwise.
+    """
+    if user_id not in _ctx.google_campaign_wizard:
+        return False
+
+    wizard = _ctx.google_campaign_wizard[user_id]
+    current_mode = wizard.get("resolved_mode") or wizard.get("mode", "auto")
+
+    if user_message is not None:
+        msg_lower = user_message.strip().lower()
+
+        # Anulowanie
+        if msg_lower in ("anuluj", "cancel", "stop", "przerwij"):
+            del _ctx.google_campaign_wizard[user_id]
+            say_fn("❌ Tworzenie kampanii Google Ads anulowane.")
+            return True
+
+        # Jawne przełączenie SIMPLE → PRO
+        if msg_lower in ("pro", "full", "szczegolowo", "szczegółowo") and current_mode == "simple":
+            wizard["resolved_mode"] = "pro"
+            wizard["messages"].append({"role": "user", "content": "Chcę przejść w pełny tryb PRO."})
+            wizard["messages"].append({"role": "assistant", "content": (
+                "🔵 OK — przechodzimy w tryb PRO. Teraz zrobię pełny setup kampanii.\n"
+                "Kontynuuję z danymi które już mam."
+            )})
+            say_fn("🔵 OK — przechodzimy w tryb PRO. Teraz zrobię pełny setup kampanii.\nKontynuuję z danymi które już mam.")
+            return True
+
+        # Dodaj wiadomość użytkownika do historii
+        wizard["messages"].append({"role": "user", "content": user_message})
+
+    # --- Wybierz system prompt na podstawie trybu ---
+    if current_mode == "auto":
+        # Pierwszy raz — Claude analizuje intencję i wybiera tryb
+        system_prompt = GOOGLE_CAMPAIGN_AUTO_PROMPT
+    elif current_mode == "simple":
+        system_prompt = GOOGLE_CAMPAIGN_SIMPLE_PROMPT
+    else:  # pro
+        system_prompt = GOOGLE_CAMPAIGN_SYSTEM_PROMPT
+
+    try:
+        response = _ctx.claude.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=3000,
+            system=system_prompt,
+            messages=wizard["messages"],
+        )
+        assistant_text = response.content[0].text
+
+        # --- AUTO MODE: resolve mode from Claude's response ---
+        if current_mode == "auto":
+            if "===MODE:SIMPLE===" in assistant_text:
+                wizard["resolved_mode"] = "simple"
+                assistant_text = assistant_text.replace("===MODE:SIMPLE===", "").strip()
+                logger.info("Google wizard AUTO → SIMPLE for user %s", user_id)
+            elif "===MODE:PRO===" in assistant_text:
+                wizard["resolved_mode"] = "pro"
+                assistant_text = assistant_text.replace("===MODE:PRO===", "").strip()
+                logger.info("Google wizard AUTO → PRO for user %s", user_id)
+            else:
+                # Fallback: jeśli Claude nie dał markera, zakładamy PRO
+                wizard["resolved_mode"] = "pro"
+                logger.warning("Google wizard AUTO: no mode marker, defaulting to PRO for user %s", user_id)
+
+        # --- Detect SIMPLE→PRO switch suggested by Claude ---
+        if "===SWITCH:PRO===" in assistant_text:
+            wizard["resolved_mode"] = "pro"
+            assistant_text = assistant_text.replace("===SWITCH:PRO===", "").strip()
+            logger.info("Google wizard SIMPLE → PRO switch for user %s", user_id)
+
+        # Zapisz odpowiedź Claude do historii (bez markerów)
+        wizard["messages"].append({"role": "assistant", "content": assistant_text})
+
+        # Trim historii jeśli za długa (zachowaj ostatnie 30 wiadomości)
+        if len(wizard["messages"]) > 30:
+            wizard["messages"] = wizard["messages"][-30:]
+
+        # Sprawdź czy kampania jest gotowa
+        if "===KAMPANIA_GOOGLE_GOTOWA===" in assistant_text:
+            del _ctx.google_campaign_wizard[user_id]
+            final_text = assistant_text.replace("===KAMPANIA_GOOGLE_GOTOWA===", "").strip()
+            say_fn(f"✅ *Kampania Google Ads gotowa!*\n\n{final_text}")
+        else:
+            say_fn(assistant_text)
+
+    except Exception as e:
+        logger.error("Google campaign wizard Claude error: %s", e)
+        say_fn(f"❌ Błąd komunikacji z AI: {e}")
+
+    return True
 
 
 # ── scheduler ─────────────────────────────────────────────────────────────────

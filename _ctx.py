@@ -27,3 +27,9 @@ bot_threads: set = set()
 
 # /kampania wizard state: user_id → {step, answers, files, source_channel}
 campaign_wizard: dict = {}
+
+# /kampaniagoogle wizard state: user_id → {messages, source_channel, thread_ts}
+google_campaign_wizard: dict = {}
+
+# /kampaniameta wizard state: user_id → {messages, source_channel, thread_ts, mode, resolved_mode}
+meta_campaign_wizard: dict = {}
