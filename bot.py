@@ -1713,6 +1713,81 @@ Nigdy nie finalizuj po ogólnikowej odpowiedzi. Zawsze doprecyzowuj.
 """
 
 
+GOOGLE_CAMPAIGN_SIMPLE_PROMPT = """\
+Jesteś ekspertem Google Ads w Slacku (Sebol). Działasz w trybie SIMPLE — szybkie kampanie.
+
+Zasady:
+- Zbieraj TYLKO krytyczne dane — nie rób pełnego audytu.
+- Zadaj wszystkie pytania w jednej rundzie (maks 7 pytań).
+- Jeśli user podał już dane w pierwszej wiadomości — nie pytaj ponownie.
+- Dopytuj TYLKO jeśli brakuje: budżetu, materiału reklamowego, URL lub targetowania.
+- Po polsku, naturalnie, krótko.
+
+Minimalne dane per typ kampanii:
+
+Search:
+1. budżet, 2. kraj/lokalizacja, 3. landing page, 4. 3-10 słów kluczowych, 5. 3 nagłówki, 6. 1-2 opisy
+
+Performance Max:
+1. budżet, 2. kraj, 3. landing page, 4. nagłówki, 5. opisy, 6. obrazy/video (opcjonalne)
+
+Video / YouTube:
+1. link do filmu, 2. landing page, 3. budżet dzienny, 4. kraj/lokalizacja,
+5. wiek odbiorców, 6. zainteresowania (opcjonalne), 7. CTA
+
+Display:
+1. budżet, 2. lokalizacja, 3. landing page, 4. odbiorcy/segmenty, 5. kreacje (obrazy), 6. nagłówki+opisy
+
+Demand Gen:
+1. budżet, 2. kraj, 3. landing page, 4. kreacje (obrazy/video), 5. nagłówki+opisy, 6. odbiorcy
+
+Shopping:
+1. budżet, 2. kraj, 3. Merchant Center aktywne?, 4. zakres produktów, 5. target ROAS (opcjonalny)
+
+Jeśli user poda od razu dużo danych (np. "kampania yt budżet 50 zł Polska 18-34 film: link strona: link")
+— NIE pytaj więcej, od razu generuj output.
+
+Jeśli user zacznie prosić o strategię lub szczegółowy setup, zaproponuj:
+"Możemy przejść w tryb PRO i zrobić pełny setup kampanii — napisz `pro`."
+
+WAŻNE — Sygnał zakończenia:
+Gdy masz wystarczające dane, wygeneruj odpowiedź z DOKŁADNIE takim znacznikiem:
+===KAMPANIA_GOOGLE_GOTOWA===
+A pod nim 3 sekcje:
+1. **Podsumowanie** — typ, budżet, lokalizacja, targetowanie, link docelowy
+2. **Struktura kampanii** — krótka
+3. **JSON** — taki sam format jak w trybie PRO:
+```json
+{
+  "campaign_name": "", "campaign_type": "", "business_goal": "",
+  "conversion_goal": "", "brand_name": "", "website_url": "",
+  "landing_page_url": "", "country": "", "locations": [],
+  "languages": [], "daily_budget": "", "monthly_budget": "",
+  "bidding_strategy": "", "target_cpa": "", "target_roas": "",
+  "start_date": "", "end_date": "", "audiences": [],
+  "remarketing_lists": [], "customer_match": false,
+  "keywords": [], "negative_keywords": [],
+  "placements": [], "excluded_placements": [],
+  "product_feed": {"merchant_center": false, "feed_available": false,
+    "feed_scope": "", "included_products": [], "excluded_products": []},
+  "asset_groups": [],
+  "ads": {"headlines": [], "long_headlines": [], "descriptions": [],
+    "paths": [], "call_to_action": "", "images": [], "logos": [], "videos": []},
+  "extensions": {"sitelinks": [], "callouts": [], "structured_snippets": [],
+    "phone": "", "location_extension": false, "promotion_extension": []},
+  "schedule": {"ad_schedule": [], "devices": [], "frequency_cap": ""},
+  "tracking": {"ga4": false, "gtm": false, "google_tag": false,
+    "conversion_tracking": false, "conversion_actions": []},
+  "compliance": {"legal_restrictions": [], "brand_restrictions": [],
+    "excluded_terms": [], "excluded_brands": []},
+  "notes": [], "missing_items": [], "ready_to_create": false
+}
+```
+"""
+
+_SIMPLE_TRIGGERS = {"simple", "szybka", "quick", "prosta", "szybko", "szybki"}
+
+
 def _google_wizard_post(user_id: str, text: str):
     """Post Google wizard message to source_channel in wizard thread."""
     wizard = _ctx.google_campaign_wizard.get(user_id)
@@ -1731,18 +1806,41 @@ def handle_kampaniagoogle_slash(ack, command, logger):
     ack()
     user_id = command["user_id"]
     source_channel = command.get("channel_id", "")
+    cmd_text = (command.get("text") or "").strip().lower()
 
-    intro = (
-        "🔵 *Tworzymy nową kampanię Google Ads!*\n"
-        "Przeprowadzę Cię przez cały proces krok po kroku.\n"
-        "Napisz `anuluj` żeby przerwać w dowolnym momencie.\n\n"
-        "Zaczynamy. Odpowiedz proszę na te 5 pytań:\n\n"
-        "1️⃣ Jaki jest główny cel kampanii? _(sprzedaż / leady / telefony / ruch / świadomość / wizyty w sklepie / instalacje apki)_\n"
-        "2️⃣ Co dokładnie reklamujemy? _(produkt / usługa / oferta)_\n"
-        "3️⃣ Na jaki rynek kierujemy? _(kraj / miasta / regiony)_\n"
-        "4️⃣ Jaki masz budżet dzienny lub miesięczny?\n"
-        "5️⃣ Jaki typ kampanii chcesz? _(Search / Performance Max / Display / Video / Demand Gen / Shopping / App — lub 'nie wiem')_"
-    )
+    # Detect SIMPLE mode from command args
+    is_simple = any(t in cmd_text.split() for t in _SIMPLE_TRIGGERS)
+    # Auto-detect: if user wrote extra context after trigger word, pass it as first message
+    extra_context = cmd_text
+    for t in _SIMPLE_TRIGGERS:
+        extra_context = extra_context.replace(t, "").strip()
+
+    if is_simple:
+        intro = (
+            "⚡ *Szybka kampania Google Ads — tryb SIMPLE*\n"
+            "Zbierzemy tylko najważniejsze dane i jedziemy.\n"
+            "Napisz `anuluj` żeby przerwać, `pro` żeby przejść w pełny tryb.\n\n"
+            "Potrzebuję kilku rzeczy:\n\n"
+            "1️⃣ Jaki typ kampanii? _(Search / YouTube / PMax / Display / Demand Gen / Shopping)_\n"
+            "2️⃣ Budżet dzienny lub miesięczny?\n"
+            "3️⃣ Rynek — kraj / miasta?\n"
+            "4️⃣ Cel kampanii? _(sprzedaż / leady / ruch / wyświetlenia)_\n"
+            "5️⃣ Link docelowy?\n"
+            "6️⃣ Jakie materiały reklamowe masz? _(nagłówki / opisy / link do filmu / obrazy)_"
+        )
+    else:
+        intro = (
+            "🔵 *Tworzymy nową kampanię Google Ads!*\n"
+            "Przeprowadzę Cię przez cały proces krok po kroku.\n"
+            "Napisz `anuluj` żeby przerwać w dowolnym momencie.\n\n"
+            "Zaczynamy. Odpowiedz proszę na te 5 pytań:\n\n"
+            "1️⃣ Jaki jest główny cel kampanii? _(sprzedaż / leady / telefony / ruch / świadomość / wizyty w sklepie / instalacje apki)_\n"
+            "2️⃣ Co dokładnie reklamujemy? _(produkt / usługa / oferta)_\n"
+            "3️⃣ Na jaki rynek kierujemy? _(kraj / miasta / regiony)_\n"
+            "4️⃣ Jaki masz budżet dzienny lub miesięczny?\n"
+            "5️⃣ Jaki typ kampanii chcesz? _(Search / Performance Max / Display / Video / Demand Gen / Shopping / App — lub 'nie wiem')_"
+        )
+
     try:
         resp = app.client.chat_postMessage(channel=source_channel, text=intro)
         thread_ts = resp["ts"]
@@ -1750,23 +1848,35 @@ def handle_kampaniagoogle_slash(ack, command, logger):
         logger.error("/kampaniagoogle post error: %s", e)
         return
 
+    messages = [{"role": "assistant", "content": intro}]
+    # If user provided extra context with the command, inject it
+    if extra_context:
+        messages.append({"role": "user", "content": extra_context})
+
     _ctx.google_campaign_wizard[user_id] = {
-        "messages": [
-            {"role": "assistant", "content": intro},
-        ],
+        "messages": messages,
         "source_channel": source_channel,
         "thread_ts": thread_ts,
+        "mode": "simple" if is_simple else "pro",
     }
-    logger.info("/kampaniagoogle started by %s in %s thread %s", user_id, source_channel, thread_ts)
+
+    # If extra context was provided, immediately process it through Claude
+    if extra_context:
+        def _init_say(text):
+            app.client.chat_postMessage(channel=source_channel, thread_ts=thread_ts, text=text)
+        _handle_google_campaign_wizard(user_id, None, _init_say)
+
+    logger.info("/kampaniagoogle (%s) started by %s in %s", "simple" if is_simple else "pro", user_id, source_channel)
 
 
 logger.info("✅ /kampaniagoogle handler zarejestrowany")
 
 
-def _handle_google_campaign_wizard(user_id: str, user_message: str, say_fn) -> bool:
+def _handle_google_campaign_wizard(user_id: str, user_message: str | None, say_fn) -> bool:
     """
     Handle a channel thread reply for a user in the /kampaniagoogle wizard.
     Uses Claude to drive the conversation dynamically.
+    user_message=None means the message was already appended (e.g. from slash command extra context).
     Returns True if message was consumed by the wizard, False otherwise.
     """
     if user_id not in _ctx.google_campaign_wizard:
@@ -1774,20 +1884,40 @@ def _handle_google_campaign_wizard(user_id: str, user_message: str, say_fn) -> b
 
     wizard = _ctx.google_campaign_wizard[user_id]
 
-    # Anulowanie
-    if user_message.strip().lower() in ("anuluj", "cancel", "stop", "przerwij"):
-        del _ctx.google_campaign_wizard[user_id]
-        say_fn("❌ Tworzenie kampanii Google Ads anulowane.")
-        return True
+    if user_message is not None:
+        msg_lower = user_message.strip().lower()
 
-    # Dodaj wiadomość użytkownika do historii
-    wizard["messages"].append({"role": "user", "content": user_message})
+        # Anulowanie
+        if msg_lower in ("anuluj", "cancel", "stop", "przerwij"):
+            del _ctx.google_campaign_wizard[user_id]
+            say_fn("❌ Tworzenie kampanii Google Ads anulowane.")
+            return True
+
+        # Przełącz tryb SIMPLE → PRO
+        if msg_lower == "pro" and wizard.get("mode") == "simple":
+            wizard["mode"] = "pro"
+            wizard["messages"].append({"role": "user", "content": "Chcę przejść w pełny tryb PRO."})
+            wizard["messages"].append({"role": "assistant", "content": (
+                "🔵 OK — przechodzimy w tryb PRO. Teraz zrobię pełny setup kampanii.\n"
+                "Kontynuuję z danymi które już mam."
+            )})
+            say_fn("🔵 OK — przechodzimy w tryb PRO. Teraz zrobię pełny setup kampanii.\nKontynuuję z danymi które już mam.")
+            return True
+
+        # Dodaj wiadomość użytkownika do historii
+        wizard["messages"].append({"role": "user", "content": user_message})
+
+    # Wybierz system prompt na podstawie trybu
+    system_prompt = (
+        GOOGLE_CAMPAIGN_SIMPLE_PROMPT if wizard.get("mode") == "simple"
+        else GOOGLE_CAMPAIGN_SYSTEM_PROMPT
+    )
 
     try:
         response = _ctx.claude.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=3000,
-            system=GOOGLE_CAMPAIGN_SYSTEM_PROMPT,
+            system=system_prompt,
             messages=wizard["messages"],
         )
         assistant_text = response.content[0].text
@@ -1801,9 +1931,7 @@ def _handle_google_campaign_wizard(user_id: str, user_message: str, say_fn) -> b
 
         # Sprawdź czy kampania jest gotowa
         if "===KAMPANIA_GOOGLE_GOTOWA===" in assistant_text:
-            # Wyczyść stan wizarda
             del _ctx.google_campaign_wizard[user_id]
-            # Wyślij finalne podsumowanie (bez markera)
             final_text = assistant_text.replace("===KAMPANIA_GOOGLE_GOTOWA===", "").strip()
             say_fn(f"✅ *Kampania Google Ads gotowa!*\n\n{final_text}")
         else:
