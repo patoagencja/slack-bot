@@ -2,6 +2,7 @@
 data/team_availability.json
 data/team_requests.json
 data/memory.db
+data/wizard_state.json
 
 # Python
 __pycache__/
