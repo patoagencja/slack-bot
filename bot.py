@@ -1069,10 +1069,23 @@ def handle_message_events(body, say, logger):
     _msg_thread_ts_early = event.get("thread_ts")
     _is_campaign_ch_early = CAMPAIGN_CHANNEL_ID and _ch_id_early == CAMPAIGN_CHANNEL_ID
     _seba_m_early = re.search(r'\bsebol\w*\b|\bseba\b', user_message, re.IGNORECASE)
+    # Sprawdź czy aktywny wizard obsługuje ten konkretny wątek — jeśli tak, nie przechwytuj
+    _wizard_owns_thread = (
+        (user_id in _ctx.meta_campaign_wizard
+         and _ctx.meta_campaign_wizard[user_id].get("source_channel") == _ch_id_early
+         and _ctx.meta_campaign_wizard[user_id].get("thread_ts") == _msg_thread_ts_early)
+        or (user_id in _ctx.google_campaign_wizard
+            and _ctx.google_campaign_wizard[user_id].get("source_channel") == _ch_id_early
+            and _ctx.google_campaign_wizard[user_id].get("thread_ts") == _msg_thread_ts_early)
+        or (user_id in _ctx.campaign_wizard
+            and _ctx.campaign_wizard[user_id].get("source_channel") == _ch_id_early
+            and _ctx.campaign_wizard[user_id].get("thread_ts") == _msg_thread_ts_early)
+    )
     if (_ch_type_early in ("channel", "group", "mpim")
             and _is_campaign_ch_early
             and _msg_thread_ts_early
-            and not _seba_m_early):
+            and not _seba_m_early
+            and not _wizard_owns_thread):
         _handle_campaign_channel_thread(event, user_message, say)
         return
 
