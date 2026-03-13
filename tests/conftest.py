@@ -68,6 +68,7 @@ _ALL_MOCK_ATTRS = [
     "meta_ads_tool",
     # tools.google_ads
     "google_ads_tool",
+    "create_google_campaign_draft", "generate_google_campaign_preview", "_detect_google_client",
     # tools.google_analytics
     "google_analytics_tool",
     # tools.email_tools
