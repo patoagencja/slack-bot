@@ -2,10 +2,10 @@
 """
 Generuje nowy GOOGLE_ADS_REFRESH_TOKEN.
 
-1. pip install google-auth-oauthlib
-2. python refresh_token.py
-3. Przeglądarka się otworzy → kliknij Zezwól
-4. Skopiuj token i wklej na Render
+Uruchom w Render Shell:
+    python refresh_token.py
+
+Potem wklej link do przeglądarki, kliknij Zezwól, skopiuj kod i wklej tutaj.
 """
 import os, sys
 
@@ -29,11 +29,10 @@ flow = InstalledAppFlow.from_client_config(
     scopes=["https://www.googleapis.com/auth/adwords"],
 )
 
-print("\nOtwieram przeglądarkę — zaloguj się i kliknij Zezwól...\n")
-creds = flow.run_local_server(port=0)
+creds = flow.run_console()
 
 print("\n" + "=" * 60)
-print("✅  Wklej to na Render jako GOOGLE_ADS_REFRESH_TOKEN:")
+print("Wklej to na Render jako GOOGLE_ADS_REFRESH_TOKEN:")
 print("=" * 60)
 print(creds.refresh_token)
 print("=" * 60)
