@@ -22,7 +22,12 @@ from config.constants import (
 
 # ── tools ─────────────────────────────────────────────────────────────────────
 from tools.meta_ads import meta_ads_tool
-from tools.google_ads import google_ads_tool
+from tools.google_ads import (
+    google_ads_tool,
+    create_google_campaign_draft,
+    generate_google_campaign_preview,
+    _detect_google_client,
+)
 from tools.google_analytics import google_analytics_tool
 from tools.email_tools import email_tool, get_user_email_config
 from tools.slack_tools import slack_read_channel_tool, slack_read_thread_tool
@@ -2979,9 +2984,69 @@ def _handle_google_campaign_wizard(user_id: str, user_message: str | None, files
 
         # Sprawdź czy kampania jest gotowa
         if "===KAMPANIA_GOOGLE_GOTOWA===" in assistant_text:
+            clean_text = assistant_text.replace("===KAMPANIA_GOOGLE_GOTOWA===", "").strip()
+            say_fn(clean_text)
+
+            # Parse JSON from Claude's response
+            _gjson = None
+            for _pattern in (
+                r"```json\s*(\{[\s\S]*?\})\s*```",
+                r"```\s*(\{[\s\S]*?\})\s*```",
+                r"(\{[\s\S]*\"campaign_name\"[\s\S]*\})",
+            ):
+                _m = re.search(_pattern, assistant_text)
+                if _m:
+                    try:
+                        _gjson = json.loads(_m.group(1))
+                        break
+                    except json.JSONDecodeError:
+                        continue
+
+            if _gjson:
+                try:
+                    # Detect client → get customer_id
+                    accounts_json = os.environ.get("GOOGLE_ADS_CUSTOMER_IDS", "{}")
+                    try:
+                        accounts_map = json.loads(accounts_json)
+                    except json.JSONDecodeError:
+                        accounts_map = {}
+
+                    _client_key = _detect_google_client(_gjson, accounts_map)
+                    _customer_id = accounts_map.get(_client_key, "") if _client_key else ""
+
+                    if not _customer_id:
+                        say_fn(
+                            "⚠️ Nie znalazłem konta Google Ads dla tego klienta.\n"
+                            "Sprawdź konfigurację `GOOGLE_ADS_CUSTOMER_IDS` na Render.\n"
+                            "Możesz utworzyć kampanię ręcznie korzystając z JSON powyżej."
+                        )
+                        del _ctx.google_campaign_wizard[user_id]
+                        _ctx.save_wizard_state()
+                        return True
+
+                    say_fn(f"📋 Tworzę szkic kampanii w Google Ads (konto: `{_client_key}`)...")
+                    _draft = create_google_campaign_draft(_gjson, _customer_id)
+
+                    if "error" in _draft:
+                        say_fn(f"❌ Błąd tworzenia kampanii: {_draft['error']}")
+                    else:
+                        _preview = generate_google_campaign_preview(_gjson, _draft)
+                        say_fn(_preview)
+                        say_fn(
+                            "✅ Kampania jest w Google Ads — *wstrzymana*. "
+                            "Włącz ją ręcznie w panelu gdy będziesz gotowy.\n"
+                            f"🔗 https://ads.google.com/aw/campaigns?campaignId={_draft['campaign_id']}"
+                        )
+
+                except Exception as _de:
+                    logger.error("Google wizard draft creation error: %s", _de, exc_info=True)
+                    say_fn(f"❌ Błąd tworzenia draftu: {_de}")
+            else:
+                logger.warning("Google wizard: no JSON found in completion response")
+                say_fn("⚠️ Nie znalazłem JSON w odpowiedzi. Możesz skopiować dane ręcznie.")
+
             del _ctx.google_campaign_wizard[user_id]
-            final_text = assistant_text.replace("===KAMPANIA_GOOGLE_GOTOWA===", "").strip()
-            say_fn(f"✅ *Kampania Google Ads gotowa!*\n\n{final_text}")
+            _ctx.save_wizard_state()
         else:
             say_fn(assistant_text)
 
