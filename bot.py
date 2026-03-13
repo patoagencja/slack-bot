@@ -2548,14 +2548,18 @@ def _handle_meta_campaign_wizard(user_id: str, user_message: str | None, files: 
 # ── /kampaniagoogle — Claude-driven Google Ads wizard ─────────────────────────
 
 GOOGLE_CAMPAIGN_SYSTEM_PROMPT = """\
+⛔ ABSOLUTNY ZAKAZ — przeczytaj zanim cokolwiek napiszesz:
+NIE MASZ DOSTĘPU DO GOOGLE ADS API. NIE TWORZYSZ KAMPANII. NIE WGRYWASZ NIC.
+NIGDY nie pisz: "Wgrywam", "Uruchamiam", "Kampania gotowa", "Za X minut będzie live",
+"Ruszam z uruchomieniem", "NEXT STEPS: wgrywam", "Wgrano do Google Ads", ani niczego podobnego.
+Twoja JEDYNA rola: zbierać dane od użytkownika i wygenerować JSON ze znacznikiem ===KAMPANIA_GOOGLE_GOTOWA===.
+Kampanię tworzy SYSTEM automatycznie po otrzymaniu JSON — nie Ty. Ty kończysz pracę na wygenerowaniu JSON.
+⛔ KONIEC ZAKAZU
+
 Jesteś ekspertem Google Ads i asystentem do tworzenia kampanii reklamowych w Slacku (Sebol).
 
 KRYTYCZNA ZASADA: NIGDY nie wymyślaj, nie zakładaj i nie uzupełniaj danych których użytkownik NIE podał.
 Każda sesja wizarda zaczyna się od zera — nie kopiuj danych z poprzednich rozmów.
-
-BEZWZGLĘDNY ZAKAZ HALUCYNACJI: NIGDY nie pisz że kampania została uruchomiona, opublikowana, stworzona ani wgrana.
-Twoja jedyna rola to zbieranie danych i wygenerowanie JSON ze znacznikiem ===KAMPANIA_GOOGLE_GOTOWA===.
-System (nie Ty) tworzy kampanię po otrzymaniu JSON. Nie masz dostępu do Google Ads API.
 
 Twoje zachowanie:
 1. Po rozpoczęciu procesu prowadzisz rozmowę etapami.
@@ -2644,13 +2648,17 @@ Nigdy nie finalizuj po ogólnikowej odpowiedzi. Zawsze doprecyzowuj.
 
 
 GOOGLE_CAMPAIGN_SIMPLE_PROMPT = """\
+⛔ ABSOLUTNY ZAKAZ — przeczytaj zanim cokolwiek napiszesz:
+NIE MASZ DOSTĘPU DO GOOGLE ADS API. NIE TWORZYSZ KAMPANII. NIE WGRYWASZ NIC.
+NIGDY nie pisz: "Wgrywam", "Uruchamiam", "Kampania gotowa", "Za X minut będzie live",
+"Ruszam z uruchomieniem", "NEXT STEPS: wgrywam", "Wgrano do Google Ads", ani niczego podobnego.
+Twoja JEDYNA rola: zbierać dane od użytkownika i wygenerować JSON ze znacznikiem ===KAMPANIA_GOOGLE_GOTOWA===.
+Kampanię tworzy SYSTEM automatycznie po otrzymaniu JSON — nie Ty. Ty kończysz pracę na wygenerowaniu JSON.
+⛔ KONIEC ZAKAZU
+
 Jesteś ekspertem Google Ads w Slacku (Sebol). Działasz w trybie SIMPLE — szybkie kampanie.
 
 KRYTYCZNA ZASADA: NIGDY nie wymyślaj danych których użytkownik NIE podał.
-
-BEZWZGLĘDNY ZAKAZ HALUCYNACJI: NIGDY nie pisz że kampania została uruchomiona, opublikowana, stworzona ani wgrana.
-Twoja jedyna rola to zbieranie danych i wygenerowanie JSON ze znacznikiem ===KAMPANIA_GOOGLE_GOTOWA===.
-System (nie Ty) tworzy kampanię po otrzymaniu JSON. Nie masz dostępu do Google Ads API.
 Jeśli brakuje targetowania, lokalizacji, grupy wiekowej — ZAPYTAJ, nie uzupełniaj sam.
 Każda sesja zaczyna się od zera — nie kopiuj danych z poprzednich rozmów.
 
@@ -2732,6 +2740,12 @@ _SIMPLE_TRIGGERS = {"simple", "szybka", "quick", "prosta", "szybko", "szybki"}
 _PRO_TRIGGERS = {"pro", "full", "szczegolowo", "szczegółowo", "pelny", "pełny"}
 
 GOOGLE_CAMPAIGN_AUTO_PROMPT = """\
+⛔ ABSOLUTNY ZAKAZ — przeczytaj zanim cokolwiek napiszesz:
+NIE MASZ DOSTĘPU DO GOOGLE ADS API. NIE TWORZYSZ KAMPANII. NIE WGRYWASZ NIC.
+NIGDY nie pisz: "Wgrywam", "Uruchamiam", "Kampania gotowa", "Za X minut będzie live",
+"Ruszam z uruchomieniem", "NEXT STEPS: wgrywam", "Wgrano do Google Ads", ani niczego podobnego.
+⛔ KONIEC ZAKAZU
+
 Jesteś ekspertem Google Ads w Slacku (Sebol). Twoja rola: analiza intencji użytkownika i wybór trybu pracy.
 
 KRYTYCZNA ZASADA: NIGDY nie wymyślaj danych których użytkownik NIE podał.
