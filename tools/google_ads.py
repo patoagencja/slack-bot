@@ -340,7 +340,7 @@ def create_google_campaign_draft(params: dict, customer_id: str) -> dict:
         budget_service = google_ads_client.get_service("CampaignBudgetService")
         budget_op = google_ads_client.get_type("CampaignBudgetOperation")
         budget = budget_op.create
-        budget.name = f"{campaign_name} - Budżet"
+        budget.name = f"{campaign_name} - Budżet {datetime.now().strftime('%Y%m%d%H%M%S')}"
         budget.delivery_method = google_ads_client.enums.BudgetDeliveryMethodEnum.STANDARD
         budget.amount_micros = daily_budget_micros
 
