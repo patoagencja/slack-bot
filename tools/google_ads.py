@@ -26,7 +26,11 @@ try:
     google_ads_client = GoogleAdsClient.load_from_dict(_config)
     logger.info("✅ Google Ads API zainicjalizowane")
 except Exception as _e:
-    logger.error(f"Błąd inicjalizacji Google Ads API: {_e}")
+    _err_str = str(_e)
+    if "invalid_grant" in _err_str:
+        logger.error("Google Ads API: refresh token wygasł (invalid_grant) — wygeneruj nowy GOOGLE_ADS_REFRESH_TOKEN")
+    else:
+        logger.error(f"Błąd inicjalizacji Google Ads API: {_e}")
     google_ads_client = None
 
 
