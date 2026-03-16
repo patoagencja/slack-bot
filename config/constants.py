@@ -16,6 +16,7 @@ ONBOARDING_FILE       = os.path.join(_BASE_DIR, "data", "onboardings.json")
 STANDUP_FILE          = os.path.join(_BASE_DIR, "data", "standup.json")
 HISTORY_FILE          = os.path.join(_BASE_DIR, "data", "campaign_history.json")
 _DIGEST_LAST_SENT_FILE = os.path.join(_BASE_DIR, "data", "digest_last_sent.json")
+PUBLISHED_NEWS_FILE   = os.path.join(_BASE_DIR, "data", "published_news.json")
 
 HISTORY_RETENTION_DAYS = 90
 _DIGEST_INTERVAL_DAYS  = 3
