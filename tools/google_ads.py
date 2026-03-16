@@ -280,13 +280,13 @@ def _set_bidding_strategy(campaign, params: dict):
         except Exception:
             pass
     if strategy == "MAXIMIZE_CONVERSIONS":
-        campaign.maximize_conversions.target_spend_micros = 0
+        campaign.maximize_conversions.cpc_bid_ceiling_micros = 0
         return "MAXIMIZE_CONVERSIONS"
     if strategy == "MANUAL_CPC":
         campaign.manual_cpc.enhanced_cpc_enabled = False
         return "MANUAL_CPC"
-    # Default: MAXIMIZE_CLICKS
-    campaign.maximize_clicks.target_spend_micros = 0
+    # Default: MAXIMIZE_CLICKS (renamed to target_spend in API v23)
+    campaign.target_spend.cpc_bid_ceiling_micros = 0
     return "MAXIMIZE_CLICKS"
 
 
