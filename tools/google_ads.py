@@ -330,10 +330,20 @@ def create_google_campaign_draft(params: dict, customer_id: str) -> dict:
     daily_budget_micros = _parse_budget_micros(params.get("daily_budget", "10"))
 
     start_date_raw = params.get("start_date") or datetime.now().strftime("%Y-%m-%d")
-    start_date = re.sub(r'\D', '', str(start_date_raw))[:8] or datetime.now().strftime("%Y%m%d")
+    _sd_digits = re.sub(r'\D', '', str(start_date_raw))[:8] or datetime.now().strftime("%Y%m%d")
+    try:
+        start_date_time = datetime.strptime(_sd_digits, "%Y%m%d").strftime("%Y-%m-%d 00:00:00")
+    except ValueError:
+        start_date_time = datetime.now().strftime("%Y-%m-%d 00:00:00")
 
     end_date_raw = params.get("end_date", "")
-    end_date = re.sub(r'\D', '', str(end_date_raw))[:8] if end_date_raw else ""
+    end_date_time = ""
+    if end_date_raw:
+        _ed_digits = re.sub(r'\D', '', str(end_date_raw))[:8]
+        try:
+            end_date_time = datetime.strptime(_ed_digits, "%Y%m%d").strftime("%Y-%m-%d 00:00:00")
+        except ValueError:
+            end_date_time = ""
 
     try:
         # ── 1. Campaign Budget ──────────────────────────────────────────────
@@ -356,9 +366,9 @@ def create_google_campaign_draft(params: dict, customer_id: str) -> dict:
         campaign.name = campaign_name
         campaign.status = google_ads_client.enums.CampaignStatusEnum.PAUSED
         campaign.campaign_budget = budget_resource
-        campaign.start_date = start_date
-        if end_date:
-            campaign.end_date = end_date
+        campaign.start_date_time = start_date_time
+        if end_date_time:
+            campaign.end_date_time = end_date_time
 
         channel_enum = getattr(
             google_ads_client.enums.AdvertisingChannelTypeEnum, channel_type_key, None
