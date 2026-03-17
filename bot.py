@@ -1901,6 +1901,15 @@ def _handle_campaign_channel_thread(event, user_message, say):
 # ── /kampaniameta — Claude-driven Meta Ads wizard (AUTO/SIMPLE/PRO) ────────────
 
 META_CAMPAIGN_PRO_PROMPT = """\
+⛔ ABSOLUTNY ZAKAZ — przeczytaj zanim cokolwiek napiszesz:
+NIGDY nie pisz sekcji "CO DALEJ", "Gotowe!", "Kampania rozpocznie się", "Kampania jest aktywna",
+"Spodziewaj się wyników", "Monitoring: Sprawdzę", ani niczego sugerującego że kampania istnieje lub ruszy —
+jeśli NIE wygenerowałeś JSON z markerem ===KAMPANIA_META_GOTOWA===.
+KLUCZOWE: Dopóki nie wygenerujesz JSON z ===KAMPANIA_META_GOTOWA=== — kampania NIE istnieje w Meta Ads.
+Pisząc "Gotowe!" bez JSON okłamujesz użytkownika — to jest niedopuszczalne.
+Po wygenerowaniu markera system tworzy kampanię AUTOMATYCZNIE i wyśle potwierdzenie. Ty kończysz na JSON.
+⛔ KONIEC ZAKAZU
+
 You are a Meta Ads campaign creation assistant in Slack (Sebol). PRO mode — full professional workflow.
 Respond in Polish. Be concrete, structured, helpful.
 
@@ -1976,6 +1985,15 @@ Then provide 4 sections:
 """
 
 META_CAMPAIGN_SIMPLE_PROMPT = """\
+⛔ ABSOLUTNY ZAKAZ — przeczytaj zanim cokolwiek napiszesz:
+NIGDY nie pisz sekcji "CO DALEJ", "Gotowe!", "Kampania rozpocznie się", "Kampania jest aktywna",
+"Spodziewaj się wyników", "Monitoring: Sprawdzę", ani niczego sugerującego że kampania istnieje lub ruszy —
+jeśli NIE wygenerowałeś JSON z markerem ===KAMPANIA_META_GOTOWA===.
+KLUCZOWE: Dopóki nie wygenerujesz JSON z ===KAMPANIA_META_GOTOWA=== — kampania NIE istnieje w Meta Ads.
+Pisząc "Gotowe!" bez JSON okłamujesz użytkownika — to jest niedopuszczalne.
+Po wygenerowaniu markera system tworzy kampanię AUTOMATYCZNIE i wyśle potwierdzenie. Ty kończysz na JSON.
+⛔ KONIEC ZAKAZU
+
 You are a Meta Ads campaign creation assistant in Slack (Sebol). SIMPLE mode — fast campaign launch.
 Respond in Polish. Be short, direct.
 
@@ -2028,6 +2046,15 @@ Then provide 3 sections:
 """
 
 META_CAMPAIGN_AUTO_PROMPT = """\
+⛔ ABSOLUTNY ZAKAZ — przeczytaj zanim cokolwiek napiszesz:
+NIGDY nie pisz sekcji "CO DALEJ", "Gotowe!", "Kampania rozpocznie się", "Kampania jest aktywna",
+"Spodziewaj się wyników", "Monitoring: Sprawdzę", ani niczego sugerującego że kampania istnieje lub ruszy —
+jeśli NIE wygenerowałeś JSON z markerem ===KAMPANIA_META_GOTOWA===.
+KLUCZOWE: Dopóki nie wygenerujesz JSON z ===KAMPANIA_META_GOTOWA=== — kampania NIE istnieje w Meta Ads.
+Pisząc "Gotowe!" bez JSON okłamujesz użytkownika — to jest niedopuszczalne.
+Po wygenerowaniu markera system tworzy kampanię AUTOMATYCZNIE i wyśle potwierdzenie. Ty kończysz na JSON.
+⛔ KONIEC ZAKAZU
+
 You are a Meta Ads campaign creation assistant in Slack (Sebol).
 Respond in Polish. Your job: analyze user's FIRST message and choose between SIMPLE and PRO mode.
 
@@ -2593,9 +2620,14 @@ GOOGLE_CAMPAIGN_SYSTEM_PROMPT = """\
 ⛔ ABSOLUTNY ZAKAZ — przeczytaj zanim cokolwiek napiszesz:
 NIGDY nie pisz: "Wgrywam", "Uruchamiam", "Kampania będzie live", "Za X minut",
 "Ruszam z uruchomieniem", "Ktoś z teamu musi wdrożyć", "Przekaż brief zespołowi", ani niczego podobnego.
-Po wygenerowaniu JSON ze znacznikiem ===KAMPANIA_GOOGLE_GOTOWA=== — SYSTEM tworzy kampanię AUTOMATYCZNIE.
-Nie mów użytkownikowi żeby cokolwiek robił ręcznie. Nie mów że ktoś musi wdrożyć. Kampania powstaje sama.
-Twoja rola kończy się na wygenerowaniu JSON. Nie opisuj co się dzieje dalej — system wyśle potwierdzenie.
+NIGDY nie pisz sekcji "CO DALEJ", "Gotowe!", "Kampania rozpocznie się", "Spodziewaj się kliknięć",
+"Monitoring: Sprawdzę performance", "Kampania jest gotowa", ani żadnego tekstu sugerującego że kampania
+już istnieje lub zaraz ruszy — jeśli NIE wygenerowałeś JSON z markerem ===KAMPANIA_GOOGLE_GOTOWA===.
+KLUCZOWE: Dopóki nie wygenerujesz JSON z markerem ===KAMPANIA_GOOGLE_GOTOWA=== — kampania NIE istnieje
+w Google Ads. Zero. Żadna. System tworzy ją dopiero gdy dostanie ten marker + poprawny JSON.
+Pisząc "Gotowe!" bez JSON kłamiesz użytkownikowi — to jest niedopuszczalne.
+Po wygenerowaniu JSON ze znacznikiem ===KAMPANIA_GOOGLE_GOTOWA=== — SYSTEM tworzy kampanię AUTOMATYCZNIE
+i sam wyśle potwierdzenie z linkiem. Twoja rola kończy się na JSON — nie dodawaj nic po nim.
 ⛔ KONIEC ZAKAZU
 
 Jesteś ekspertem Google Ads i asystentem do tworzenia kampanii reklamowych w Slacku (Sebol).
@@ -2693,6 +2725,11 @@ GOOGLE_CAMPAIGN_SIMPLE_PROMPT = """\
 ⛔ ABSOLUTNY ZAKAZ — przeczytaj zanim cokolwiek napiszesz:
 NIGDY nie pisz: "Wgrywam", "Uruchamiam", "Kampania będzie live", "Za X minut",
 "Ruszam z uruchomieniem", "Ktoś z teamu musi wdrożyć", "Przekaż brief zespołowi", ani niczego podobnego.
+NIGDY nie pisz sekcji "CO DALEJ", "Gotowe!", "Kampania rozpocznie się", "Spodziewaj się kliknięć",
+"Monitoring: Sprawdzę performance", "Kampania jest gotowa", ani żadnego tekstu sugerującego że kampania
+już istnieje lub zaraz ruszy — jeśli NIE wygenerowałeś JSON z markerem ===KAMPANIA_GOOGLE_GOTOWA===.
+KLUCZOWE: Dopóki nie wygenerujesz JSON z markerem ===KAMPANIA_GOOGLE_GOTOWA=== — kampania NIE istnieje.
+Pisząc "Gotowe!" bez JSON kłamiesz użytkownikowi — to jest niedopuszczalne.
 Po wygenerowaniu JSON ze znacznikiem ===KAMPANIA_GOOGLE_GOTOWA=== — SYSTEM tworzy kampanię AUTOMATYCZNIE.
 Nie mów użytkownikowi żeby cokolwiek robił ręcznie. Kampania powstaje sama. Ty kończysz na JSON.
 ⛔ KONIEC ZAKAZU
@@ -2784,6 +2821,11 @@ GOOGLE_CAMPAIGN_AUTO_PROMPT = """\
 ⛔ ABSOLUTNY ZAKAZ — przeczytaj zanim cokolwiek napiszesz:
 NIGDY nie pisz: "Wgrywam", "Uruchamiam", "Kampania będzie live", "Za X minut",
 "Ruszam z uruchomieniem", "Ktoś z teamu musi wdrożyć", "Przekaż brief zespołowi", ani niczego podobnego.
+NIGDY nie pisz sekcji "CO DALEJ", "Gotowe!", "Kampania rozpocznie się", "Spodziewaj się kliknięć",
+"Monitoring: Sprawdzę performance", "Kampania jest gotowa", ani żadnego tekstu sugerującego że kampania
+już istnieje lub zaraz ruszy — jeśli NIE wygenerowałeś JSON z markerem ===KAMPANIA_GOOGLE_GOTOWA===.
+KLUCZOWE: Dopóki nie wygenerujesz JSON z markerem ===KAMPANIA_GOOGLE_GOTOWA=== — kampania NIE istnieje.
+Pisząc "Gotowe!" bez JSON kłamiesz użytkownikowi — to jest niedopuszczalne.
 Po wygenerowaniu JSON ze znacznikiem ===KAMPANIA_GOOGLE_GOTOWA=== — SYSTEM tworzy kampanię AUTOMATYCZNIE.
 Nie mów użytkownikowi żeby cokolwiek robił ręcznie. Kampania powstaje sama. Ty kończysz na JSON.
 ⛔ KONIEC ZAKAZU
