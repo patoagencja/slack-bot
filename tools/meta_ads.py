@@ -101,13 +101,9 @@ def meta_ads_tool(date_from=None, date_to=None, level="campaign", campaign_name=
         if date_to:
             date_to = parse_relative_date(date_to)
 
-        # Walidacja roku
+        # Walidacja dat
         for _d in [date_from, date_to]:
             pass
-        if date_from and len(date_from) >= 4 and int(date_from[:4]) < 2026:
-            date_from = '2026' + date_from[4:]
-        if date_to and len(date_to) >= 4 and int(date_to[:4]) < 2026:
-            date_to = '2026' + date_to[4:]
 
         if not date_to:
             date_to = datetime.now().strftime('%Y-%m-%d')
