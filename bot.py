@@ -61,6 +61,7 @@ from tools.campaign_creator import (
 )
 from tools.voice_transcription import transcribe_slack_audio, SLACK_AUDIO_MIMES
 from tools.icloud_calendar import icloud_calendar_tool
+from tools.google_slides import create_presentation
 from tools.memory import init_memory, remember, recall_as_context, get_history
 from tools.reminders import init_reminders, save_reminder, list_reminders
 
@@ -568,6 +569,7 @@ Pytanie o kampanie/metryki/spend/ROAS/CTR → WYWOŁAJ narzędzie:
 - get_google_ads_data() → Google Ads (kampanie, kliknięcia, wydatki, ROAS, CTR, CPC, reklamy)
 - get_ga4_data() → Google Analytics 4 / GA4 / analytics (ruch na stronie, sesje, użytkownicy, źródła ruchu, bounce rate) - NIE Google Ads!
 - manage_calendar() → kalendarz iCloud: "co mam jutro", "plan na tydzień", "dodaj spotkanie" → ZAWSZE wywołaj to narzędzie, nie mów że nie masz dostępu!
+- create_presentation() → "zrób prezentację", "zrób prezke", "przygotuj ofertę dla klienta", "deck", "pitch deck", "raport w prezentacji" → ZAWSZE użyj narzędzia i podaj link!
 NIGDY nie mów "nie mam dostępu" - zawsze najpierw użyj narzędzi!
 ⛔ BEZWZGLĘDNY ZAKAZ: Gdy ktoś pyta o GA4/analytics → wywołaj get_ga4_data() i podaj TYLKO dane z tego narzędzia. NIGDY nie zastępuj danych GA4 estymacjami z Meta Ads, Google Ads ani żadnych innych źródeł. Jeśli get_ga4_data() zwróci błąd → powiedz wprost jaki błąd wystąpił, NIE wymyślaj alternatywnych danych.
 
@@ -716,6 +718,61 @@ Pytanie → Direct answer → Context → Actionable next step
                 "required": ["action"]
             }
         },
+        {
+            "name": "create_presentation",
+            "description": (
+                "Tworzy prezentację w Google Slides i zwraca link. "
+                "Użyj gdy ktoś prosi o prezentację, prezke, ofertę dla klienta, raport wyników reklam, "
+                "deck dla klienta, pitch deck. Może zawierać dane z Google Ads, Meta Ads, "
+                "brief klienta lub dowolne własne slajdy."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Tytuł prezentacji, np. 'Oferta dla OLX' lub 'Wyniki kampanii DRE – marzec 2026'."
+                    },
+                    "client_name": {
+                        "type": "string",
+                        "description": "Nazwa klienta (opcjonalne)."
+                    },
+                    "subtitle": {
+                        "type": "string",
+                        "description": "Podtytuł lub tagline na slajdzie tytułowym (opcjonalne)."
+                    },
+                    "brief": {
+                        "type": "string",
+                        "description": "Treść briefu, opis oferty lub kontekst — zostanie umieszczony na osobnym slajdzie (opcjonalne)."
+                    },
+                    "date_range": {
+                        "type": "string",
+                        "description": "Zakres dat, np. '01.03.2026 – 31.03.2026' (opcjonalne)."
+                    },
+                    "google_ads_data": {
+                        "type": "object",
+                        "description": "Dane z Google Ads (wynik get_google_ads_data) — opcjonalne."
+                    },
+                    "meta_ads_data": {
+                        "type": "object",
+                        "description": "Dane z Meta Ads (wynik get_meta_ads_data) — opcjonalne."
+                    },
+                    "extra_slides": {
+                        "type": "array",
+                        "description": "Lista dodatkowych slajdów z wolną treścią.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "title":   {"type": "string", "description": "Nagłówek slajdu."},
+                                "content": {"type": "string", "description": "Treść slajdu (bullet points, tekst)."}
+                            },
+                            "required": ["title", "content"]
+                        }
+                    }
+                },
+                "required": ["title"]
+            }
+        },
     ]
 
     try:
@@ -835,6 +892,17 @@ Pytanie → Direct answer → Context → Actionable next step
                     tool_result = slack_read_thread_tool(
                         channel_id=tool_input.get('channel_id'),
                         thread_ts=tool_input.get('thread_ts')
+                    )
+                elif tool_name == "create_presentation":
+                    tool_result = create_presentation(
+                        title=tool_input.get("title"),
+                        client_name=tool_input.get("client_name"),
+                        subtitle=tool_input.get("subtitle"),
+                        brief=tool_input.get("brief"),
+                        date_range=tool_input.get("date_range"),
+                        google_ads_data=tool_input.get("google_ads_data"),
+                        meta_ads_data=tool_input.get("meta_ads_data"),
+                        extra_slides=tool_input.get("extra_slides"),
                     )
                 elif tool_name == "manage_calendar":
                     _cal_user = event.get('user')
