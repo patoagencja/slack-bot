@@ -370,6 +370,8 @@ def create_google_campaign_draft(params: dict, customer_id: str) -> dict:
         if end_date_time:
             campaign.end_date_time = end_date_time
 
+        campaign.contains_eu_political_advertising = False
+
         channel_enum = getattr(
             google_ads_client.enums.AdvertisingChannelTypeEnum, channel_type_key, None
         )
