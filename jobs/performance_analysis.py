@@ -22,7 +22,13 @@ logger = logging.getLogger(__name__)
 def _detect_campaign_objective(campaign_name):
     """Wykrywa cel kampanii z nazwy. Zwraca: 'engagement'|'reach'|'traffic'|'conversion'."""
     n = (campaign_name or '').lower()
-    if any(k in n for k in ['engagement', 'zaangaż', 'zaangaz', 'interakcj', 'reakcj', 'post eng']):
+    # Engagement: polubienia, aktywność, wizyty IG, interakcje, lajki
+    if any(k in n for k in [
+        'engagement', 'zaangaż', 'zaangaz', 'interakcj', 'reakcj', 'post eng',
+        'polubien', 'like', 'aktywno',
+        'wizyty na ig', 'wizyty ig', 'wizyty profil',
+        'page like',
+    ]):
         return 'engagement'
     if any(k in n for k in ['reach', 'zasięg', 'zasieg', 'awareness', 'świadom', 'swiadom', 'brand']):
         return 'reach'

@@ -17,6 +17,27 @@ from jobs.performance_analysis import (
 
 logger = logging.getLogger(__name__)
 
+# CTR benchmarks per Google campaign type:
+#   search:  1% threshold (search ads)
+#   display: 0.1% threshold (GDN — display impressions)
+#   video:   skip CTR alert (YouTube — view-rate metric)
+#   pmax/shopping/unknown: skip CTR alert (conversions are the KPI)
+
+def _google_campaign_type(name: str) -> str:
+    """Detect Google campaign type from name tags like [gdn], [search], [yt]."""
+    n = name.lower()
+    if '[search]' in n or '[srch]' in n:
+        return 'search'
+    if '[gdn]' in n or '[display]' in n:
+        return 'display'
+    if '[yt]' in n or '[youtube]' in n or '[video]' in n:
+        return 'video'
+    if '[pmax]' in n or 'performance max' in n:
+        return 'pmax'
+    if '[shopping]' in n:
+        return 'shopping'
+    return 'search'  # default
+
 
 def _build_objective_alerts(meta_campaigns, google_campaigns=None):
     """Generuje alerty dostosowane do celu kampanii (per-campaign objective)."""
@@ -86,15 +107,25 @@ def _build_objective_alerts(meta_campaigns, google_campaigns=None):
                 })
 
     for c in (google_campaigns or []):
-        name  = c.get('campaign_name', c.get('name', '?'))
-        ctr   = float(c.get('ctr', 0) or 0)
-        spend = float(c.get('cost', c.get('spend', 0)) or 0)
-        if ctr < 1.0 and spend > 50:
-            alerts.append({
-                'campaign': f'{name} (Google)',
-                'message': f'CTR {ctr:.2f}% < 1% — niska klikalność w wyszukiwarce',
-                'action': 'Sprawdź treść reklam i słowa kluczowe',
-            })
+        name      = c.get('campaign_name', c.get('name', '?'))
+        ctr       = float(c.get('ctr', 0) or 0)
+        spend     = float(c.get('cost', c.get('spend', 0)) or 0)
+        camp_type = _google_campaign_type(name)
+        if camp_type == 'search':
+            if ctr < 1.0 and spend > 50:
+                alerts.append({
+                    'campaign': f'{name} (Google)',
+                    'message': f'CTR {ctr:.2f}% < 1% — niska klikalność w wyszukiwarce',
+                    'action': 'Sprawdź treść reklam i słowa kluczowe',
+                })
+        elif camp_type == 'display':
+            if ctr < 0.1 and spend > 50:
+                alerts.append({
+                    'campaign': f'{name} (Google)',
+                    'message': f'CTR {ctr:.2f}% < 0.1% — niska klikalność (Display/GDN)',
+                    'action': 'Sprawdź kreacje banerowe i targetowanie',
+                })
+        # video/pmax/shopping: CTR nie jest główną metryką — brak alertu CTR
     return alerts
 
 
@@ -153,52 +184,93 @@ def _classify_campaigns(meta_campaigns, google_campaigns):
                 watch.append((name, f'ROAS {f"{roas:.2f}x" if roas else "brak"} | {convs} konwersji'))
 
     for c in google_campaigns:
-        name  = c.get('campaign_name', c.get('name', '?'))
-        ctr   = float(c.get('ctr', 0) or 0)
-        convs = int(c.get('conversions', 0) or 0)
-        spend = float(c.get('cost', c.get('spend', 0)) or 0)
-        if ctr >= 3 and convs > 0:
-            best.append((f'{name} (Google)', f'CTR {ctr:.2f}% + {convs} konwersji'))
-        elif ctr < 1 and spend > 50:
-            poor.append((f'{name} (Google)', f'CTR {ctr:.2f}% — niska klikalność'))
-        else:
-            watch.append((f'{name} (Google)', f'CTR {ctr:.2f}% | {convs} konwersji'))
+        name      = c.get('campaign_name', c.get('name', '?'))
+        ctr       = float(c.get('ctr', 0) or 0)
+        convs     = int(c.get('conversions', 0) or 0)
+        spend     = float(c.get('cost', c.get('spend', 0)) or 0)
+        camp_type = _google_campaign_type(name)
+        label     = f'{name} (Google)'
+
+        if camp_type == 'search':
+            if ctr >= 3 and convs > 0:
+                best.append((label, f'CTR {ctr:.2f}% + {convs} konwersji'))
+            elif ctr < 1 and spend > 50:
+                poor.append((label, f'CTR {ctr:.2f}% — niska klikalność Search'))
+            else:
+                watch.append((label, f'CTR {ctr:.2f}% | {convs} konwersji'))
+        elif camp_type == 'display':
+            if convs > 0 and ctr >= 0.1:
+                best.append((label, f'CTR {ctr:.2f}% + {convs} konwersji (Display)'))
+            elif ctr < 0.05 and spend > 50:
+                poor.append((label, f'CTR {ctr:.2f}% — niska klikalność (GDN)'))
+            else:
+                watch.append((label, f'CTR {ctr:.2f}% | {convs} konwersji (Display)'))
+        elif camp_type == 'video':
+            if convs > 0:
+                best.append((label, f'{convs} konwersji (YouTube)'))
+            else:
+                watch.append((label, f'CTR {ctr:.2f}% | {convs} konwersji (YouTube)'))
+        else:  # pmax, shopping, unknown
+            if convs > 0:
+                best.append((label, f'{convs} konwersji'))
+            else:
+                watch.append((label, f'CTR {ctr:.2f}% | {convs} konwersji'))
 
     return best, watch, poor
 
 
 def _build_main_message(date_label, total_spend, total_reach, avg_ctr,
                          total_conversions, campaign_count, obj_alerts, skipped_count,
-                         meta_count=0, google_count=0):
+                         meta_count=0, google_count=0,
+                         meta_spend=0, meta_reach=0, meta_ctr=0, meta_conversions=0,
+                         google_spend=0, google_ctr=0, google_conversions=0):
     """Buduje krótką wiadomość główną (widoczna na kanale)."""
     skipped_note = f" _(+{skipped_count} poniżej 20 PLN pominięto)_" if skipped_count > 0 else ""
-
-    if meta_count > 0 and google_count > 0:
-        platform_label = "META + GOOGLE ADS"
-    elif google_count > 0:
-        platform_label = "GOOGLE ADS"
-    else:
-        platform_label = "META ADS"
-
-    platform_breakdown = ""
-    if meta_count > 0 and google_count > 0:
-        platform_breakdown = f" _(Meta: {meta_count} | Google: {google_count})_"
+    both = meta_count > 0 and google_count > 0
 
     lines = [
-        f"📊 *{platform_label} – DRE | {date_label}*{skipped_note}",
+        f"📊 *META + GOOGLE ADS – DRE | {date_label}*{skipped_note}" if both
+        else f"📊 *{'META ADS' if meta_count > 0 else 'GOOGLE ADS'} – DRE | {date_label}*{skipped_note}",
         "",
-        f"💰 Spend: *{total_spend:.0f} PLN*{platform_breakdown}",
-        f"👥 Reach: *{total_reach:,}*",
-        f"📈 Avg CTR: *{avg_ctr:.2f}%*",
-        f"🎯 Konwersje: *{total_conversions}*",
-        f"📣 Kampanie aktywne: *{campaign_count}*",
     ]
+
+    if both:
+        lines += [
+            f"🔵 *META ADS* — {meta_count} kampanii",
+            f"   💰 Spend: *{meta_spend:.0f} PLN* | 👥 Reach: *{meta_reach:,}* | 📈 CTR: *{meta_ctr:.2f}%* | 🎯 Konwersje: *{meta_conversions}*",
+            "",
+            f"🔴 *GOOGLE ADS* — {google_count} kampanii",
+            f"   💰 Spend: *{google_spend:.0f} PLN* | 📈 Avg CTR: *{google_ctr:.2f}%* | 🎯 Konwersje: *{google_conversions}*",
+            "",
+            f"📣 Łącznie aktywnych kampanii: *{campaign_count}*",
+        ]
+    else:
+        lines += [
+            f"💰 Spend: *{total_spend:.0f} PLN*",
+            f"👥 Reach: *{total_reach:,}*",
+            f"📈 Avg CTR: *{avg_ctr:.2f}%*",
+            f"🎯 Konwersje: *{total_conversions}*",
+            f"📣 Kampanie aktywne: *{campaign_count}*",
+        ]
+
+    # Alerty pogrupowane per platforma
+    meta_alerts   = [a for a in obj_alerts if '(Google)' not in a['campaign']]
+    google_alerts = [a for a in obj_alerts if '(Google)' in a['campaign']]
 
     if obj_alerts:
         lines.append("")
         lines.append("⚠️ *ALERTY*")
-        for alert in obj_alerts:
-            lines.append(f"• *{alert['campaign']}* — {alert['message']}")
+        if both and meta_alerts:
+            lines.append("_Meta:_")
+            for alert in meta_alerts:
+                lines.append(f"• *{alert['campaign']}* — {alert['message']}")
+        if both and google_alerts:
+            lines.append("_Google:_")
+            for alert in google_alerts:
+                lines.append(f"• *{alert['campaign']}* — {alert['message']}")
+        if not both:
+            for alert in obj_alerts:
+                lines.append(f"• *{alert['campaign']}* — {alert['message']}")
     else:
         lines.append("")
         lines.append("✅ Brak alertów — wszystko wygląda OK")
@@ -209,177 +281,177 @@ def _build_main_message(date_label, total_spend, total_reach, avg_ctr,
     return "\n".join(lines)
 
 
+def _engagement_rate(c):
+    """Engagement rate (%) dla kampanii Meta."""
+    eng = c.get('_engagement', {})
+    total = sum(eng.values()) if isinstance(eng, dict) else 0
+    reach = int(c.get('reach', 0) or 0)
+    return (total / reach * 100) if reach > 0 else 0.0
+
+
+def _total_eng(c):
+    """Suma interakcji dla kampanii Meta."""
+    eng = c.get('_engagement', {})
+    return sum(eng.values()) if isinstance(eng, dict) else 0
+
+
 def _build_thread_message(meta_campaigns, google_campaigns, obj_alerts, experiments, smart_recs):
-    """Buduje szczegółową analizę do threadu."""
-    best, watch, poor = _classify_campaigns(meta_campaigns, google_campaigns)
-    lines = []
+    """Krótka, decyzyjna analiza do threadu — max ~15 linii."""
+    gc = google_campaigns or []
 
-    # ── SZYBKIE WNIOSKI ────────────────────────────────────────────────────────
-    lines.append("🧠 *SZYBKIE WNIOSKI*")
-    lines.append("")
+    # ── Kategoryzacja Meta po celu ────────────────────────────────────────────
+    reach_camps  = sorted(
+        [c for c in meta_campaigns if c.get('_objective') == 'reach'],
+        key=lambda c: int(c.get('reach', 0) or 0), reverse=True
+    )
+    eng_camps    = [c for c in meta_campaigns if c.get('_objective') == 'engagement']
+    conv_camps   = [c for c in meta_campaigns if c.get('_objective') == 'conversion']
+    traffic_camps = [c for c in meta_campaigns if c.get('_objective') == 'traffic']
 
-    if best:
-        lines.append("🟢 *Najlepsze kampanie*")
-        for name, reason in best:
-            lines.append(f"• {name} — {reason}")
+    total_convs_meta   = sum(int(c.get('conversions', 0) or 0) for c in conv_camps)
+    total_convs_google = sum(int(c.get('conversions', 0) or 0) for c in gc)
+
+    # ── TL;DR ─────────────────────────────────────────────────────────────────
+    tldr = []
+    if reach_camps:
+        top3 = reach_camps[:3]
+        avg_reach = sum(int(c.get('reach', 0) or 0) for c in top3) // len(top3)
+        names = [c.get('campaign_name', '?').split(' - ')[1] if ' - ' in c.get('campaign_name', '') else c.get('campaign_name', '?')
+                 for c in top3]
+        tldr.append(f"Reach działa najlepiej: {', '.join(names[:3])}")
+    if eng_camps:
+        good_eng = [c for c in eng_camps if _engagement_rate(c) >= 3]
+        if good_eng:
+            tldr.append(f"Engagement skuteczny w {len(good_eng)}/{len(eng_camps)} kampaniach — bez przełożenia na konwersje")
+        else:
+            tldr.append(f"Kampanie Engagement ({len(eng_camps)}) — wyniki przeciętne lub brak interakcji")
+    if conv_camps and total_convs_meta == 0 and total_convs_google == 0:
+        conv_spend = sum(float(c.get('spend', 0) or 0) for c in conv_camps)
+        tldr.append(f"Brak konwersji — {len(conv_camps)} kampanii konwersji bez wyniku przy {conv_spend:.0f} PLN")
+    elif total_convs_meta + total_convs_google > 0:
+        tldr.append(f"Łącznie {total_convs_meta + total_convs_google} konwersji (Meta: {total_convs_meta} | Google: {total_convs_google})")
+    tldr = tldr[:3]
+
+    # ── TOP KAMPANIE (max 3) ──────────────────────────────────────────────────
+    top = []
+    for c in reach_camps[:3]:
+        name  = c.get('campaign_name', '?')
+        reach = int(c.get('reach', 0) or 0)
+        freq  = c.get('frequency') or 0
+        top.append(f"{name} | Reach | zasięg {reach:,} | freq {freq:.1f}")
+    if not top:
+        best_eng = sorted(eng_camps, key=_engagement_rate, reverse=True)
+        for c in best_eng[:2]:
+            if _engagement_rate(c) >= 1:
+                name = c.get('campaign_name', '?')
+                er   = _engagement_rate(c)
+                top.append(f"{name} | Engagement | eng. rate {er:.1f}%")
+    if not top:
+        for c in sorted(gc, key=lambda c: int(c.get('conversions', 0) or 0), reverse=True)[:2]:
+            if int(c.get('conversions', 0) or 0) > 0:
+                name  = c.get('campaign_name', c.get('name', '?'))
+                convs = int(c.get('conversions', 0) or 0)
+                top.append(f"{name} | Google | {convs} konwersji")
+    top = top[:3]
+
+    # ── DO OBSERWACJI (max 3, agregowane) ────────────────────────────────────
+    watch = []
+    mod_eng = [c for c in eng_camps if 0 < _engagement_rate(c) < 3]
+    zero_eng = [c for c in eng_camps if _total_eng(c) == 0 and int(c.get('reach', 0) or 0) > 200]
+    if len(mod_eng) > 1:
+        watch.append(f"{len(mod_eng)} kampanii Engagement — przeciętny wynik, łącznie {sum(_total_eng(c) for c in mod_eng)} interakcji")
+    elif len(mod_eng) == 1:
+        c = mod_eng[0]
+        watch.append(f"{c.get('campaign_name', '?')} | Engagement | {_total_eng(c)} interakcji — monitoruj")
+    if zero_eng and len(watch) < 3:
+        watch.append(f"{len(zero_eng)} kampanii Engagement bez interakcji — sprawdź kreacje")
+    high_freq = [c for c in reach_camps if float(c.get('frequency') or 0) >= 4]
+    if high_freq and len(watch) < 3:
+        watch.append(f"Ad fatigue: {len(high_freq)} kampanii Reach z frequency ≥ 4 — wymień kreacje")
+    g_no_conv = [c for c in gc if int(c.get('conversions', 0) or 0) == 0 and float(c.get('cost', c.get('spend', 0)) or 0) > 50]
+    if g_no_conv and len(watch) < 3:
+        watch.append(f"Google: {len(g_no_conv)} kampanii bez konwersji — sprawdź słowa kluczowe")
+    watch = watch[:3]
+
+    # ── PROBLEMY (max 3) ──────────────────────────────────────────────────────
+    problems = []
+    no_conv = [c for c in conv_camps if int(c.get('conversions', 0) or 0) == 0 and float(c.get('spend', 0) or 0) > 50]
+    if no_conv:
+        spend_nc = sum(float(c.get('spend', 0) or 0) for c in no_conv)
+        if len(no_conv) > 2:
+            problems.append(f"{len(no_conv)} kampanii konwersji bez wyniku — {spend_nc:.0f} PLN zmarnowane")
+        else:
+            names = " + ".join(c.get('campaign_name', '?') for c in no_conv[:2])
+            problems.append(f"{names} — 0 konwersji przy {spend_nc:.0f} PLN")
+    low_roas = [c for c in conv_camps if c.get('purchase_roas') and float(c.get('purchase_roas') or 0) < 1.5
+                and float(c.get('spend', 0) or 0) > 50]
+    if low_roas and len(problems) < 3:
+        avg_roas = sum(float(c.get('purchase_roas', 0) or 0) for c in low_roas) / len(low_roas)
+        problems.append(f"ROAS {avg_roas:.1f}x < 1.5 — {len(low_roas)} kampanii poniżej break-even")
+    g_search_low_ctr = [c for c in gc
+                        if _google_campaign_type(c.get('campaign_name', c.get('name', ''))) == 'search'
+                        and float(c.get('ctr', 0) or 0) < 1
+                        and float(c.get('cost', c.get('spend', 0)) or 0) > 50]
+    if g_search_low_ctr and len(problems) < 3:
+        problems.append(f"Google Search: {len(g_search_low_ctr)} kampanii CTR < 1% — sprawdź reklamy")
+    if zero_eng and not any('bez interakcji' in p for p in problems) and len(problems) < 3:
+        spend_ze = sum(float(c.get('spend', 0) or 0) for c in zero_eng)
+        if spend_ze > 100:
+            problems.append(f"{len(zero_eng)} kampanii Engagement — 0 interakcji przy {spend_ze:.0f} PLN")
+    problems = problems[:3]
+
+    # ── REKOMENDACJE (max 3) ──────────────────────────────────────────────────
+    recs = []
+    if no_conv:
+        recs.append(f"Wyłącz lub przebuduj kampanie konwersji bez wyniku ({len(no_conv)} sztuk)")
+    if reach_camps and no_conv and total_convs_meta == 0:
+        recs.append("Przenieś budżet z kampanii konwersji bez wyniku do najlepszych kampanii Reach")
+    for rec in (smart_recs or [])[:3]:
+        action = rec.get('action', '')
+        if action and rec.get('confidence', 0) >= 0.6 and len(recs) < 3:
+            recs.append(action)
+    if experiments and len(recs) < 3:
+        recs.append(f"🧪 Testuj: {experiments[0]['experiment']}")
+    if not recs:
+        seen = set()
+        for alert in obj_alerts:
+            action = alert.get('action', '')
+            if action and action not in seen and len(recs) < 3:
+                recs.append(action)
+                seen.add(action)
+    recs = recs[:3]
+
+    # ── Buduj wiadomość ───────────────────────────────────────────────────────
+    if tldr:
+        lines.append("🧠 *TL;DR*")
+        for t in tldr:
+            lines.append(f"• {t}")
+        lines.append("")
+
+    if top:
+        lines.append("🟢 *TOP KAMPANIE*")
+        for t in top:
+            lines.append(f"• {t}")
         lines.append("")
 
     if watch:
-        lines.append("🟡 *Do obserwacji*")
-        for name, reason in watch:
-            lines.append(f"• {name} — {reason}")
+        lines.append("🟡 *DO OBSERWACJI*")
+        for w in watch:
+            lines.append(f"• {w}")
         lines.append("")
 
-    if poor:
-        lines.append("🔴 *Słabe wyniki*")
-        for name, reason in poor:
-            lines.append(f"• {name} — {reason}")
+    if problems:
+        lines.append("🔴 *PROBLEMY*")
+        for p in problems:
+            lines.append(f"• {p}")
         lines.append("")
 
-    # ── KAMPANIE WG CELU ───────────────────────────────────────────────────────
-    lines.append("━━━━━━━━━━━━━━━━━━━━━━")
-    lines.append("")
-    lines.append("📊 *KAMPANIE WG CELU*")
-    lines.append("")
-
-    # Pogrupuj Meta kampanie wg celu
-    by_obj = {}
-    for c in meta_campaigns:
-        obj = c.get('_objective', 'conversion').upper()
-        by_obj.setdefault(obj, []).append(c)
-
-    obj_order  = ['CONVERSION', 'ENGAGEMENT', 'REACH', 'TRAFFIC']
-    obj_labels = {
-        'CONVERSION': '🛒 *CONVERSION*',
-        'ENGAGEMENT': '❤️ *ENGAGEMENT*',
-        'REACH':      '📡 *REACH*',
-        'TRAFFIC':    '🔗 *TRAFFIC*',
-    }
-
-    for obj_key in obj_order:
-        campaigns_in_obj = by_obj.get(obj_key, [])
-        if not campaigns_in_obj:
-            continue
-        lines.append(obj_labels[obj_key])
-        lines.append("")
-
-        for c in campaigns_in_obj:
-            name  = c.get('campaign_name', '?')
-            spend = float(c.get('spend', 0) or 0)
-            ctr   = float(c.get('ctr', 0) or 0)
-            reach = int(c.get('reach', 0) or 0)
-            freq  = c.get('frequency')
-            eng   = c.get('_engagement', {})
-
-            lines.append(f"*{name}*")
-            lines.append(f"💰 Spend: {spend:.0f} PLN")
-
-            if obj_key == 'ENGAGEMENT':
-                reactions = eng.get('reactions', 0)
-                comments  = eng.get('comments', 0)
-                saves     = eng.get('post_saves', 0)
-                shares    = eng.get('shares', 0)
-                total_eng = reactions + comments + saves + shares
-                lines.append(f"❤️ Reakcje: {reactions} | 💬 Komentarze: {comments} | 🔖 Zapisy: {saves} | 🔁 Udostępnienia: {shares}")
-                lines.append(f"📈 CTR: {ctr:.2f}%")
-                lines.append(f"👥 Reach: {reach:,}" + (f" | 🔁 Frequency: {freq:.1f}" if freq else ""))
-                eng_rate = (total_eng / reach * 100) if reach > 0 else 0
-                insight = (
-                    "Dobre zaangażowanie — kontynuuj." if eng_rate >= 3
-                    else "Zero interakcji — sprawdź kreacje i grupę odbiorców." if total_eng == 0 and reach > 500
-                    else "Zaangażowanie przeciętne — rozważ odświeżenie kreacji."
-                )
-
-            elif obj_key == 'REACH':
-                cpm = float(c.get('cpm', 0) or 0)
-                lines.append(f"👥 Reach: {reach:,}" + (f" | 🔁 Frequency: {freq:.1f}" if freq else ""))
-                if cpm:
-                    lines.append(f"📊 CPM: {cpm:.2f} PLN")
-                insight = (
-                    f"Ad fatigue — frequency {freq:.1f} ≥ 6, wymień kreacje." if freq and freq >= 6
-                    else "Dobry zasięg przy zdrowej frequency." if reach > 1000
-                    else "Zasięg niski — rozważ poszerzenie targetowania."
-                )
-
-            elif obj_key == 'TRAFFIC':
-                clicks = int(c.get('clicks', 0) or 0)
-                cpc    = float(c.get('cpc', 0) or 0)
-                lines.append(f"📈 CTR: {ctr:.2f}% | 👆 Kliknięcia: {clicks} | 💸 CPC: {cpc:.2f} PLN")
-                lines.append(f"👥 Reach: {reach:,}" + (f" | 🔁 Frequency: {freq:.1f}" if freq else ""))
-                insight = (
-                    f"Wysoki CTR {ctr:.2f}% — kreacja działa." if ctr >= 1.5
-                    else f"CTR {ctr:.2f}% — niska klikalność, zmień kreację lub CTA." if ctr < 0.5 and spend > 50
-                    else f"CTR {ctr:.2f}% — wynik przeciętny, testuj nowe warianty."
-                )
-
-            else:  # CONVERSION
-                roas  = c.get('purchase_roas')
-                convs = int(c.get('conversions', 0) or 0)
-                lines.append(f"📈 CTR: {ctr:.2f}% | 🎯 Konwersje: {convs} | 💸 ROAS: {f'{roas:.2f}x' if roas else '—'}")
-                lines.append(f"👥 Reach: {reach:,}" + (f" | 🔁 Frequency: {freq:.1f}" if freq else ""))
-                insight = (
-                    f"ROAS {roas:.2f}x — bardzo dobry wynik." if roas and roas >= 3
-                    else "Dobry CTR, ale brak konwersji — możliwy problem z landing page lub pixel trackingiem." if ctr > 1 and convs == 0
-                    else "Zero konwersji i niski spend — daj kampanii więcej czasu." if convs == 0 and spend <= 100
-                    else f"Zero konwersji przy budżecie {spend:.0f} PLN — zatrzymaj lub zoptymalizuj." if convs == 0
-                    else f"ROAS {roas:.2f}x poniżej break-even — optymalizuj lub pausuj." if roas and roas < 1.5
-                    else f"{convs} konwersje — monitoruj trend."
-                )
-
-            lines.append(f"💡 _Insight: {insight}_")
-            lines.append("")
-
-    # Google
-    if google_campaigns:
-        lines.append("🔍 *GOOGLE ADS*")
-        lines.append("")
-        for c in google_campaigns:
-            name  = c.get('campaign_name', c.get('name', '?'))
-            spend = float(c.get('cost', c.get('spend', 0)) or 0)
-            ctr   = float(c.get('ctr', 0) or 0)
-            convs = int(c.get('conversions', 0) or 0)
-            lines.append(f"*{name}*")
-            lines.append(f"💰 Spend: {spend:.0f} PLN | 📈 CTR: {ctr:.2f}% | 🎯 Konwersje: {convs}")
-            insight = (
-                f"CTR {ctr:.2f}% + {convs} konwersji — świetny wynik." if ctr >= 3 and convs > 0
-                else f"CTR {ctr:.2f}% — niska klikalność, sprawdź reklamy i słowa kluczowe." if ctr < 1 and spend > 50
-                else f"CTR {ctr:.2f}% — wynik przeciętny."
-            )
-            lines.append(f"💡 _Insight: {insight}_")
-            lines.append("")
-
-    # ── REKOMENDACJE AI ────────────────────────────────────────────────────────
-    lines.append("━━━━━━━━━━━━━━━━━━━━━━")
-    lines.append("")
-    lines.append("🚨 *REKOMENDACJE AI*")
-    lines.append("")
-
-    recs_added = 0
-
-    # Alert-based rekomendacje
-    for alert in obj_alerts:
-        if alert.get('action'):
-            lines.append(f"• *{alert['campaign']}:* {alert['action']}")
-            recs_added += 1
-
-    # Smart recommendations z historii
-    for rec in (smart_recs or [])[:4]:
-        action = rec.get('action', '')
-        camp   = rec.get('campaign', '')
-        conf   = rec.get('confidence', 0)
-        if action and camp and conf >= 0.5:
-            conf_label = _confidence_label(conf)
-            lines.append(f"• *{camp}:* {action} _{f'({conf_label})' if conf_label else ''}_")
-            recs_added += 1
-
-    # Eksperyment tygodnia
-    if experiments:
-        exp = experiments[0]
-        lines.append(f"• 🧪 *Eksperyment:* {exp['experiment']} — _{exp.get('reason', '')}_")
-        recs_added += 1
-
-    if recs_added == 0:
-        lines.append("• Brak konkretnych rekomendacji — kampanie działają stabilnie.")
+    if recs:
+        lines.append("🎯 *REKOMENDACJE*")
+        for r in recs:
+            lines.append(f"• {r}")
+    elif not (tldr or top or watch or problems):
+        lines.append("✅ Kampanie działają stabilnie — brak alertów.")
 
     return "\n".join(lines)
 
@@ -566,6 +638,18 @@ def generate_daily_digest_dre():
         ctrs = [float(c.get("ctr", 0) or 0) for c in all_campaigns if float(c.get("ctr", 0) or 0) > 0]
         avg_ctr = sum(ctrs) / len(ctrs) if ctrs else 0.0
 
+        # Osobne statystyki per platforma
+        meta_spend       = sum(float(c.get("spend", 0) or 0) for c in meta_campaigns)
+        meta_reach       = sum(int(c.get("reach", 0) or 0) for c in meta_campaigns)
+        meta_conversions = sum(int(c.get("conversions", 0) or 0) for c in meta_campaigns)
+        meta_ctrs        = [float(c.get("ctr", 0) or 0) for c in meta_campaigns if float(c.get("ctr", 0) or 0) > 0]
+        meta_ctr         = sum(meta_ctrs) / len(meta_ctrs) if meta_ctrs else 0.0
+
+        google_spend       = sum(float(c.get("cost", c.get("spend", 0)) or 0) for c in google_data_combined)
+        google_conversions = sum(int(c.get("conversions", 0) or 0) for c in google_data_combined)
+        google_ctrs        = [float(c.get("ctr", 0) or 0) for c in google_data_combined if float(c.get("ctr", 0) or 0) > 0]
+        google_ctr         = sum(google_ctrs) / len(google_ctrs) if google_ctrs else 0.0
+
         obj_alerts = _build_objective_alerts(meta_campaigns, google_data_combined)
 
         # ── Eksperymenty + smart recs (dla threadu) ───────────────────────────
@@ -601,6 +685,13 @@ def generate_daily_digest_dre():
             skipped_count=skipped_count,
             meta_count=len(meta_campaigns),
             google_count=len(google_data_combined),
+            meta_spend=meta_spend,
+            meta_reach=meta_reach,
+            meta_ctr=meta_ctr,
+            meta_conversions=meta_conversions,
+            google_spend=google_spend,
+            google_ctr=google_ctr,
+            google_conversions=google_conversions,
         )
 
         thread_msg = _build_thread_message(
