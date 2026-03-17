@@ -180,12 +180,14 @@ def icloud_calendar_tool(
                 end_dt = start_dt + timedelta(hours=1)
 
             uid = start_dt.strftime("%Y%m%dT%H%M%S") + "-sebol@pato"
+            dtstamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             ical_lines = [
                 "BEGIN:VCALENDAR",
                 "VERSION:2.0",
                 "PRODID:-//Sebol//Pato Bot//PL",
                 "BEGIN:VEVENT",
                 f"UID:{uid}",
+                f"DTSTAMP:{dtstamp}",
                 f"SUMMARY:{title}",
                 f"DTSTART:{start_dt.strftime('%Y%m%dT%H%M%S')}",
                 f"DTEND:{end_dt.strftime('%Y%m%dT%H%M%S')}",
