@@ -453,14 +453,28 @@ def create_google_campaign_draft(params: dict, customer_id: str) -> dict:
                     kw_service = google_ads_client.get_service("AdGroupCriterionService")
                     kw_ops = []
                     for kw in keywords[:20]:
+                        # kw can be a plain string or a dict like {'keyword': '...', 'match_type': '...'}
+                        if isinstance(kw, dict):
+                            kw_text = (kw.get("keyword") or kw.get("text") or kw.get("keyword_text") or "").strip()
+                            raw_match = (kw.get("match_type") or "PHRASE").upper()
+                            match_enum = getattr(
+                                google_ads_client.enums.KeywordMatchTypeEnum,
+                                raw_match,
+                                google_ads_client.enums.KeywordMatchTypeEnum.PHRASE,
+                            )
+                        else:
+                            kw_text = str(kw).strip()
+                            match_enum = google_ads_client.enums.KeywordMatchTypeEnum.PHRASE
+
+                        if not kw_text:
+                            continue
+
                         kw_op = google_ads_client.get_type("AdGroupCriterionOperation")
                         kw_crit = kw_op.create
                         kw_crit.ad_group = adgroup_resource
                         kw_crit.status = google_ads_client.enums.AdGroupCriterionStatusEnum.ENABLED
-                        kw_crit.keyword.text = str(kw)[:80]
-                        kw_crit.keyword.match_type = (
-                            google_ads_client.enums.KeywordMatchTypeEnum.PHRASE
-                        )
+                        kw_crit.keyword.text = kw_text[:80]
+                        kw_crit.keyword.match_type = match_enum
                         kw_ops.append(kw_op)
                     if kw_ops:
                         kw_service.mutate_ad_group_criteria(
