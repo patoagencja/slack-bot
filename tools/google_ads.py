@@ -353,6 +353,7 @@ def create_google_campaign_draft(params: dict, customer_id: str) -> dict:
         budget.name = f"{campaign_name} - Budżet {datetime.now().strftime('%Y%m%d%H%M%S')}"
         budget.delivery_method = google_ads_client.enums.BudgetDeliveryMethodEnum.STANDARD
         budget.amount_micros = daily_budget_micros
+        budget.explicitly_shared = False
 
         budget_resp = budget_service.mutate_campaign_budgets(
             customer_id=customer_id, operations=[budget_op]
@@ -370,7 +371,10 @@ def create_google_campaign_draft(params: dict, customer_id: str) -> dict:
         if end_date_time:
             campaign.end_date_time = end_date_time
 
-        campaign.contains_eu_political_advertising = False
+        campaign.contains_eu_political_advertising = (
+            google_ads_client.enums.EuPoliticalAdvertisingStatusEnum
+            .DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING
+        )
 
         channel_enum = getattr(
             google_ads_client.enums.AdvertisingChannelTypeEnum, channel_type_key, None
