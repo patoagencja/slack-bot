@@ -2650,6 +2650,17 @@ Styl prowadzenia rozmowy:
 - Jeśli odpowiedź jest zbyt ogólna — dopytuj.
 - Jeśli coś jest sprzeczne — wytknij i poproś o doprecyzowanie.
 
+INTERAKTYWNE OPCJE:
+Gdy pytanie ma zestaw typowych odpowiedzi (np. typ kampanii, cel, strategia biddingowa, kraj),
+dołącz tag [OPCJE: opcja1 | opcja2 | opcja3] bezpośrednio po treści pytania (max 5 opcji, każda maks 20 znaków).
+Użytkownik będzie mógł kliknąć przycisk LUB wpisać własną odpowiedź w wątku.
+NIE dodawaj opcji do pytań o wolny tekst (nagłówki, opisy, URL, nazwy brand).
+Przykłady:
+- "Jaki typ kampanii? [OPCJE: Search | Performance Max | YouTube | Display | Shopping]"
+- "Jaki budżet dobowy? [OPCJE: 50 PLN | 100 PLN | 200 PLN | 500 PLN]"
+- "Cel kampanii? [OPCJE: Sprzedaż | Leady | Ruch | Świadomość]"
+- "Strategia biddingowa? [OPCJE: Maks. kliknięcia | Maks. konwersje | CPA | ROAS | Ręczny CPC]"
+
 Typy kampanii: Search, Performance Max, Display, Video/YouTube, Demand Gen, Shopping, App.
 Jeśli user nie wie jaki typ — zrób diagnozę i zaproponuj.
 
@@ -2746,6 +2757,12 @@ Zasady:
 - Jeśli user podał już dane w pierwszej wiadomości — nie pytaj ponownie.
 - Dopytuj TYLKO jeśli brakuje: budżetu, materiału reklamowego, URL lub targetowania.
 - Po polsku, naturalnie, krótko.
+
+INTERAKTYWNE OPCJE:
+Gdy pytanie ma typowe gotowe odpowiedzi, dołącz [OPCJE: opcja1 | opcja2 | opcja3] po pytaniu (max 5 opcji, maks 20 znaków każda).
+NIE dodawaj opcji do pytań o wolny tekst (URL, nagłówki, opisy).
+Przykłady: "Typ kampanii? [OPCJE: Search | Performance Max | YouTube | Display | Shopping]"
+"Cel? [OPCJE: Sprzedaż | Leady | Ruch | Świadomość]"
 
 Minimalne dane per typ kampanii:
 
@@ -2882,15 +2899,89 @@ Jeśli user podał już dane — NIE pytaj o nie ponownie, po prostu potwierdź 
 """
 
 
+def _build_wizard_blocks(user_id: str, text: str) -> list | None:
+    """
+    Parse Claude's response for [OPCJE: opt1 | opt2 | ...] tags and convert to Block Kit blocks.
+    Returns list of blocks if any [OPCJE:] tag found, else None (fall back to plain text).
+    Multiple [OPCJE:] groups (one per question) are supported.
+    """
+    import time
+    pattern = re.compile(r"\[OPCJE:\s*([^\]]+)\]")
+    if not pattern.search(text):
+        return None
+
+    blocks = []
+    last_end = 0
+    ts_base = int(time.time() * 1000)
+
+    for i, match in enumerate(pattern.finditer(text)):
+        # Text before this match (the question/paragraph)
+        before = text[last_end:match.start()].strip()
+        if before:
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": before},
+            })
+        last_end = match.end()
+
+        # Parse options
+        raw_opts = match.group(1)
+        opts = [o.strip() for o in raw_opts.split("|") if o.strip()][:5]
+
+        # Build button elements — action_id encodes user_id + option index
+        elements = []
+        for j, opt in enumerate(opts):
+            # Slack action_id max 255 chars; value max 2000 chars
+            action_id = f"gw_btn_{user_id}_{ts_base}_{i}_{j}"[:255]
+            elements.append({
+                "type": "button",
+                "text": {"type": "plain_text", "text": opt, "emoji": False},
+                "value": opt,
+                "action_id": action_id,
+            })
+
+        blocks.append({
+            "type": "actions",
+            "block_id": f"gw_q_{user_id}_{ts_base}_{i}"[:255],
+            "elements": elements,
+        })
+
+    # Text after last match
+    tail = text[last_end:].strip()
+    if tail:
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": tail},
+        })
+
+    # Footer hint
+    blocks.append({
+        "type": "context",
+        "elements": [{"type": "mrkdwn", "text": "_Kliknij opcję lub wpisz własną odpowiedź w wątku_ ↓"}],
+    })
+
+    return blocks
+
+
 def _google_wizard_post(user_id: str, text: str):
-    """Post Google wizard message to source_channel in wizard thread."""
+    """Post Google wizard message to source_channel in wizard thread.
+    Automatically converts [OPCJE: ...] tags to interactive Block Kit buttons.
+    """
     wizard = _ctx.google_campaign_wizard.get(user_id)
     if not wizard:
         return
     ch = wizard.get("source_channel")
     ts = wizard.get("thread_ts")
     try:
-        app.client.chat_postMessage(channel=ch, thread_ts=ts, text=text)
+        blocks = _build_wizard_blocks(user_id, text)
+        if blocks:
+            app.client.chat_postMessage(
+                channel=ch, thread_ts=ts,
+                text=text,   # fallback for notifications
+                blocks=blocks,
+            )
+        else:
+            app.client.chat_postMessage(channel=ch, thread_ts=ts, text=text)
     except Exception as e:
         logger.error("_google_wizard_post error: %s", e)
 
@@ -2982,13 +3073,65 @@ def handle_kampaniagoogle_slash(ack, command, logger):
     # If extra context was provided, immediately process through Claude
     if extra_context:
         def _init_say(text):
-            app.client.chat_postMessage(channel=source_channel, thread_ts=thread_ts, text=text)
+            _google_wizard_post(user_id, text)
         _handle_google_campaign_wizard(user_id, None, [], _init_say)
 
     logger.info("/kampaniagoogle (%s) started by %s in %s", mode, user_id, source_channel)
 
 
 logger.info("✅ /kampaniagoogle handler zarejestrowany")
+
+
+@app.action(re.compile(r"^gw_btn_"))
+def handle_gw_button(ack, body, action):
+    """Handle wizard interactive button clicks.
+    Injects the selected value into the wizard as if the user typed it.
+    """
+    ack()
+    try:
+        user_id = body["user"]["id"]
+        selected_value = action.get("value", "")
+        channel_id = body["container"]["channel_id"]
+        message_ts = body["container"]["message_ts"]
+        thread_ts = body["container"].get("thread_ts") or message_ts
+
+        # Update the original message: replace action blocks with a "confirmed" note
+        original_blocks = body.get("message", {}).get("blocks", [])
+        new_blocks = []
+        for blk in original_blocks:
+            if blk.get("type") == "actions":
+                # Replace button row with a text confirmation
+                new_blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": f"✅ *{selected_value}*"},
+                })
+            elif blk.get("type") == "context" and blk.get("elements", [{}])[0].get("text", "").startswith("_Kliknij"):
+                pass  # Remove the hint line
+            else:
+                new_blocks.append(blk)
+
+        try:
+            app.client.chat_update(
+                channel=channel_id,
+                ts=message_ts,
+                text=f"✅ {selected_value}",
+                blocks=new_blocks,
+            )
+        except Exception as upd_err:
+            logger.warning("gw_button chat_update failed: %s", upd_err)
+
+        # Feed answer into wizard
+        if user_id not in _ctx.google_campaign_wizard:
+            logger.warning("gw_button: no wizard for user %s", user_id)
+            return
+
+        def _say(text):
+            _google_wizard_post(user_id, text)
+
+        _handle_google_campaign_wizard(user_id, selected_value, [], _say)
+
+    except Exception as e:
+        logger.error("handle_gw_button error: %s", e, exc_info=True)
 
 
 def _handle_google_campaign_wizard(user_id: str, user_message: str | None, files: list = None, say_fn=None) -> bool:
