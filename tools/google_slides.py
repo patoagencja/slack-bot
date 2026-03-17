@@ -14,8 +14,8 @@ except ImportError:
     _SLIDES_AVAILABLE = False
     logger.warning("google-api-python-client nie zainstalowany — Google Slides niedostępny")
 
-GOOGLE_CLIENT_ID     = os.environ.get("GOOGLE_ADS_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_ADS_CLIENT_SECRET")
+GOOGLE_CLIENT_ID     = os.environ.get("GOOGLE_SLIDES_CLIENT_ID") or os.environ.get("GOOGLE_ADS_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_SLIDES_CLIENT_SECRET") or os.environ.get("GOOGLE_ADS_CLIENT_SECRET")
 GOOGLE_REFRESH_TOKEN = os.environ.get("GOOGLE_SLIDES_REFRESH_TOKEN")
 
 
