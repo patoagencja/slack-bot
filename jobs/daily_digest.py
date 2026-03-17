@@ -17,6 +17,27 @@ from jobs.performance_analysis import (
 
 logger = logging.getLogger(__name__)
 
+# CTR benchmarks per Google campaign type:
+#   search:  1% threshold (search ads)
+#   display: 0.1% threshold (GDN — display impressions)
+#   video:   skip CTR alert (YouTube — view-rate metric)
+#   pmax/shopping/unknown: skip CTR alert (conversions are the KPI)
+
+def _google_campaign_type(name: str) -> str:
+    """Detect Google campaign type from name tags like [gdn], [search], [yt]."""
+    n = name.lower()
+    if '[search]' in n or '[srch]' in n:
+        return 'search'
+    if '[gdn]' in n or '[display]' in n:
+        return 'display'
+    if '[yt]' in n or '[youtube]' in n or '[video]' in n:
+        return 'video'
+    if '[pmax]' in n or 'performance max' in n:
+        return 'pmax'
+    if '[shopping]' in n:
+        return 'shopping'
+    return 'search'  # default
+
 
 def _build_objective_alerts(meta_campaigns, google_campaigns=None):
     """Generuje alerty dostosowane do celu kampanii (per-campaign objective)."""
@@ -86,15 +107,25 @@ def _build_objective_alerts(meta_campaigns, google_campaigns=None):
                 })
 
     for c in (google_campaigns or []):
-        name  = c.get('campaign_name', c.get('name', '?'))
-        ctr   = float(c.get('ctr', 0) or 0)
-        spend = float(c.get('cost', c.get('spend', 0)) or 0)
-        if ctr < 1.0 and spend > 50:
-            alerts.append({
-                'campaign': f'{name} (Google)',
-                'message': f'CTR {ctr:.2f}% < 1% — niska klikalność w wyszukiwarce',
-                'action': 'Sprawdź treść reklam i słowa kluczowe',
-            })
+        name      = c.get('campaign_name', c.get('name', '?'))
+        ctr       = float(c.get('ctr', 0) or 0)
+        spend     = float(c.get('cost', c.get('spend', 0)) or 0)
+        camp_type = _google_campaign_type(name)
+        if camp_type == 'search':
+            if ctr < 1.0 and spend > 50:
+                alerts.append({
+                    'campaign': f'{name} (Google)',
+                    'message': f'CTR {ctr:.2f}% < 1% — niska klikalność w wyszukiwarce',
+                    'action': 'Sprawdź treść reklam i słowa kluczowe',
+                })
+        elif camp_type == 'display':
+            if ctr < 0.1 and spend > 50:
+                alerts.append({
+                    'campaign': f'{name} (Google)',
+                    'message': f'CTR {ctr:.2f}% < 0.1% — niska klikalność (Display/GDN)',
+                    'action': 'Sprawdź kreacje banerowe i targetowanie',
+                })
+        # video/pmax/shopping: CTR nie jest główną metryką — brak alertu CTR
     return alerts
 
 
@@ -153,52 +184,93 @@ def _classify_campaigns(meta_campaigns, google_campaigns):
                 watch.append((name, f'ROAS {f"{roas:.2f}x" if roas else "brak"} | {convs} konwersji'))
 
     for c in google_campaigns:
-        name  = c.get('campaign_name', c.get('name', '?'))
-        ctr   = float(c.get('ctr', 0) or 0)
-        convs = int(c.get('conversions', 0) or 0)
-        spend = float(c.get('cost', c.get('spend', 0)) or 0)
-        if ctr >= 3 and convs > 0:
-            best.append((f'{name} (Google)', f'CTR {ctr:.2f}% + {convs} konwersji'))
-        elif ctr < 1 and spend > 50:
-            poor.append((f'{name} (Google)', f'CTR {ctr:.2f}% — niska klikalność'))
-        else:
-            watch.append((f'{name} (Google)', f'CTR {ctr:.2f}% | {convs} konwersji'))
+        name      = c.get('campaign_name', c.get('name', '?'))
+        ctr       = float(c.get('ctr', 0) or 0)
+        convs     = int(c.get('conversions', 0) or 0)
+        spend     = float(c.get('cost', c.get('spend', 0)) or 0)
+        camp_type = _google_campaign_type(name)
+        label     = f'{name} (Google)'
+
+        if camp_type == 'search':
+            if ctr >= 3 and convs > 0:
+                best.append((label, f'CTR {ctr:.2f}% + {convs} konwersji'))
+            elif ctr < 1 and spend > 50:
+                poor.append((label, f'CTR {ctr:.2f}% — niska klikalność Search'))
+            else:
+                watch.append((label, f'CTR {ctr:.2f}% | {convs} konwersji'))
+        elif camp_type == 'display':
+            if convs > 0 and ctr >= 0.1:
+                best.append((label, f'CTR {ctr:.2f}% + {convs} konwersji (Display)'))
+            elif ctr < 0.05 and spend > 50:
+                poor.append((label, f'CTR {ctr:.2f}% — niska klikalność (GDN)'))
+            else:
+                watch.append((label, f'CTR {ctr:.2f}% | {convs} konwersji (Display)'))
+        elif camp_type == 'video':
+            if convs > 0:
+                best.append((label, f'{convs} konwersji (YouTube)'))
+            else:
+                watch.append((label, f'CTR {ctr:.2f}% | {convs} konwersji (YouTube)'))
+        else:  # pmax, shopping, unknown
+            if convs > 0:
+                best.append((label, f'{convs} konwersji'))
+            else:
+                watch.append((label, f'CTR {ctr:.2f}% | {convs} konwersji'))
 
     return best, watch, poor
 
 
 def _build_main_message(date_label, total_spend, total_reach, avg_ctr,
                          total_conversions, campaign_count, obj_alerts, skipped_count,
-                         meta_count=0, google_count=0):
+                         meta_count=0, google_count=0,
+                         meta_spend=0, meta_reach=0, meta_ctr=0, meta_conversions=0,
+                         google_spend=0, google_ctr=0, google_conversions=0):
     """Buduje krótką wiadomość główną (widoczna na kanale)."""
     skipped_note = f" _(+{skipped_count} poniżej 20 PLN pominięto)_" if skipped_count > 0 else ""
-
-    if meta_count > 0 and google_count > 0:
-        platform_label = "META + GOOGLE ADS"
-    elif google_count > 0:
-        platform_label = "GOOGLE ADS"
-    else:
-        platform_label = "META ADS"
-
-    platform_breakdown = ""
-    if meta_count > 0 and google_count > 0:
-        platform_breakdown = f" _(Meta: {meta_count} | Google: {google_count})_"
+    both = meta_count > 0 and google_count > 0
 
     lines = [
-        f"📊 *{platform_label} – DRE | {date_label}*{skipped_note}",
+        f"📊 *META + GOOGLE ADS – DRE | {date_label}*{skipped_note}" if both
+        else f"📊 *{'META ADS' if meta_count > 0 else 'GOOGLE ADS'} – DRE | {date_label}*{skipped_note}",
         "",
-        f"💰 Spend: *{total_spend:.0f} PLN*{platform_breakdown}",
-        f"👥 Reach: *{total_reach:,}*",
-        f"📈 Avg CTR: *{avg_ctr:.2f}%*",
-        f"🎯 Konwersje: *{total_conversions}*",
-        f"📣 Kampanie aktywne: *{campaign_count}*",
     ]
+
+    if both:
+        lines += [
+            f"🔵 *META ADS* — {meta_count} kampanii",
+            f"   💰 Spend: *{meta_spend:.0f} PLN* | 👥 Reach: *{meta_reach:,}* | 📈 CTR: *{meta_ctr:.2f}%* | 🎯 Konwersje: *{meta_conversions}*",
+            "",
+            f"🔴 *GOOGLE ADS* — {google_count} kampanii",
+            f"   💰 Spend: *{google_spend:.0f} PLN* | 📈 Avg CTR: *{google_ctr:.2f}%* | 🎯 Konwersje: *{google_conversions}*",
+            "",
+            f"📣 Łącznie aktywnych kampanii: *{campaign_count}*",
+        ]
+    else:
+        lines += [
+            f"💰 Spend: *{total_spend:.0f} PLN*",
+            f"👥 Reach: *{total_reach:,}*",
+            f"📈 Avg CTR: *{avg_ctr:.2f}%*",
+            f"🎯 Konwersje: *{total_conversions}*",
+            f"📣 Kampanie aktywne: *{campaign_count}*",
+        ]
+
+    # Alerty pogrupowane per platforma
+    meta_alerts   = [a for a in obj_alerts if '(Google)' not in a['campaign']]
+    google_alerts = [a for a in obj_alerts if '(Google)' in a['campaign']]
 
     if obj_alerts:
         lines.append("")
         lines.append("⚠️ *ALERTY*")
-        for alert in obj_alerts:
-            lines.append(f"• *{alert['campaign']}* — {alert['message']}")
+        if both and meta_alerts:
+            lines.append("_Meta:_")
+            for alert in meta_alerts:
+                lines.append(f"• *{alert['campaign']}* — {alert['message']}")
+        if both and google_alerts:
+            lines.append("_Google:_")
+            for alert in google_alerts:
+                lines.append(f"• *{alert['campaign']}* — {alert['message']}")
+        if not both:
+            for alert in obj_alerts:
+                lines.append(f"• *{alert['campaign']}* — {alert['message']}")
     else:
         lines.append("")
         lines.append("✅ Brak alertów — wszystko wygląda OK")
@@ -334,17 +406,35 @@ def _build_thread_message(meta_campaigns, google_campaigns, obj_alerts, experime
         lines.append("🔍 *GOOGLE ADS*")
         lines.append("")
         for c in google_campaigns:
-            name  = c.get('campaign_name', c.get('name', '?'))
-            spend = float(c.get('cost', c.get('spend', 0)) or 0)
-            ctr   = float(c.get('ctr', 0) or 0)
-            convs = int(c.get('conversions', 0) or 0)
+            name      = c.get('campaign_name', c.get('name', '?'))
+            spend     = float(c.get('cost', c.get('spend', 0)) or 0)
+            ctr       = float(c.get('ctr', 0) or 0)
+            convs     = int(c.get('conversions', 0) or 0)
+            camp_type = _google_campaign_type(name)
             lines.append(f"*{name}*")
             lines.append(f"💰 Spend: {spend:.0f} PLN | 📈 CTR: {ctr:.2f}% | 🎯 Konwersje: {convs}")
-            insight = (
-                f"CTR {ctr:.2f}% + {convs} konwersji — świetny wynik." if ctr >= 3 and convs > 0
-                else f"CTR {ctr:.2f}% — niska klikalność, sprawdź reklamy i słowa kluczowe." if ctr < 1 and spend > 50
-                else f"CTR {ctr:.2f}% — wynik przeciętny."
-            )
+            if camp_type == 'search':
+                insight = (
+                    f"CTR {ctr:.2f}% + {convs} konwersji — świetny wynik." if ctr >= 3 and convs > 0
+                    else f"CTR {ctr:.2f}% — niska klikalność, sprawdź reklamy i słowa kluczowe." if ctr < 1 and spend > 50
+                    else f"CTR {ctr:.2f}% — wynik przeciętny."
+                )
+            elif camp_type == 'display':
+                insight = (
+                    f"CTR {ctr:.2f}% + {convs} konwersji — dobry wynik dla GDN." if convs > 0
+                    else f"CTR {ctr:.2f}% — niska klikalność dla Display, sprawdź kreacje." if ctr < 0.05 and spend > 50
+                    else f"CTR {ctr:.2f}% — typowy wynik dla GDN. Monitoruj konwersje."
+                )
+            elif camp_type == 'video':
+                insight = (
+                    f"CTR {ctr:.2f}% + {convs} konwersji — dobry wynik dla YouTube." if convs > 0
+                    else f"CTR {ctr:.2f}% — CTR w YouTube nie jest kluczową metryką, sprawdź view-through."
+                )
+            else:
+                insight = (
+                    f"CTR {ctr:.2f}% + {convs} konwersji — dobry wynik." if convs > 0
+                    else f"CTR {ctr:.2f}% — brak konwersji, monitoruj."
+                )
             lines.append(f"💡 _Insight: {insight}_")
             lines.append("")
 
@@ -566,6 +656,18 @@ def generate_daily_digest_dre():
         ctrs = [float(c.get("ctr", 0) or 0) for c in all_campaigns if float(c.get("ctr", 0) or 0) > 0]
         avg_ctr = sum(ctrs) / len(ctrs) if ctrs else 0.0
 
+        # Osobne statystyki per platforma
+        meta_spend       = sum(float(c.get("spend", 0) or 0) for c in meta_campaigns)
+        meta_reach       = sum(int(c.get("reach", 0) or 0) for c in meta_campaigns)
+        meta_conversions = sum(int(c.get("conversions", 0) or 0) for c in meta_campaigns)
+        meta_ctrs        = [float(c.get("ctr", 0) or 0) for c in meta_campaigns if float(c.get("ctr", 0) or 0) > 0]
+        meta_ctr         = sum(meta_ctrs) / len(meta_ctrs) if meta_ctrs else 0.0
+
+        google_spend       = sum(float(c.get("cost", c.get("spend", 0)) or 0) for c in google_data_combined)
+        google_conversions = sum(int(c.get("conversions", 0) or 0) for c in google_data_combined)
+        google_ctrs        = [float(c.get("ctr", 0) or 0) for c in google_data_combined if float(c.get("ctr", 0) or 0) > 0]
+        google_ctr         = sum(google_ctrs) / len(google_ctrs) if google_ctrs else 0.0
+
         obj_alerts = _build_objective_alerts(meta_campaigns, google_data_combined)
 
         # ── Eksperymenty + smart recs (dla threadu) ───────────────────────────
@@ -601,6 +703,13 @@ def generate_daily_digest_dre():
             skipped_count=skipped_count,
             meta_count=len(meta_campaigns),
             google_count=len(google_data_combined),
+            meta_spend=meta_spend,
+            meta_reach=meta_reach,
+            meta_ctr=meta_ctr,
+            meta_conversions=meta_conversions,
+            google_spend=google_spend,
+            google_ctr=google_ctr,
+            google_conversions=google_conversions,
         )
 
         thread_msg = _build_thread_message(
