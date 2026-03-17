@@ -67,6 +67,38 @@ from tools.reminders import init_reminders, save_reminder, list_reminders
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+class _SlackErrorHandler(logging.Handler):
+    """Forwards ERROR+ log records to a Slack channel in a background thread.
+    Uses a 30-second per-message cooldown to avoid alert spam.
+    Registered after `app` is initialized (see bottom of file).
+    """
+    def __init__(self, channel_id: str):
+        super().__init__(level=logging.ERROR)
+        self._channel = channel_id
+        self._cooldown: dict = {}  # msg_key → last_sent_timestamp
+
+    def emit(self, record: logging.LogRecord):
+        try:
+            msg = self.format(record)
+            key = msg[:120]
+            now = time.time()
+            if now - self._cooldown.get(key, 0) < 30:
+                return
+            self._cooldown[key] = now
+            import threading as _t
+            _t.Thread(
+                target=app.client.chat_postMessage,
+                kwargs={
+                    "channel": self._channel,
+                    "text": f"❌ *{record.levelname}* `{record.name}`\n```{msg[:2000]}```",
+                },
+                daemon=True,
+            ).start()
+        except Exception:
+            pass  # never let a logging handler crash the bot
+
+
 # ── initialization ────────────────────────────────────────────────────────────
 _ctx.app    = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 _ctx.claude = Anthropic(api_key=os.environ.get("CLAUDE_API_KEY"))
@@ -2915,12 +2947,12 @@ def _build_wizard_blocks(user_id: str, text: str) -> list | None:
     ts_base = int(time.time() * 1000)
 
     for i, match in enumerate(pattern.finditer(text)):
-        # Text before this match (the question/paragraph)
+        # Text before this match (the question/paragraph) — section text max 3000 chars
         before = text[last_end:match.start()].strip()
         if before:
             blocks.append({
                 "type": "section",
-                "text": {"type": "mrkdwn", "text": before},
+                "text": {"type": "mrkdwn", "text": before[:3000]},
             })
         last_end = match.end()
 
@@ -2931,12 +2963,12 @@ def _build_wizard_blocks(user_id: str, text: str) -> list | None:
         # Build button elements — action_id encodes user_id + option index
         elements = []
         for j, opt in enumerate(opts):
-            # Slack action_id max 255 chars; value max 2000 chars
+            # Slack action_id max 255 chars; button text max 75 chars; value max 2000 chars
             action_id = f"gw_btn_{user_id}_{ts_base}_{i}_{j}"[:255]
             elements.append({
                 "type": "button",
-                "text": {"type": "plain_text", "text": opt, "emoji": False},
-                "value": opt,
+                "text": {"type": "plain_text", "text": opt[:75], "emoji": False},
+                "value": opt[:2000],
                 "action_id": action_id,
             })
 
@@ -2946,12 +2978,12 @@ def _build_wizard_blocks(user_id: str, text: str) -> list | None:
             "elements": elements,
         })
 
-    # Text after last match
+    # Text after last match — section text max 3000 chars
     tail = text[last_end:].strip()
     if tail:
         blocks.append({
             "type": "section",
-            "text": {"type": "mrkdwn", "text": tail},
+            "text": {"type": "mrkdwn", "text": tail[:3000]},
         })
 
     # Footer hint
@@ -2975,13 +3007,16 @@ def _google_wizard_post(user_id: str, text: str):
     try:
         blocks = _build_wizard_blocks(user_id, text)
         if blocks:
-            app.client.chat_postMessage(
-                channel=ch, thread_ts=ts,
-                text=text,   # fallback for notifications
-                blocks=blocks,
-            )
-        else:
-            app.client.chat_postMessage(channel=ch, thread_ts=ts, text=text)
+            try:
+                app.client.chat_postMessage(
+                    channel=ch, thread_ts=ts,
+                    text=text[:3000],   # fallback for notifications
+                    blocks=blocks,
+                )
+                return
+            except Exception as blocks_err:
+                logger.warning("_google_wizard_post blocks failed, falling back to plain text: %s", blocks_err)
+        app.client.chat_postMessage(channel=ch, thread_ts=ts, text=text)
     except Exception as e:
         logger.error("_google_wizard_post error: %s", e)
 
@@ -3364,6 +3399,12 @@ def _run_meta_backfill():
 threading.Thread(target=_run_meta_backfill, daemon=True).start()
 
 # ── start ─────────────────────────────────────────────────────────────────────
+
+# Register Slack error alerts (ERRORS_CHANNEL_ID or GENERAL_CHANNEL_ID env var)
+_err_channel = os.environ.get("ERRORS_CHANNEL_ID") or os.environ.get("GENERAL_CHANNEL_ID", "")
+if _err_channel:
+    logging.getLogger().addHandler(_SlackErrorHandler(_err_channel))
+    logger.info("SlackErrorHandler registered → channel %s", _err_channel)
 
 handler = SocketModeHandler(app, os.environ.get("SLACK_APP_TOKEN"))
 print("⚡️ Bot działa!")
