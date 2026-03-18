@@ -422,6 +422,7 @@ def _build_thread_message(meta_campaigns, google_campaigns, obj_alerts, experime
     recs = recs[:3]
 
     # ── Buduj wiadomość ───────────────────────────────────────────────────────
+    lines = []
     if tldr:
         lines.append("🧠 *TL;DR*")
         for t in tldr:
