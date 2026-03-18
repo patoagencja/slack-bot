@@ -2,6 +2,7 @@
 import os
 import json
 import logging
+import time
 from datetime import datetime, timedelta
 
 from facebook_business.api import FacebookAdsApi
@@ -137,7 +138,25 @@ def meta_ads_tool(date_from=None, date_to=None, level="campaign", campaign_name=
         if limit:
             params['limit'] = limit
 
-        insights = account.get_insights(params=params)
+        insights = None
+        last_exc = None
+        for _attempt in range(4):
+            try:
+                insights = account.get_insights(params=params)
+                break
+            except Exception as _exc:
+                last_exc = _exc
+                exc_str = str(_exc)
+                # Retry only on transient rate-limit errors (code 4 / 17 / 32)
+                if any(f'"code": {c}' in exc_str for c in (4, 17, 32)):
+                    wait = 2 ** _attempt  # 1s,2s,4s,8s
+                    logger.warning(f"Meta rate limit, retry {_attempt+1}/4 za {wait}s: {_exc}")
+                    time.sleep(wait)
+                else:
+                    raise
+        else:
+            raise last_exc
+
         if not insights:
             return {"message": f"Brak danych za okres {date_from} - {date_to} na poziomie {level}"}
 
