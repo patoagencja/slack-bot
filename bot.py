@@ -52,7 +52,7 @@ from jobs.onboarding import (
     _handle_onboarding_done, check_stale_onboardings, handle_onboard_slash,
 )
 from jobs.industry_news import weekly_industry_news
-from jobs.reminders import send_due_reminders
+# jobs.reminders removed — reminders now use Slack chat.scheduleMessage
 from tools.campaign_creator import (
     download_slack_files, upload_creative_to_meta, parse_campaign_request,
     build_meta_targeting, create_campaign_draft, generate_campaign_preview,
@@ -63,7 +63,7 @@ from tools.voice_transcription import transcribe_slack_audio, SLACK_AUDIO_MIMES
 from tools.icloud_calendar import icloud_calendar_tool
 from tools.google_slides import create_presentation
 from tools.memory import init_memory, remember, recall_as_context, get_history
-from tools.reminders import init_reminders, save_reminder, list_reminders
+from tools.reminders import init_reminders, schedule_reminder, list_reminders
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1569,8 +1569,9 @@ def handle_message_events(body, say, logger):
                     _tr = icloud_calendar_tool(**{k: v for k, v in _tb.input.items() if v is not None})
             elif _tb.name == "save_reminder":
                 _action = _tb.input.get("action", "save")
+                _r_chan = _tb.input.get("channel_id") or event.get("channel", "")
                 if _action == "list":
-                    _pending = list_reminders(user_id)
+                    _pending = list_reminders(app.client, _r_chan)
                     if _pending:
                         _tr = {"reminders": _pending, "count": len(_pending)}
                     else:
@@ -1578,12 +1579,15 @@ def handle_message_events(body, say, logger):
                 else:
                     _r_date = _tb.input.get("remind_date")
                     _r_msg  = _tb.input.get("message", "")
-                    _r_chan = _tb.input.get("channel_id") or event.get("channel", "")
                     if not _r_date or not _r_msg:
                         _tr = {"error": "Wymagane pola: remind_date (YYYY-MM-DD) i message."}
                     else:
-                        _rid = save_reminder(user_id, _r_chan, _r_date, _r_msg)
-                        _tr = {"ok": True, "id": _rid, "remind_date": _r_date, "message": "Reminder zapisany — wyślę o 9:00 tego dnia."}
+                        try:
+                            _rid = schedule_reminder(app.client, _r_chan, _r_date, _r_msg)
+                            _tr = {"ok": True, "id": _rid, "remind_date": _r_date, "message": "Reminder zapisany — Slack wyśle o 9:00 tego dnia."}
+                        except Exception as _re:
+                            logger.error("schedule_reminder error: %s", _re)
+                            _tr = {"error": str(_re)}
             else:
                 _tr = {"error": "Nieznane narzędzie"}
             _merged.append({"role": "assistant", "content": _resp.content})
@@ -3433,7 +3437,7 @@ scheduler.add_job(check_stale_onboardings,   'cron', hour=9, minute=30, id='stal
 # scheduler.add_job(send_standup_questions,    'cron', day_of_week='mon-fri', hour=9, minute=0,  id='standup_send')
 # scheduler.add_job(post_standup_summary,      'cron', day_of_week='mon-fri', hour=9, minute=30, id='standup_summary')
 scheduler.add_job(weekly_industry_news,      'cron', day_of_week='mon',     hour=9, minute=0,  id='industry_news')
-scheduler.add_job(send_due_reminders,        'cron',                         hour=9, minute=5,  id='reminders')
+# reminders job removed — Slack chat.scheduleMessage handles delivery natively
 scheduler.start()
 
 print(f"✅ Scheduler załadowany! Jobs: {len(scheduler.get_jobs())}")
