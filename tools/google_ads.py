@@ -534,6 +534,13 @@ def create_google_campaign_draft(params: dict, customer_id: str) -> dict:
 
     except Exception as e:
         logger.error("Błąd tworzenia kampanii Google Ads: %s", e, exc_info=True)
+        # Wyciągnij czytelny komunikat z GoogleAdsException
+        try:
+            msgs = [err.message for err in e.failure.errors if err.message]
+            if msgs:
+                return {"error": " | ".join(msgs)}
+        except AttributeError:
+            pass
         return {"error": str(e)}
 
 
