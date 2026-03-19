@@ -459,23 +459,75 @@ def _build_thread_message(meta_campaigns, google_campaigns, obj_alerts, experime
 
 # ── WEEKLY LEARNINGS ───────────────────────────────────────────────────────────
 
+def _aggregate_campaign_stats(entries):
+    """Sum up spend/clicks and compute weighted avg CTR from a list of daily entries."""
+    total_spend = sum(float(e.get("spend") or 0) for e in entries)
+    total_clicks = sum(int(e.get("clicks") or 0) for e in entries)
+    total_impressions = sum(int(e.get("impressions") or 0) for e in entries)
+    avg_ctr = (total_clicks / total_impressions * 100) if total_impressions > 0 else 0.0
+    return total_spend, total_clicks, avg_ctr
+
+
 def generate_weekly_learnings(client="dre"):
     """Weekly summary of predictions accuracy + learned patterns."""
+    now = datetime.now()
+    week_cutoff  = (now - timedelta(days=7)).strftime('%Y-%m-%d')
+    month_cutoff = now.replace(day=1).strftime('%Y-%m-%d')
+
+    # Load history for both windows
+    all_hist_week  = load_campaign_history(client, days_back=7)
+    all_hist_month = load_campaign_history(client, days_back=(now - now.replace(day=1)).days + 1)
+
+    # Filter: only campaigns with >= 10 clicks in last week
+    active_campaigns = {
+        name: entries
+        for name, entries in all_hist_week.items()
+        if sum(int(e.get("clicks") or 0) for e in entries) >= 10
+    }
+
     data = _load_history_raw()
     predictions = data.get(client, {}).get("predictions", [])
-    cutoff = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
-    week_preds = [p for p in predictions if p.get("date", "") >= cutoff]
+    week_preds = [p for p in predictions if p.get("date", "") >= week_cutoff]
 
     patterns = analyze_patterns(client)
     summary  = patterns.get("summary", {})
     text = "🧠 **WEEKLY LEARNINGS – Co nauczyłem się w tym tygodniu:**\n\n"
 
-    # Evaluate predictions
+    # ── Platform stats: last 7 days + current month ───────────────────────────
+    for platform, icon in [("meta", "🔵 META ADS"), ("google", "🔴 GOOGLE ADS")]:
+        # week entries for this platform, only from active campaigns
+        week_entries_all = [
+            e
+            for name, entries in active_campaigns.items()
+            for e in entries
+            if (e.get("platform") or "meta").startswith(platform)
+        ]
+        month_entries_all = [
+            e
+            for name, entries in all_hist_month.items()
+            if sum(int(x.get("clicks") or 0) for x in all_hist_week.get(name, [])) >= 10
+            for e in entries
+            if (e.get("platform") or "meta").startswith(platform)
+               and e.get("date", "") >= month_cutoff
+        ]
+        if not week_entries_all and not month_entries_all:
+            continue
+        w_spend, w_clicks, w_ctr = _aggregate_campaign_stats(week_entries_all)
+        m_spend, m_clicks, m_ctr = _aggregate_campaign_stats(month_entries_all)
+        text += (
+            f"📊 **{icon}**\n"
+            f"   7 dni:   💰 {w_spend:.0f} PLN | 👆 {w_clicks} kliknięć | 📈 CTR {w_ctr:.2f}%\n"
+            f"   Miesiąc: 💰 {m_spend:.0f} PLN | 👆 {m_clicks} kliknięć | 📈 CTR {m_ctr:.2f}%\n\n"
+        )
+
+    if not active_campaigns:
+        text += "ℹ️ Brak kampanii z ≥10 kliknięciami w ostatnim tygodniu.\n\n"
+
+    # ── Prediction verification ────────────────────────────────────────────────
     if week_preds:
-        all_hist = load_campaign_history(client, days_back=30)
         verified = []
         for pred in week_preds:
-            camp_hist  = all_hist.get(pred["campaign"], [])
+            camp_hist  = all_hist_month.get(pred["campaign"], [])
             after_date = (datetime.strptime(pred["date"], '%Y-%m-%d') + timedelta(days=2)).strftime('%Y-%m-%d')
             before = [e for e in camp_hist if e.get("date", "") < after_date]
             after  = [e for e in camp_hist if e.get("date", "") >= after_date]
@@ -490,14 +542,15 @@ def generate_weekly_learnings(client="dre"):
                                      "success": (actual_chg > 0) == (pred_chg > 0)})
 
         if verified:
+            text += "━━━━━━━━━━━━━━━━━━━━━━\n"
             for v in verified[:4]:
                 icon = "✅" if v["success"] else "❌"
                 text += f"{icon} **{v['campaign']}** – {v['recommendation']}\n"
                 text += f"   Predicted: {v.get('predicted_change_pct', 0):+.0f}% | Actual: {v.get('actual_change_pct', 0):+.0f}%\n\n"
             acc = sum(1 for v in verified if v["success"]) / len(verified) * 100
             text += f"🎯 **Accuracy: {acc:.0f}%** ({len(verified)} predictions verified)\n\n"
-            text += "━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
+    # ── Learned patterns ───────────────────────────────────────────────────────
     freq_p = summary.get("frequency_creative", {})
     if freq_p and freq_p.get("total", 0) >= 2:
         text += (f"📌 **Creative refresh pattern** ({freq_p['total']} obserwacji):\n"
@@ -518,9 +571,6 @@ def generate_weekly_learnings(client="dre"):
         text += (f"📌 **Budget increase pattern** ({budget_p['total']} obserwacji):\n"
                  f"   {budget_p['successes']}/{budget_p['total']} razy CPC nie wzrósł >10%\n\n")
 
-    if not freq_p and not weekend and not week_preds:
-        text += ("ℹ️ Za mało danych historycznych – bot zbiera dane od dziś.\n"
-                 "Po 2-3 tygodniach zacznę wykrywać wzorce.\n")
     return text
 
 
