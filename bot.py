@@ -64,6 +64,7 @@ from tools.icloud_calendar import icloud_calendar_tool
 from tools.google_slides import create_presentation
 from tools.memory import init_memory, remember, recall_as_context, get_history
 from tools.reminders import init_reminders, schedule_reminder, list_reminders
+from tools.token_log import init_token_log, TrackedAnthropicClient
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -102,8 +103,9 @@ class _SlackErrorHandler(logging.Handler):
 
 # ── initialization ────────────────────────────────────────────────────────────
 _ctx.app    = App(token=os.environ.get("SLACK_BOT_TOKEN"))
-_ctx.claude = Anthropic(api_key=os.environ.get("CLAUDE_API_KEY"))
+_ctx.claude = TrackedAnthropicClient(Anthropic(api_key=os.environ.get("CLAUDE_API_KEY")))
 init_memory()
+init_token_log()
 init_reminders()
 _ctx.load_wizard_state()  # Restore wizard sessions that survived restart
 
