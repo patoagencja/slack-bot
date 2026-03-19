@@ -102,7 +102,8 @@ class _SlackErrorHandler(logging.Handler):
 
 # ── initialization ────────────────────────────────────────────────────────────
 _ctx.app    = App(token=os.environ.get("SLACK_BOT_TOKEN"))
-_ctx.claude = Anthropic(api_key=os.environ.get("CLAUDE_API_KEY"))
+from tools.token_log import LoggingAnthropicWrapper, get_cost_summary as _token_cost_summary
+_ctx.claude = LoggingAnthropicWrapper(Anthropic(api_key=os.environ.get("CLAUDE_API_KEY")))
 init_memory()
 init_reminders()
 _ctx.load_wizard_state()  # Restore wizard sessions that survived restart
@@ -1609,6 +1610,20 @@ def handle_message_events(body, say, logger):
     except Exception as e:
         logger.error(f"Błąd DM handler: {e}")
         _say_dm(text=f"Przepraszam, wystąpił błąd: {str(e)}")
+
+
+# ── /tokeny slash command ─────────────────────────────────────────────────────
+
+@app.command("/tokeny")
+def handle_tokeny_slash(ack, respond, command):
+    """Pokazuje koszt tokenów Anthropic API z ostatnich N dni."""
+    ack()
+    text = (command.get("text") or "").strip()
+    try:
+        days = int(text) if text else 30
+    except ValueError:
+        days = 30
+    respond(_token_cost_summary(days))
 
 
 # ── /standup slash command ────────────────────────────────────────────────────
