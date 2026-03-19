@@ -219,7 +219,7 @@
     <div class="stat"><div class="stat-num green">14</div><div class="stat-label">Wdrożone</div></div>
     <div class="stat"><div class="stat-num amber">3</div><div class="stat-label">W trakcie / WIP</div></div>
     <div class="stat"><div class="stat-num red">4</div><div class="stat-label">Brakuje</div></div>
-    <div class="stat"><div class="stat-num blue">4</div><div class="stat-label">Planowane</div></div>
+    <div class="stat"><div class="stat-num blue">19</div><div class="stat-label">Planowane</div></div>
     <div class="stat" style="margin-left:auto">
       <div class="stat-num" style="color:var(--text)">369</div>
       <div class="stat-label">commitów</div>
@@ -227,8 +227,8 @@
   </div>
 
   <div class="progress-wrap">
-    <div class="progress-label"><span>Ogólny postęp</span><span style="color:var(--green);font-family:var(--mono)">56%</span></div>
-    <div class="progress-bar"><div class="progress-fill" style="width:56%"></div></div>
+    <div class="progress-label"><span>Ogólny postęp</span><span style="color:var(--green);font-family:var(--mono)">35%</span></div>
+    <div class="progress-bar"><div class="progress-fill" style="width:35%"></div></div>
   </div>
 
   <div class="legend">
@@ -772,6 +772,334 @@
           <div class="detail-body">
             <p>Google Slides API już jest (<code>tools/google_slides.py</code>). Brakuje szablonu raportu klientowego + komendy <code>/raport klient_nazwa</code> która generuje i wysyła link do Slides.</p>
             <p>Dobry raport = executive summary + wykresy + co działa + plan na kolejny okres.</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ROADMAPA: OSZCZĘDNOŚĆ CZASU -->
+  <div class="section">
+    <div class="section-label">Roadmapa — oszczędność czasu (największy impact)</div>
+    <div class="grid">
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-nice"></div>
+          <div class="card-name">Mediaplan generator</div>
+          <span class="badge b-nice">planowane</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Brief przez Slack → gotowy mediaplan w Google Slides</div>
+        <div class="card-detail">
+          <div class="detail-title">Plan</div>
+          <div class="detail-body">
+            <p>Ktoś wysyła brief kampanii przez Slack (cele, budżet, daty, klient). Sebol generuje gotowy mediaplan w Google Slides — podział budżetu między kanały, harmonogram flight, KPI targets, format kreacji per placement.</p>
+            <p>Stack: Claude analiza → <code>tools/google_slides.py</code> → link do Slides wysłany w Slack. Dane historyczne z Meta + Google Ads użyte do alokacji budżetu.</p>
+            <p><span class="tag tag-todo">TODO: mediaplan_generator.py + Slides template</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-nice"></div>
+          <div class="card-name">Raport klientowski na żądanie</div>
+          <span class="badge b-nice">planowane</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">/raport instax → Slides z wynikami gotowe do wysłania</div>
+        <div class="card-detail">
+          <div class="detail-title">Plan</div>
+          <div class="detail-body">
+            <p>Komenda <code>/raport [klient]</code> generuje prezentację klientowską w Google Slides: executive summary, spend, ROAS, top kampanie, screenshoty wykresów (jeśli możliwe), rekomendacje na następny okres.</p>
+            <p>Google Slides API już działa — brakuje szablonu raportu i mapowania klient → konta ads.</p>
+            <p><span class="tag tag-file">tools/google_slides.py</span><span class="tag tag-todo">TODO: template + /raport command</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-nice"></div>
+          <div class="card-name">Kopiowanie kampanii między klientami</div>
+          <span class="badge b-nice">planowane</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">"zrób podobną kampanię jak ta u DRE ale dla Instax"</div>
+        <div class="card-detail">
+          <div class="detail-title">Plan</div>
+          <div class="detail-body">
+            <p>Sebol rozumie intent z wiadomości w stylu "skopiuj kampanię X od klienta A do klienta B". Pobiera strukturę (nazwa, cel, targeting, budżet) z API źródłowego, adaptuje do konta docelowego i przechodzi przez normalny wizard zatwierdzania.</p>
+            <p>Największy time-saver przy onboardingu nowego klienta z podobną branżą.</p>
+            <p><span class="tag tag-todo">TODO: campaign_clone.py + NL intent parsing</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-nice"></div>
+          <div class="card-name">Auto-odpowiedzi na pytania klientów</div>
+          <span class="badge b-nice">planowane</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Klient pyta o wyniki → Sebol odpowiada danymi z API</div>
+        <div class="card-detail">
+          <div class="detail-title">Plan</div>
+          <div class="detail-body">
+            <p>Klient wysyła pytanie przez dedykowany kanał ("ile wydaliśmy w tym tygodniu?", "jaki mamy CPL?"). Sebol pobiera dane z Meta/Google Ads i odpowiada gotową wiadomością do skopiowania lub wysyła bezpośrednio.</p>
+            <p>Wymaga mapowania kanał-klient (które konto ads należy do danego kanału Slack).</p>
+            <p><span class="tag tag-todo">TODO: client_channel_map + query handler</span></p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ROADMAPA: ALERTY I MONITORING -->
+  <div class="section">
+    <div class="section-label">Roadmapa — alerty i monitoring</div>
+    <div class="grid">
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-nice"></div>
+          <div class="card-name">Alert: kampania przestaje wydawać</div>
+          <span class="badge b-nice">planowane</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">spend = 0 przez X godzin → natychmiastowy alert</div>
+        <div class="card-detail">
+          <div class="detail-title">Plan</div>
+          <div class="detail-body">
+            <p>Kampania aktywna (status ACTIVE) ale spend = 0 przez np. 4 godziny w godzinach 8–22 → alert w kanale klienta. Przyczyny: wyczerpany budżet, odrzucona kreacja, problem z kontem, targeting zbyt wąski.</p>
+            <p>Sprawdzanie co 2h, cooldown 6h per kampania żeby nie spamić.</p>
+            <p><span class="tag tag-todo">TODO: extend budget_alerts.py o zero-spend check</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-nice"></div>
+          <div class="card-name">Alert: CPL / CPA poza progiem</div>
+          <span class="badge b-nice">planowane</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Cel kosztowy przekroczony → alert z rekomendacją</div>
+        <div class="card-detail">
+          <div class="detail-title">Plan</div>
+          <div class="detail-body">
+            <p>Per klient/kampania definiowany target CPL (koszt leada) lub CPA (koszt konwersji). Gdy 3-dniowa średnia przekroczy próg o >20% → alert w Slack + sugestia akcji (zmniejsz budżet, wstrzymaj słabe adsety, odśwież kreacje).</p>
+            <p>Progi per klient w <code>config/constants.py</code> lub jako komenda <code>/ustaw-cel instax cpl=15</code>.</p>
+            <p><span class="tag tag-todo">TODO: campaign thresholds config + CPL alert job</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-nice"></div>
+          <div class="card-name">Alert: kończą się kreacje</div>
+          <span class="badge b-nice">planowane</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Za mało aktywnych adsetów → alert o "creative fatigue"</div>
+        <div class="card-detail">
+          <div class="detail-title">Plan</div>
+          <div class="detail-body">
+            <p>Meta sygnalizuje "creative fatigue" gdy częstotliwość (frequency) reklamy przekracza ~3–4 dla cold audiences. Sebol monitoruje frequency per adset i alertuje zanim wyniki się posypią.</p>
+            <p>Dodatkowy trigger: liczba aktywnych kreacji per kampania &lt; 3 → sugestia dodania nowych wariantów.</p>
+            <p><span class="tag tag-todo">TODO: frequency check w budget_alerts.py</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-nice"></div>
+          <div class="card-name">Tygodniowe porównanie YoY</div>
+          <span class="badge b-nice">planowane</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Automatyczne zestawienie tydzień/tydzień i rok/rok</div>
+        <div class="card-detail">
+          <div class="detail-title">Plan</div>
+          <div class="detail-body">
+            <p>Weekly report już ma WoW (tydzień do tygodnia). Brakuje YoY (ten sam tydzień rok temu). Meta Ads API obsługuje date_preset = <code>last_year</code>. Pozwoli wykrywać sezonowość i weryfikować czy wzrosty są realne.</p>
+            <p>Format: tabela WoW | YoY dla kluczowych metryk (spend, CPL, ROAS, reach).</p>
+            <p><span class="tag tag-file">jobs/weekly_reports.py</span><span class="tag tag-todo">TODO: dodaj YoY comparison</span></p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ROADMAPA: BRIEFE I KLIENCI -->
+  <div class="section">
+    <div class="section-label">Roadmapa — praca z briefami i klientami</div>
+    <div class="grid">
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-nice"></div>
+          <div class="card-name">Baza briefów klientów</div>
+          <span class="badge b-nice">planowane</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Profil per klient — historia, cele, stawki, targeting</div>
+        <div class="card-detail">
+          <div class="detail-title">Plan</div>
+          <div class="detail-body">
+            <p>Każdy klient ma profil w SQLite: cele kampanii (np. lead gen / e-commerce), target CPL, kluczowe audience, stawki (% budżetu jako prowizja), historia briefów.</p>
+            <p>Sebol używa profilu automatycznie przy tworzeniu kampanii i generowaniu rekomendacji — nie trzeba za każdym razem powtarzać kontekstu.</p>
+            <p><span class="tag tag-todo">TODO: client_profiles.py + /profil-klienta command</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-nice"></div>
+          <div class="card-name">Generator copy reklamowego</div>
+          <span class="badge b-nice">planowane</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Na podstawie briefu + danych co działało historycznie</div>
+        <div class="card-detail">
+          <div class="detail-title">Plan</div>
+          <div class="detail-body">
+            <p>Sebol generuje warianty copy (headline, primary text, CTA) dopasowane do klienta i formatu reklamy. Wejście: brief + wymagania. Kontekst: jakie copy działało dla tego klienta w przeszłości (z memory DB).</p>
+            <p>Output: 3–5 wariantów gotowych do wklejenia w Ads Manager lub przekazania graficzce.</p>
+            <p><span class="tag tag-todo">TODO: /copy-gen command + memory recall po klientach</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-nice"></div>
+          <div class="card-name">Checklist przed launch'em kampanii</div>
+          <span class="badge b-nice">planowane</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Automatyczna weryfikacja zanim kampania pójdzie w świat</div>
+        <div class="card-detail">
+          <div class="detail-title">Plan</div>
+          <div class="detail-body">
+            <p>Przed zatwierdzeniem kampanii Sebol uruchamia checklist: ✓ piksel podpięty, ✓ landing page odpowiada, ✓ kreacje mają właściwe proporcje, ✓ budżet nie przekracza limitu, ✓ targeting nie wyklucza własnej bazy, ✓ UTM parametry ustawione.</p>
+            <p>Integracja z wizard approval — blokuje launch jeśli checklist nie przeszedł.</p>
+            <p><span class="tag tag-todo">TODO: pre_launch_check.py + approval gate</span></p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ROADMAPA: AUTOMATYZACJA OPERACYJNA -->
+  <div class="section">
+    <div class="section-label">Roadmapa — automatyzacja operacyjna</div>
+    <div class="grid">
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-nice"></div>
+          <div class="card-name">Auto-pauza słabych adsetów</div>
+          <span class="badge b-nice">planowane</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">X dni bez konwersji → pauza + raport w Slack</div>
+        <div class="card-detail">
+          <div class="detail-title">Plan</div>
+          <div class="detail-body">
+            <p>Adsety z wydatkiem >X PLN i 0 konwersji przez Y dni są automatycznie pauzowane. Próg konfigurowalny per klient (różne branże mają różne okna konwersji). Sebol wysyła podsumowanie co zostało spauzowane i dlaczego.</p>
+            <p>Flaga safety: nigdy nie pauza jeśli w kampanii zostałby 1 aktywny adset.</p>
+            <p><span class="tag tag-todo">TODO: adset_optimizer.py + Meta API PAUSED update</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-nice"></div>
+          <div class="card-name">Zmiana budżetu przez Slack</div>
+          <span class="badge b-nice">planowane</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">"zwiększ budżet DRE o 20%" → zmiana w API + potwierdzenie</div>
+        <div class="card-detail">
+          <div class="detail-title">Plan</div>
+          <div class="detail-body">
+            <p>Natural language intent: "zwiększ/zmniejsz/ustaw budżet [klient] [kampania] [kwota/%]". Sebol parsuje intent, pokazuje podgląd zmiany (przed → po) z przyciskiem zatwierdzenia, wysyła do Meta/Google Ads API.</p>
+            <p>Limit bezpieczeństwa: max zmiana 50% bez dodatkowego potwierdzenia managera.</p>
+            <p><span class="tag tag-todo">TODO: budget_change.py + NL parser + approval button</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-nice"></div>
+          <div class="card-name">Harmonogram kampanii</div>
+          <span class="badge b-nice">planowane</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">"włącz tę kampanię w piątek o 8:00" → scheduled action</div>
+        <div class="card-detail">
+          <div class="detail-title">Plan</div>
+          <div class="detail-body">
+            <p>Sebol może zaplanować akcję na kampanii na konkretny czas: włączenie, wyłączenie, zmiana budżetu, zmiana stawki. Używa APScheduler (one-shot job) lub Slack scheduled messages jako reminder dla siebie.</p>
+            <p>Harmonogram przeżywa restarty (persisted to SQLite).</p>
+            <p><span class="tag tag-todo">TODO: campaign_scheduler.py + SQLite jobs table</span></p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ROADMAPA: WIEDZA I LEARNING -->
+  <div class="section">
+    <div class="section-label">Roadmapa — wiedza i learning</div>
+    <div class="grid">
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-nice"></div>
+          <div class="card-name">Baza wiedzy per klient / branża</div>
+          <span class="badge b-nice">planowane</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Sebol "wie" że dla Instax carousel bije single image</div>
+        <div class="card-detail">
+          <div class="detail-title">Plan</div>
+          <div class="detail-body">
+            <p>Strukturalna baza wniosków per klient i branża w SQLite: co działało (format, czas, audience, copy style), co nie działało, hipotezy i ich wyniki. Sebol automatycznie wzbogaca bazę po analizie tygodniowej.</p>
+            <p>Przy tworzeniu nowej kampanii Sebol przeszukuje bazę i podaje do Claude jako context — rekomendacje oparte na realnych danych klienta.</p>
+            <p><span class="tag tag-todo">TODO: knowledge_base.py + auto-ingest z weekly analysis</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-nice"></div>
+          <div class="card-name">Benchmark branżowy</div>
+          <span class="badge b-nice">planowane</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">"czy nasz CPL jest dobry na tle rynku?"</div>
+        <div class="card-detail">
+          <div class="detail-title">Plan</div>
+          <div class="detail-body">
+            <p>Sebol porównuje metryki klienta (CPL, CPC, CTR, ROAS) do benchmarków branżowych. Źródło: dane z raportów branżowych (WordStream, Meta Benchmark) hardcoded per branża + aktualizowane co kwartał.</p>
+            <p>Odpowiedź: "Twój CPL to 18 PLN, branżowy benchmark e-commerce to 22 PLN — jesteś 18% poniżej średniej 🟢".</p>
+            <p><span class="tag tag-todo">TODO: benchmarks.py + /benchmark [klient] command</span></p>
           </div>
         </div>
       </div>
