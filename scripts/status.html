@@ -1,123 +1,809 @@
 <!DOCTYPE html>
 <html lang="pl">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Sebolek — Status</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #0f0f0f;
-      color: #e0e0e0;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 2rem;
-    }
-    .card {
-      background: #1a1a1a;
-      border: 1px solid #2a2a2a;
-      border-radius: 16px;
-      padding: 3rem 4rem;
-      max-width: 520px;
-      width: 100%;
-      text-align: center;
-      box-shadow: 0 8px 40px rgba(0,0,0,0.4);
-    }
-    .pulse {
-      display: inline-block;
-      width: 14px;
-      height: 14px;
-      border-radius: 50%;
-      background: #22c55e;
-      margin-right: 8px;
-      position: relative;
-      vertical-align: middle;
-    }
-    .pulse::after {
-      content: '';
-      position: absolute;
-      inset: -4px;
-      border-radius: 50%;
-      border: 2px solid #22c55e;
-      opacity: 0.5;
-      animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
-    }
-    @keyframes ping {
-      75%, 100% { transform: scale(2); opacity: 0; }
-    }
-    .status-line {
-      font-size: 1.1rem;
-      font-weight: 600;
-      color: #22c55e;
-      margin-bottom: 2rem;
-    }
-    h1 {
-      font-size: 2.4rem;
-      font-weight: 700;
-      margin-bottom: 0.5rem;
-      letter-spacing: -0.5px;
-    }
-    .subtitle {
-      color: #888;
-      font-size: 0.95rem;
-      margin-bottom: 2.5rem;
-    }
-    .divider {
-      border: none;
-      border-top: 1px solid #2a2a2a;
-      margin: 2rem 0;
-    }
-    .info-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 0.5rem 0;
-      font-size: 0.9rem;
-      color: #aaa;
-    }
-    .info-row span:last-child {
-      color: #e0e0e0;
-      font-weight: 500;
-    }
-    .footer {
-      margin-top: 2.5rem;
-      font-size: 0.75rem;
-      color: #555;
-    }
-    .emoji { font-size: 2rem; margin-bottom: 1rem; display: block; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sebol — Status Systemu</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #0a0a0a;
+    --bg2:      #111111;
+    --bg3:      #1a1a1a;
+    --border:   rgba(255,255,255,0.07);
+    --border2:  rgba(255,255,255,0.12);
+    --text:     #e8e8e8;
+    --muted:    #888;
+    --faint:    #444;
+
+    --green:    #22c55e;
+    --green-bg: rgba(34,197,94,0.08);
+    --green-b:  rgba(34,197,94,0.2);
+
+    --amber:    #f59e0b;
+    --amber-bg: rgba(245,158,11,0.08);
+    --amber-b:  rgba(245,158,11,0.2);
+
+    --red:      #ef4444;
+    --red-bg:   rgba(239,68,68,0.08);
+    --red-b:    rgba(239,68,68,0.2);
+
+    --blue:     #3b82f6;
+    --blue-bg:  rgba(59,130,246,0.08);
+    --blue-b:   rgba(59,130,246,0.2);
+
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-weight: 300;
+    min-height: 100vh;
+    padding: 0;
+  }
+
+  /* ── Header ── */
+  .header {
+    border-bottom: 1px solid var(--border);
+    padding: 28px 40px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .logo-wrap { display: flex; align-items: center; gap: 14px; }
+  .logo-icon {
+    width: 36px; height: 36px; border-radius: 8px;
+    background: linear-gradient(135deg, #1d4ed8, #7c3aed);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; flex-shrink: 0;
+  }
+  .logo-text { font-family: var(--mono); font-size: 18px; font-weight: 500; letter-spacing: -0.01em; }
+  .logo-sub  { font-size: 12px; color: var(--muted); font-family: var(--mono); margin-top: 1px; }
+  .header-meta { display: flex; align-items: center; gap: 20px; }
+  .live-badge {
+    display: flex; align-items: center; gap: 6px;
+    font-family: var(--mono); font-size: 11px; color: var(--green);
+    background: var(--green-bg); border: 1px solid var(--green-b);
+    padding: 4px 10px; border-radius: 20px;
+  }
+  .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .updated { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+
+  /* ── Layout ── */
+  .main { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+
+  /* ── Legend ── */
+  .legend { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 36px; }
+  .leg { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); }
+  .leg-dot { width: 7px; height: 7px; border-radius: 50%; }
+
+  /* ── Section ── */
+  .section { margin-bottom: 44px; }
+  .section-label {
+    font-family: var(--mono); font-size: 10px; font-weight: 500;
+    text-transform: uppercase; letter-spacing: .12em; color: var(--faint);
+    margin-bottom: 12px;
+  }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+
+  /* ── Card ── */
+  .card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .card:hover { border-color: var(--border2); background: var(--bg3); }
+  .card-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 13px 14px 11px;
+  }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .s-done  { background: var(--green); }
+  .s-wip   { background: var(--amber); }
+  .s-gap   { background: var(--red); }
+  .s-nice  { background: var(--blue); }
+
+  .card-name { font-size: 13px; font-weight: 500; flex: 1; line-height: 1.3; color: var(--text); }
+  .badge {
+    font-family: var(--mono); font-size: 10px; font-weight: 500;
+    padding: 2px 8px; border-radius: 20px; flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .b-done { color: var(--green); background: var(--green-bg); border: 1px solid var(--green-b); }
+  .b-wip  { color: var(--amber); background: var(--amber-bg); border: 1px solid var(--amber-b); }
+  .b-gap  { color: var(--red);   background: var(--red-bg);   border: 1px solid var(--red-b);   }
+  .b-nice { color: var(--blue);  background: var(--blue-bg);  border: 1px solid var(--blue-b);  }
+
+  .card-sub { font-size: 12px; color: var(--muted); padding: 0 14px 12px; line-height: 1.5; }
+
+  /* ── Expanded detail ── */
+  .card-detail {
+    display: none;
+    border-top: 1px solid var(--border);
+    padding: 14px 14px 16px;
+    background: rgba(255,255,255,0.02);
+  }
+  .card-detail.open { display: block; }
+  .detail-title {
+    font-family: var(--mono); font-size: 10px; font-weight: 500;
+    text-transform: uppercase; letter-spacing: .1em; color: var(--faint);
+    margin-bottom: 8px;
+  }
+  .detail-body { font-size: 12px; color: #bbb; line-height: 1.7; }
+  .detail-body p { margin-bottom: 6px; }
+  .detail-body p:last-child { margin-bottom: 0; }
+  .detail-body code {
+    font-family: var(--mono); font-size: 11px;
+    background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 3px;
+    color: #d4b896;
+  }
+  .detail-body .tag {
+    display: inline-block; font-family: var(--mono); font-size: 10px;
+    padding: 1px 6px; border-radius: 3px; margin-right: 4px; margin-top: 2px;
+  }
+  .tag-file  { background: rgba(59,130,246,0.15); color: #93c5fd; }
+  .tag-todo  { background: rgba(239,68,68,0.15); color: #fca5a5; }
+  .tag-ok    { background: rgba(34,197,94,0.15); color: #86efac; }
+
+  /* ── Chevron ── */
+  .chevron { margin-left: auto; color: var(--faint); font-size: 10px; transition: transform .15s; flex-shrink: 0; }
+  .card.open .chevron { transform: rotate(180deg); }
+
+  /* ── Stats bar ── */
+  .stats-bar {
+    display: flex; gap: 24px; flex-wrap: wrap;
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px 24px; margin-bottom: 36px;
+  }
+  .stat { display: flex; flex-direction: column; gap: 3px; }
+  .stat-num { font-family: var(--mono); font-size: 22px; font-weight: 500; line-height: 1; }
+  .stat-label { font-size: 11px; color: var(--muted); }
+  .stat-num.green { color: var(--green); }
+  .stat-num.amber { color: var(--amber); }
+  .stat-num.red   { color: var(--red); }
+  .stat-num.blue  { color: var(--blue); }
+
+  /* ── Progress ── */
+  .progress-wrap { margin-bottom: 36px; }
+  .progress-label { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .progress-bar { height: 4px; background: var(--bg3); border-radius: 2px; overflow: hidden; }
+  .progress-fill { height: 100%; border-radius: 2px; background: linear-gradient(90deg, var(--green) 0%, #16a34a 100%); transition: width .6s ease; }
+
+  /* ── Footer ── */
+  .footer {
+    border-top: 1px solid var(--border);
+    padding: 20px 40px;
+    font-size: 11px; color: var(--faint); font-family: var(--mono);
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+  }
+
+  @media (max-width: 600px) {
+    .header { padding: 20px 16px; }
+    .main { padding: 24px 12px 60px; }
+    .footer { padding: 16px; }
+    .stat-num { font-size: 18px; }
+  }
+</style>
 </head>
 <body>
-  <div class="card">
-    <span class="emoji">🤖</span>
-    <div class="status-line">
-      <span class="pulse"></span> Operational
+
+<header class="header">
+  <div class="logo-wrap">
+    <div class="logo-icon">🤖</div>
+    <div>
+      <div class="logo-text">sebol</div>
+      <div class="logo-sub">pato agencja · ai agent</div>
     </div>
-    <h1>Sebolek</h1>
-    <p class="subtitle">Slack Bot — Agencja Reklamowa</p>
-    <hr class="divider" />
-    <div class="info-row">
-      <span>Status</span>
-      <span>✅ Running</span>
-    </div>
-    <div class="info-row">
-      <span>Platform</span>
-      <span>Slack Socket Mode</span>
-    </div>
-    <div class="info-row">
-      <span>Deploy</span>
-      <span>Render.com</span>
-    </div>
-    <div class="info-row">
-      <span>Stack</span>
-      <span>Slack Bolt + Claude API</span>
-    </div>
-    <hr class="divider" />
-    <p class="footer">Ten endpoint służy tylko do health-checku Render.com.</p>
   </div>
+  <div class="header-meta">
+    <div class="live-badge"><div class="live-dot"></div>render.com</div>
+    <div class="updated" id="updated-time">—</div>
+  </div>
+</header>
+
+<div class="main">
+
+  <div class="stats-bar">
+    <div class="stat"><div class="stat-num green">14</div><div class="stat-label">Wdrożone</div></div>
+    <div class="stat"><div class="stat-num amber">3</div><div class="stat-label">W trakcie / WIP</div></div>
+    <div class="stat"><div class="stat-num red">4</div><div class="stat-label">Brakuje</div></div>
+    <div class="stat"><div class="stat-num blue">4</div><div class="stat-label">Planowane</div></div>
+    <div class="stat" style="margin-left:auto">
+      <div class="stat-num" style="color:var(--text)">369</div>
+      <div class="stat-label">commitów</div>
+    </div>
+  </div>
+
+  <div class="progress-wrap">
+    <div class="progress-label"><span>Ogólny postęp</span><span style="color:var(--green);font-family:var(--mono)">56%</span></div>
+    <div class="progress-bar"><div class="progress-fill" style="width:56%"></div></div>
+  </div>
+
+  <div class="legend">
+    <div class="leg"><div class="leg-dot" style="background:var(--green)"></div>Wdrożone i działa</div>
+    <div class="leg"><div class="leg-dot" style="background:var(--amber)"></div>Częściowe / WIP</div>
+    <div class="leg"><div class="leg-dot" style="background:var(--red)"></div>Brakuje (krytyczne)</div>
+    <div class="leg"><div class="leg-dot" style="background:var(--blue)"></div>Planowane (nice-to-have)</div>
+  </div>
+
+  <!-- INFRASTRUKTURA -->
+  <div class="section">
+    <div class="section-label">Infrastruktura</div>
+    <div class="grid">
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-done"></div>
+          <div class="card-name">Slack Bolt + Socket Mode</div>
+          <span class="badge b-done">działa</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Real-time eventy, slash commands, Block Kit</div>
+        <div class="card-detail">
+          <div class="detail-title">Szczegóły</div>
+          <div class="detail-body">
+            <p>Bot nasłuchuje eventów Slack przez Socket Mode — brak publicznego URL, działa za firewallem. Obsługuje slash commands, shortcuty, interactive components (przyciski, modals, select menus).</p>
+            <p><span class="tag tag-file">bot.py</span><span class="tag tag-file">tools/slack_tools.py</span></p>
+            <p><span class="tag tag-ok">✓ Block Kit modals</span> <span class="tag tag-ok">✓ Approval workflow</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-done"></div>
+          <div class="card-name">APScheduler (cron jobs)</div>
+          <span class="badge b-done">działa</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Daily digest, budget alerts, standup, news</div>
+        <div class="card-detail">
+          <div class="detail-title">Szczegóły</div>
+          <div class="detail-body">
+            <p>Harmonogram zadań cyklicznych oparty na APScheduler. Strefa czasowa Europe/Warsaw. Każdy job ma własny plik w <code>/jobs/</code>.</p>
+            <p>Aktywne joby: digest dzienny, alerty budżetowe (co godz. 7–22), standup, wiadomości branżowe, weekly report, check-in zespołu.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-done"></div>
+          <div class="card-name">Render.com deploy + CI/CD</div>
+          <span class="badge b-done">działa</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">GitHub Actions, auto-deploy na push</div>
+        <div class="card-detail">
+          <div class="detail-title">Szczegóły</div>
+          <div class="detail-body">
+            <p>Deploy automatyczny przez GitHub Actions przy każdym pushu na <code>main</code>. Env vars w Render dashboard. Procfile uruchamia bota jako web process.</p>
+            <p><span class="tag tag-file">.github/workflows/</span><span class="tag tag-file">Procfile</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-done"></div>
+          <div class="card-name">Conversation memory (SQLite)</div>
+          <span class="badge b-done">działa</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">FTS5 search + pełna historia per user</div>
+        <div class="card-detail">
+          <div class="detail-title">Szczegóły</div>
+          <div class="detail-body">
+            <p>Każda wiadomość DM (user + bot) zapisywana do SQLite z FTS5. Dwa tryby: <code>recall()</code> — semantic search po słowach kluczowych, <code>get_history()</code> — pełna historia do Claude messages[].</p>
+            <p>Memory backfill z historii Slack. Polskie stop words wykluczone z indeksu.</p>
+            <p><span class="tag tag-file">tools/memory.py</span><span class="tag tag-file">tools/memory_backfill.py</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-gap"></div>
+          <div class="card-name">Observability / Error logs</div>
+          <span class="badge b-gap">brak</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Brak centralnego trackingu błędów API</div>
+        <div class="card-detail">
+          <div class="detail-title">Co brakuje</div>
+          <div class="detail-body">
+            <p>Błędy lądują w logach Render ale nikt ich nie monitoruje. Brak alertu gdy bot się wywali lub API przestanie odpowiadać.</p>
+            <p><span class="tag tag-todo">TODO: Sentry free tier lub logging do #sebol-errors</span></p>
+            <p>Brak też trackingu kosztu tokenów — nie wiadomo ile kosztuje każde wywołanie Claude.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-gap"></div>
+          <div class="card-name">Token cost tracking</div>
+          <span class="badge b-gap">brak</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Nie wiadomo ile kosztuje każde wywołanie</div>
+        <div class="card-detail">
+          <div class="detail-title">Co brakuje</div>
+          <div class="detail-body">
+            <p>Anthropic API zwraca <code>usage.input_tokens</code> i <code>usage.output_tokens</code> w każdej odpowiedzi — wystarczy logować do SQLite i sumować.</p>
+            <p><span class="tag tag-todo">TODO: dodaj token_log.py, liczy PLN na podstawie ceny modelu</span></p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- INTEGRACJE -->
+  <div class="section">
+    <div class="section-label">Integracje z platformami</div>
+    <div class="grid">
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-done"></div>
+          <div class="card-name">Meta Ads API</div>
+          <span class="badge b-done">działa</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Kampanie, statystyki, tworzenie, retry</div>
+        <div class="card-detail">
+          <div class="detail-title">Szczegóły</div>
+          <div class="detail-body">
+            <p>Pełna integracja przez Graph API. Pobieranie danych kampanii, adsetów, kreacji. Tworzenie kampanii przez wizard (Block Kit modal). Auto-retry przy rate limitach (kod 4/17/32) z exponential backoff.</p>
+            <p>Klienci: Instax/Fuji, DRE, Zbiorcze. Odczyt daily_budget bezpośrednio z API.</p>
+            <p><span class="tag tag-file">tools/meta_ads.py</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-done"></div>
+          <div class="card-name">Google Ads API</div>
+          <span class="badge b-done">działa</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Kampanie, raporty, tworzenie (wizard)</div>
+        <div class="card-detail">
+          <div class="detail-title">Szczegóły</div>
+          <div class="detail-body">
+            <p>Integracja przez google-ads-python-client. Raporty przez GAQL. Campaign creation wizard (Block Kit). Czytelne komunikaty błędów z GoogleAdsException.</p>
+            <p>Klienci: DRE, M2, 3WM/Pato.</p>
+            <p><span class="tag tag-file">tools/google_ads.py</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-wip"></div>
+          <div class="card-name">GA4 / Google Analytics</div>
+          <span class="badge b-wip">częściowe</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Plik istnieje, były problemy z estymacją</div>
+        <div class="card-detail">
+          <div class="detail-title">Szczegóły</div>
+          <div class="detail-body">
+            <p>Plik <code>tools/google_analytics.py</code> istnieje i integruje GA4 Data API. Ostatni fix: zakaz estymacji z Meta gdy GA4 nie działa + lepsze logowanie błędów.</p>
+            <p>Problem: gdy GA4 odpada, bot wcześniej wracał do szacowania z danych Meta co dawało mylące wyniki. Teraz jest strict-mode.</p>
+            <p><span class="tag tag-file">tools/google_analytics.py</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-done"></div>
+          <div class="card-name">Google Slides API</div>
+          <span class="badge b-done">działa</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Tworzenie prezentacji przez Sebol</div>
+        <div class="card-detail">
+          <div class="detail-title">Szczegóły</div>
+          <div class="detail-body">
+            <p>Sebol może tworzyć prezentacje Google Slides bezpośrednio z Slacka. Osobne env vars <code>GOOGLE_SLIDES_CLIENT_ID</code> / <code>SECRET</code>.</p>
+            <p><span class="tag tag-file">tools/google_slides.py</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-done"></div>
+          <div class="card-name">iCloud Calendar</div>
+          <span class="badge b-done">działa</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Odczyt kalendarza, generowanie iCal</div>
+        <div class="card-detail">
+          <div class="detail-title">Szczegóły</div>
+          <div class="detail-body">
+            <p>Integracja przez CalDAV. Generowanie poprawnych plików iCal (z DTSTAMP). Używane do sprawdzania dostępności i planowania spotkań.</p>
+            <p><span class="tag tag-file">tools/icloud_calendar.py</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-nice"></div>
+          <div class="card-name">TikTok Ads API</div>
+          <span class="badge b-nice">planowane</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Agencja prowadzi też TikTok Ads</div>
+        <div class="card-detail">
+          <div class="detail-title">Plan</div>
+          <div class="detail-body">
+            <p>Pato prowadzi kampanie TikTok Ads ale Sebol jeszcze ich nie monitoruje. TikTok Business API wymaga osobnej aplikacji w TikTok for Business portal.</p>
+            <p>Priorytet: niski (po ustabilizowaniu Meta + Google).</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- MODUŁY AGENTA -->
+  <div class="section">
+    <div class="section-label">Moduły agenta</div>
+    <div class="grid">
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-done"></div>
+          <div class="card-name">Daily digest</div>
+          <span class="badge b-done">działa</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Alerty, TL;DR, top performer, eksperyment</div>
+        <div class="card-detail">
+          <div class="detail-title">Szczegóły</div>
+          <div class="detail-body">
+            <p>Codzienny raport rano. Format: critical alerts → TL;DR → top performer → 1 sugestia eksperymentu. Zawiera weekly learnings (podział na Meta/Google).</p>
+            <p><span class="tag tag-file">jobs/daily_digest.py</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-done"></div>
+          <div class="card-name">Campaign creator (Meta + Google)</div>
+          <span class="badge b-done">działa</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Block Kit wizard + approval workflow</div>
+        <div class="card-detail">
+          <div class="detail-title">Szczegóły</div>
+          <div class="detail-body">
+            <p>Wieloetapowy wizard tworzenia kampanii przez Slack modals. Obsługuje upload plików (kreacje) do 50MB. Workflow zatwierdzania przed wysłaniem do API. Oddzielne wizardy dla Meta i Google Ads.</p>
+            <p><span class="tag tag-file">tools/campaign_creator.py</span></p>
+            <p>Wizard state persisted to disk — przeżywa restarty serwera.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-done"></div>
+          <div class="card-name">Budget alerts (Meta)</div>
+          <span class="badge b-done">działa</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Pace tracking co godz., CRITICAL + WARNING</div>
+        <div class="card-detail">
+          <div class="detail-title">Szczegóły</div>
+          <div class="detail-body">
+            <p>Sprawdza pace (spend/daily_budget vs progress dnia) co godzinę między 7:00–22:00. Progi: >120% pace → WARNING 🟡, >150% → CRITICAL 🔴. Cooldown 4h zapobiega spam.</p>
+            <p>Pobiera daily_budget bezpośrednio z Graph API (nie z cache).</p>
+            <p><span class="tag tag-file">jobs/budget_alerts.py</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-wip"></div>
+          <div class="card-name">Budget alerts (Google)</div>
+          <span class="badge b-wip">częściowe</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Jest koszt, brak pace tracking</div>
+        <div class="card-detail">
+          <div class="detail-title">Co brakuje</div>
+          <div class="detail-body">
+            <p>Funkcja <code>check_budget_status("google")</code> zwraca kampanie z kosztem >10 PLN ale nie porównuje do budżetu dziennego — brak % pace. Google Ads API ma budget przez <code>campaign.campaign_budget</code>.</p>
+            <p><span class="tag tag-todo">TODO: dodaj pobieranie budget + pace calc dla Google</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-done"></div>
+          <div class="card-name">Weekly reports</div>
+          <span class="badge b-done">działa</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Tygodniowy raport dla każdego klienta</div>
+        <div class="card-detail">
+          <div class="detail-title">Szczegóły</div>
+          <div class="detail-body">
+            <p>Automatyczny raport tygodniowy: spend, conversions, ROAS, top performers, alerty. Formatowanie przez <code>format_weekly_summary()</code> z analizą trendów.</p>
+            <p><span class="tag tag-file">jobs/weekly_reports.py</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-done"></div>
+          <div class="card-name">Performance analysis</div>
+          <span class="badge b-done">działa</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Analiza trendów, compact thread format</div>
+        <div class="card-detail">
+          <div class="detail-title">Szczegóły</div>
+          <div class="detail-body">
+            <p>Analiza trendów kampanii: wykrywanie anomalii, top performers, kampanie wymagające uwagi. Format compact thread (wyniki w wątku Slack).</p>
+            <p><span class="tag tag-file">jobs/performance_analysis.py</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-done"></div>
+          <div class="card-name">Standup + check-in zespołu</div>
+          <span class="badge b-done">działa</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Codzienne check-iny, standup summary</div>
+        <div class="card-detail">
+          <div class="detail-title">Szczegóły</div>
+          <div class="detail-body">
+            <p>Automatyczne pytania check-in przez DM. Standup summary do #zarzondpato. Dostępność zespołu persisted — przeżywa restarty.</p>
+            <p><span class="tag tag-file">jobs/standup.py</span><span class="tag tag-file">jobs/checkin.py</span><span class="tag tag-file">jobs/team.py</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-done"></div>
+          <div class="card-name">Industry news</div>
+          <span class="badge b-done">działa</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Nagłówki w głównej wiad., szczegóły w wątku</div>
+        <div class="card-detail">
+          <div class="detail-title">Szczegóły</div>
+          <div class="detail-body">
+            <p>Automatyczne wiadomości branżowe (marketing, performance). Nagłówki w głównej wiadomości, szczegóły w wątku. Deduplikacja po URL (publiczne_news.json).</p>
+            <p><span class="tag tag-file">jobs/industry_news.py</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-done"></div>
+          <div class="card-name">Reminders (persistent)</div>
+          <span class="badge b-done">działa</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Slack scheduled messages, przeżywa restarty</div>
+        <div class="card-detail">
+          <div class="detail-title">Szczegóły</div>
+          <div class="detail-body">
+            <p>Przypomnienia przez <code>chat.scheduleMessage</code> — natywna funkcja Slack, nie APScheduler. Dzięki temu przeżywają restarty i deploje bota.</p>
+            <p><span class="tag tag-file">tools/reminders.py</span><span class="tag tag-file">jobs/reminders.py</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-done"></div>
+          <div class="card-name">Voice transcription</div>
+          <span class="badge b-done">działa</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Whisper, działa z każdym formatem audio</div>
+        <div class="card-detail">
+          <div class="detail-title">Szczegóły</div>
+          <div class="detail-body">
+            <p>Transkrypcja głosówek przez OpenAI Whisper. Używa Slack filetype jako extension (nie MIME type) — to był bugfix. Kodeki przez imageio-ffmpeg (bez apt-get).</p>
+            <p><span class="tag tag-file">tools/voice_transcription.py</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-done"></div>
+          <div class="card-name">Email summary</div>
+          <span class="badge b-done">działa</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Streszczenie emaili, DM do użytkownika</div>
+        <div class="card-detail">
+          <div class="detail-title">Szczegóły</div>
+          <div class="detail-body">
+            <p>Automatyczne streszczenia emaili dostarczone przez DM (nie historię, tylko Chat). Integracja przez <code>conversations_open</code>.</p>
+            <p><span class="tag tag-file">jobs/email_summary.py</span><span class="tag tag-file">tools/email_tools.py</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-done"></div>
+          <div class="card-name">Client onboarding</div>
+          <span class="badge b-done">działa</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Checklisty dla nowych klientów</div>
+        <div class="card-detail">
+          <div class="detail-title">Szczegóły</div>
+          <div class="detail-body">
+            <p>Checklisty onboardingowe dla nowych klientów agencji. Automatycznie wysyłane przy dodaniu nowego konta.</p>
+            <p><span class="tag tag-file">jobs/onboarding.py</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-wip"></div>
+          <div class="card-name">Strategy recommendations</div>
+          <span class="badge b-wip">WIP</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Weekly learnings, sugestie strategii</div>
+        <div class="card-detail">
+          <div class="detail-title">Stan</div>
+          <div class="detail-body">
+            <p>Weekly learnings działają (podział na Meta/Google per kampania). Sebol sugeruje eksperymenty w daily digest. Brakuje jednak zamknięcia pętli — wynik eksperymentu nie wraca automatycznie do bazy wiedzy.</p>
+            <p><span class="tag tag-todo">TODO: A/B test tracker, który mierzy wynik sugestii</span></p>
+            <p><span class="tag tag-file">jobs/daily_digest.py</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-gap"></div>
+          <div class="card-name">A/B test tracker</div>
+          <span class="badge b-gap">brak</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Sebol nie mierzy wyników swoich sugestii</div>
+        <div class="card-detail">
+          <div class="detail-title">Co brakuje</div>
+          <div class="detail-body">
+            <p>Sebol sugeruje eksperymenty ale nie śledzi ich wyników. Żeby self-learning działało naprawdę: przy każdej sugestii eksperymentu zapisz (co, kiedy, hypothesis), po 7 dniach auto-sprawdź wynik vs baseline, zapisz wniosek do memory.</p>
+            <p><span class="tag tag-todo">TODO: experiment_tracker.py w /tools</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-gap"></div>
+          <div class="card-name">Web dashboard</div>
+          <span class="badge b-gap">brak</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Brak UI poza Slackiem</div>
+        <div class="card-detail">
+          <div class="detail-title">Co brakuje</div>
+          <div class="detail-body">
+            <p>Żeby pokazać Sebola klientowi lub nowej agencji — potrzebne jest UI poza Slackiem. Status page (ta strona!) to pierwszy krok. Następnie: historia akcji, statusy kont, koszty tokenów.</p>
+            <p><span class="tag tag-todo">TODO: FastAPI route /status + /metrics</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-nice"></div>
+          <div class="card-name">Creative performance analysis</div>
+          <span class="badge b-nice">planowane</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Która kreacja działa i dlaczego</div>
+        <div class="card-detail">
+          <div class="detail-title">Plan</div>
+          <div class="detail-body">
+            <p>Analiza performance kreacji reklamowych (obrazy, video, copy). Claude Vision do analizy co jest na kreacji + korelacja z wynikami. Pozwoli Sebolowi rekomendować styl kreacji per klient.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-nice"></div>
+          <div class="card-name">Audience insights</div>
+          <span class="badge b-nice">planowane</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">Segmentacja, lookalike, rekomendacje</div>
+        <div class="card-detail">
+          <div class="detail-title">Plan</div>
+          <div class="detail-body">
+            <p>Analiza audience'ów Meta: które grupy konwertują, sugestie lookalike, wykrywanie audience overlap. Wymaga dojrzałości danych — minimum 3 miesiące historii.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" onclick="toggle(this)">
+        <div class="card-head">
+          <div class="status-dot s-nice"></div>
+          <div class="card-name">Proactive client reports</div>
+          <span class="badge b-nice">planowane</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="card-sub">PDF/Slides raport na żądanie lub auto</div>
+        <div class="card-detail">
+          <div class="detail-title">Plan</div>
+          <div class="detail-body">
+            <p>Google Slides API już jest (<code>tools/google_slides.py</code>). Brakuje szablonu raportu klientowego + komendy <code>/raport klient_nazwa</code> która generuje i wysyła link do Slides.</p>
+            <p>Dobry raport = executive summary + wykresy + co działa + plan na kolejny okres.</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<footer class="footer">
+  <span>sebol · pato agencja · github.com/patoagencja/slack-bot</span>
+  <span id="footer-time">—</span>
+</footer>
+
+<script>
+function toggle(card) {
+  const detail = card.querySelector('.card-detail');
+  const isOpen = detail.classList.toggle('open');
+  card.classList.toggle('open', isOpen);
+}
+
+function setTime() {
+  const now = new Date();
+  const str = now.toLocaleString('pl-PL', {
+    timeZone: 'Europe/Warsaw',
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit'
+  });
+  document.getElementById('updated-time').textContent = 'stan na ' + str;
+  document.getElementById('footer-time').textContent = str + ' (Warsaw)';
+}
+setTime();
+</script>
 </body>
 </html>
