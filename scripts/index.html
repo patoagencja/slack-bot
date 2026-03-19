@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sebol — AI Agent by Pato Agencja</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    /* brand palette z logo */
+    --brand-blue:   #3A3ADE;
+    --brand-blue-d: #2828B5;
+    --brand-pink:   #D4789A;
+    --brand-pink-l: #E896B4;
+
+    --bg:    #0e0e2a;       /* głęboki granat */
+    --bg2:   #14143a;
+    --text:  #f0f0f8;
+    --muted: #7070a0;
+    --faint: #2a2a50;
+
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+    --round: 'Nunito', sans-serif;
+  }
+
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── ambient glows ── */
+  .glow {
+    position: fixed; border-radius: 50%;
+    filter: blur(140px); pointer-events: none; z-index: 0;
+    animation: float 9s ease-in-out infinite;
+  }
+  .glow-1 { width: 700px; height: 700px; top: -250px; left: -200px;
+    background: radial-gradient(circle, rgba(58,58,222,0.25) 0%, transparent 70%); }
+  .glow-2 { width: 550px; height: 550px; bottom: -180px; right: -150px;
+    background: radial-gradient(circle, rgba(212,120,154,0.18) 0%, transparent 70%);
+    animation-delay: -4.5s; }
+  .glow-3 { width: 300px; height: 300px; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    background: radial-gradient(circle, rgba(58,58,222,0.10) 0%, transparent 70%);
+    animation-delay: -2s; }
+  @keyframes float { 0%,100%{ transform:translateY(0) } 50%{ transform:translateY(-28px) } }
+
+  /* ── content ── */
+  .center {
+    position: relative; z-index: 1;
+    text-align: center;
+    padding: 48px 24px 60px;
+    display: flex; flex-direction: column; align-items: center;
+  }
+
+  /* ── logo ── */
+  .logo-wrap {
+    margin-bottom: 36px;
+    animation: fadeUp .7s ease both;
+  }
+  /* Zamień img[src] na ścieżkę do pliku gdy wrzucisz logo */
+  .logo-img {
+    height: 52px;
+    display: block;
+  }
+  /* CSS fallback — widoczny gdy brak pliku logo */
+  .logo-css {
+    display: inline-flex; align-items: center; gap: 0;
+    background: var(--brand-blue);
+    padding: 10px 22px 11px;
+    border-radius: 12px;
+  }
+  .logo-css span {
+    font-family: var(--round);
+    font-weight: 900;
+    font-size: 26px;
+    color: var(--brand-pink);
+    letter-spacing: -0.02em;
+  }
+
+  /* ── sebol wordmark ── */
+  .wordmark {
+    font-family: var(--mono);
+    font-size: clamp(68px, 17vw, 172px);
+    font-weight: 600;
+    letter-spacing: -0.04em;
+    line-height: 0.88;
+    background: linear-gradient(140deg, #ffffff 0%, var(--brand-pink-l) 50%, var(--brand-pink) 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 18px;
+    animation: fadeUp .7s .1s ease both;
+  }
+
+  .by-line {
+    font-family: var(--mono);
+    font-size: clamp(10px, 2vw, 13px);
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 60px;
+    animation: fadeUp .7s .2s ease both;
+  }
+
+  /* ── nav cards ── */
+  .nav-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 10px;
+    width: 100%;
+    max-width: 660px;
+    animation: fadeUp .7s .32s ease both;
+  }
+
+  .nav-card {
+    display: flex; flex-direction: column; gap: 5px;
+    padding: 20px 22px 18px;
+    background: rgba(58,58,222,0.08);
+    border: 1px solid rgba(58,58,222,0.2);
+    border-radius: 14px;
+    text-decoration: none;
+    color: var(--text);
+    transition: background .2s, border-color .2s, transform .18s;
+    text-align: left;
+    position: relative; overflow: hidden;
+  }
+  .nav-card::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(135deg, rgba(212,120,154,0.06) 0%, transparent 60%);
+    opacity: 0; transition: opacity .2s;
+  }
+  .nav-card:hover { background: rgba(58,58,222,0.16); border-color: rgba(212,120,154,0.4); transform: translateY(-3px); }
+  .nav-card:hover::before { opacity: 1; }
+
+  .nav-icon  { font-size: 24px; margin-bottom: 6px; }
+  .nav-title { font-family: var(--mono); font-size: 14px; font-weight: 500; color: #fff; }
+  .nav-desc  { font-size: 12px; color: var(--muted); line-height: 1.55; }
+  .nav-arrow {
+    font-size: 11px; color: var(--brand-pink);
+    margin-top: auto; padding-top: 12px;
+    font-family: var(--mono); letter-spacing: .04em;
+  }
+
+  /* ── pulse badge ── */
+  .live {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-family: var(--mono); font-size: 11px;
+    color: #6ee7b7;
+    background: rgba(52,211,153,0.08);
+    border: 1px solid rgba(52,211,153,0.2);
+    padding: 5px 12px; border-radius: 20px;
+    margin-bottom: 36px;
+    animation: fadeUp .7s .25s ease both;
+  }
+  .live-dot { width: 6px; height: 6px; border-radius: 50%; background: #34d399; animation: blink 2s ease-in-out infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.35} }
+
+  /* ── footer ── */
+  .foot {
+    position: fixed; bottom: 20px;
+    font-family: var(--mono); font-size: 10px;
+    color: var(--faint); letter-spacing: .08em;
+    z-index: 1;
+    animation: fadeUp .7s .5s ease both;
+  }
+
+  @keyframes fadeUp { from { opacity:0; transform:translateY(18px) } to { opacity:1; transform:translateY(0) } }
+
+  @media (max-width: 480px) {
+    .nav-grid { grid-template-columns: 1fr; }
+    .wordmark { margin-bottom: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="glow glow-1"></div>
+<div class="glow glow-2"></div>
+<div class="glow glow-3"></div>
+
+<div class="center">
+
+  <!-- LOGO: zmień src na ścieżkę do pliku gdy wrzucisz obraz -->
+  <div class="logo-wrap">
+    <img class="logo-img" src="assets/logo.png"
+         onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';"
+         alt="pato agencja">
+    <div class="logo-css" style="display:none">
+      <span>patoagencja</span>
+    </div>
+  </div>
+
+  <div class="wordmark">sebol</div>
+  <div class="by-line">AI agent · performance marketing</div>
+
+  <div class="live"><div class="live-dot"></div>live on render.com</div>
+
+  <div class="nav-grid">
+    <a class="nav-card" href="showcase.html">
+      <div class="nav-icon">⚡</div>
+      <div class="nav-title">Co potrafi?</div>
+      <div class="nav-desc">Prezentacja możliwości — dla klienta lub nowego pracownika</div>
+      <div class="nav-arrow">showcase →</div>
+    </a>
+    <a class="nav-card" href="status.html">
+      <div class="nav-icon">📡</div>
+      <div class="nav-title">Status systemu</div>
+      <div class="nav-desc">Co działa, co w planach, pełna roadmapa agencji</div>
+      <div class="nav-arrow">status →</div>
+    </a>
+  </div>
+
+</div>
+
+<div class="foot">github.com/patoagencja/slack-bot</div>
+
+</body>
+</html>
