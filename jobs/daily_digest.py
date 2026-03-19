@@ -493,24 +493,34 @@ def generate_weekly_learnings(client="dre"):
     summary  = patterns.get("summary", {})
     text = "🧠 **WEEKLY LEARNINGS – Co nauczyłem się w tym tygodniu:**\n\n"
 
-    # ── Campaign stats: last 7 days + current month ────────────────────────────
-    if active_campaigns:
-        text += f"📊 **Kampanie (min. 10 kliknięć w ost. 7 dni):**\n"
-        for name, week_entries in sorted(active_campaigns.items()):
-            month_entries = [
-                e for e in all_hist_month.get(name, [])
-                if e.get("date", "") >= month_cutoff
-            ]
-            w_spend, w_clicks, w_ctr = _aggregate_campaign_stats(week_entries)
-            m_spend, m_clicks, m_ctr = _aggregate_campaign_stats(month_entries)
-            short = name[:40] + "…" if len(name) > 40 else name
-            text += (
-                f"• **{short}**\n"
-                f"   7 dni:  💰 {w_spend:.0f} PLN | 👆 {w_clicks} kliknięć | 📈 CTR {w_ctr:.2f}%\n"
-                f"   Miesiąc: 💰 {m_spend:.0f} PLN | 👆 {m_clicks} kliknięć | 📈 CTR {m_ctr:.2f}%\n"
-            )
-        text += "\n"
-    else:
+    # ── Platform stats: last 7 days + current month ───────────────────────────
+    for platform, icon in [("meta", "🔵 META ADS"), ("google", "🔴 GOOGLE ADS")]:
+        # week entries for this platform, only from active campaigns
+        week_entries_all = [
+            e
+            for name, entries in active_campaigns.items()
+            for e in entries
+            if (e.get("platform") or "meta").startswith(platform)
+        ]
+        month_entries_all = [
+            e
+            for name, entries in all_hist_month.items()
+            if sum(int(x.get("clicks") or 0) for x in all_hist_week.get(name, [])) >= 10
+            for e in entries
+            if (e.get("platform") or "meta").startswith(platform)
+               and e.get("date", "") >= month_cutoff
+        ]
+        if not week_entries_all and not month_entries_all:
+            continue
+        w_spend, w_clicks, w_ctr = _aggregate_campaign_stats(week_entries_all)
+        m_spend, m_clicks, m_ctr = _aggregate_campaign_stats(month_entries_all)
+        text += (
+            f"📊 **{icon}**\n"
+            f"   7 dni:   💰 {w_spend:.0f} PLN | 👆 {w_clicks} kliknięć | 📈 CTR {w_ctr:.2f}%\n"
+            f"   Miesiąc: 💰 {m_spend:.0f} PLN | 👆 {m_clicks} kliknięć | 📈 CTR {m_ctr:.2f}%\n\n"
+        )
+
+    if not active_campaigns:
         text += "ℹ️ Brak kampanii z ≥10 kliknięciami w ostatnim tygodniu.\n\n"
 
     # ── Prediction verification ────────────────────────────────────────────────
