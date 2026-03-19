@@ -92,6 +92,54 @@ def mark_alert_sent(alert_key):
     sent_alerts[alert_key] = datetime.now()
 
 
+def mute_campaign_alert(platform: str, client_name: str, campaign_name: str, hours: int = 24) -> dict:
+    """Wycisza alerty budżetowe dla kampanii na podaną liczbę godzin."""
+    from datetime import timedelta
+    key = f"{platform.lower()}_{client_name.lower()}_{campaign_name.lower()}"
+    expiry = datetime.now() + timedelta(hours=hours)
+    _ctx.muted_alerts[key] = expiry.isoformat()
+    _ctx.save_muted_alerts()
+    logger.info(f"Muted budget alerts for '{campaign_name}' ({platform}/{client_name}) until {expiry}")
+    return {
+        "status": "muted",
+        "campaign": campaign_name,
+        "platform": platform,
+        "client": client_name,
+        "until": expiry.strftime("%H:%M %d.%m.%Y"),
+        "hours": hours,
+    }
+
+
+def is_muted(platform: str, client_name: str, campaign_name: str) -> bool:
+    """Sprawdza czy alerty dla kampanii są wyciszone. Obsługuje częściowe dopasowanie nazwy."""
+    prefix = f"{platform.lower()}_{client_name.lower()}_"
+    cam_lower = campaign_name.lower()
+    now = datetime.now()
+    expired_keys = []
+
+    for key, expiry_str in list(_ctx.muted_alerts.items()):
+        if not key.startswith(prefix):
+            continue
+        muted_cam = key[len(prefix):]
+        # partial match — either direction
+        if muted_cam not in cam_lower and cam_lower not in muted_cam:
+            continue
+        try:
+            expiry = datetime.fromisoformat(expiry_str)
+            if now < expiry:
+                return True
+            else:
+                expired_keys.append(key)
+        except Exception:
+            pass
+
+    for k in expired_keys:
+        del _ctx.muted_alerts[k]
+    if expired_keys:
+        _ctx.save_muted_alerts()
+    return False
+
+
 def _get_meta_campaign_budgets(account_id: str) -> dict:
     """Pobiera daily_budget aktywnych kampanii z Graph API. Zwraca {campaign_name: daily_budget_PLN}."""
     token = os.environ.get("META_ACCESS_TOKEN", "")
@@ -154,6 +202,9 @@ def check_budget_alerts():
                     campaign_name = campaign.get("campaign_name", "Unknown")
                     daily_budget = budgets.get(campaign_name)
                     if spend < 10 or not daily_budget or daily_budget <= 0:
+                        continue
+                    if is_muted("meta", client_name, campaign_name):
+                        logger.debug(f"Alert muted for '{campaign_name}' ({client_name}/meta) — skipping")
                         continue
                     pace = (spend / daily_budget) / max(day_progress, 0.01)
                     base_key = f"meta_{client_name}_{campaign_name}_{today}"
