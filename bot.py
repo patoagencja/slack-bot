@@ -3486,4 +3486,9 @@ if _err_channel:
 
 handler = SocketModeHandler(app, os.environ.get("SLACK_APP_TOKEN"))
 print("⚡️ Bot działa!")
+
+# ── HTTP status server (aiohttp, port STATUS_PORT/8080) ───────────────────────
+from scripts.status_server import start_status_server_thread
+start_status_server_thread()
+
 handler.start()

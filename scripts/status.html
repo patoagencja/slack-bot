@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sebolek — Status</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f0f0f;
+      color: #e0e0e0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+    .card {
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 16px;
+      padding: 3rem 4rem;
+      max-width: 520px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.4);
+    }
+    .pulse {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #22c55e;
+      margin-right: 8px;
+      position: relative;
+      vertical-align: middle;
+    }
+    .pulse::after {
+      content: '';
+      position: absolute;
+      inset: -4px;
+      border-radius: 50%;
+      border: 2px solid #22c55e;
+      opacity: 0.5;
+      animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
+    }
+    @keyframes ping {
+      75%, 100% { transform: scale(2); opacity: 0; }
+    }
+    .status-line {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #22c55e;
+      margin-bottom: 2rem;
+    }
+    h1 {
+      font-size: 2.4rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+      letter-spacing: -0.5px;
+    }
+    .subtitle {
+      color: #888;
+      font-size: 0.95rem;
+      margin-bottom: 2.5rem;
+    }
+    .divider {
+      border: none;
+      border-top: 1px solid #2a2a2a;
+      margin: 2rem 0;
+    }
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.5rem 0;
+      font-size: 0.9rem;
+      color: #aaa;
+    }
+    .info-row span:last-child {
+      color: #e0e0e0;
+      font-weight: 500;
+    }
+    .footer {
+      margin-top: 2.5rem;
+      font-size: 0.75rem;
+      color: #555;
+    }
+    .emoji { font-size: 2rem; margin-bottom: 1rem; display: block; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <span class="emoji">🤖</span>
+    <div class="status-line">
+      <span class="pulse"></span> Operational
+    </div>
+    <h1>Sebolek</h1>
+    <p class="subtitle">Slack Bot — Agencja Reklamowa</p>
+    <hr class="divider" />
+    <div class="info-row">
+      <span>Status</span>
+      <span>✅ Running</span>
+    </div>
+    <div class="info-row">
+      <span>Platform</span>
+      <span>Slack Socket Mode</span>
+    </div>
+    <div class="info-row">
+      <span>Deploy</span>
+      <span>Render.com</span>
+    </div>
+    <div class="info-row">
+      <span>Stack</span>
+      <span>Slack Bolt + Claude API</span>
+    </div>
+    <hr class="divider" />
+    <p class="footer">Ten endpoint służy tylko do health-checku Render.com.</p>
+  </div>
+</body>
+</html>
