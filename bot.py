@@ -64,6 +64,7 @@ from tools.icloud_calendar import icloud_calendar_tool
 from tools.google_slides import create_presentation
 from tools.memory import init_memory, remember, recall_as_context, get_history
 from tools.reminders import init_reminders, schedule_reminder, list_reminders
+from tools.token_log import init_token_log, TrackedAnthropicClient
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -102,10 +103,12 @@ class _SlackErrorHandler(logging.Handler):
 
 # ── initialization ────────────────────────────────────────────────────────────
 _ctx.app    = App(token=os.environ.get("SLACK_BOT_TOKEN"))
-_ctx.claude = Anthropic(api_key=os.environ.get("CLAUDE_API_KEY"))
+_ctx.claude = TrackedAnthropicClient(Anthropic(api_key=os.environ.get("CLAUDE_API_KEY")))
 init_memory()
+init_token_log()
 init_reminders()
-_ctx.load_wizard_state()  # Restore wizard sessions that survived restart
+_ctx.load_wizard_state()   # Restore wizard sessions that survived restart
+_ctx.load_muted_alerts()  # Restore muted budget alert rules that survived restart
 
 # Odtwórz nieobecności z historii Slacka po restarcie (Render usuwa pliki)
 try:
@@ -779,6 +782,24 @@ Pytanie → Direct answer → Context → Actionable next step
                 "required": ["title"]
             }
         },
+        {
+            "name": "mute_budget_alert",
+            "description": (
+                "Wycisza alerty budżetowe dla konkretnej kampanii na podaną liczbę godzin. "
+                "ZAWSZE wywołaj to narzędzie gdy mówisz że wyłączasz/wyciszasz/ignorujesz alerty dla kampanii. "
+                "Użyj gdy użytkownik prosi o wyłączenie alertów, lub gdy alerty wynikają z planowanych zmian budżetu."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "platform":      {"type": "string", "enum": ["meta", "google"], "description": "Platforma: 'meta' lub 'google'."},
+                    "client_name":   {"type": "string", "description": "Nazwa klienta, np. 'drzwi dre', 'instax'."},
+                    "campaign_name": {"type": "string", "description": "Nazwa kampanii (lub jej fragment) do wyciszenia."},
+                    "hours":         {"type": "integer", "description": "Na ile godzin wyciszyć alerty (domyślnie 24)."},
+                },
+                "required": ["platform", "client_name", "campaign_name"]
+            }
+        },
     ]
 
     try:
@@ -927,6 +948,14 @@ Pytanie → Direct answer → Context → Actionable next step
                             description=tool_input.get('description'),
                             calendar_name=tool_input.get('calendar_name'),
                         )
+                elif tool_name == "mute_budget_alert":
+                    from jobs.budget_alerts import mute_campaign_alert
+                    tool_result = mute_campaign_alert(
+                        platform=tool_input.get('platform', 'meta'),
+                        client_name=tool_input.get('client_name', ''),
+                        campaign_name=tool_input.get('campaign_name', ''),
+                        hours=tool_input.get('hours', 24),
+                    )
                 else:
                     tool_result = {"error": "Nieznane narzędzie"}
 
