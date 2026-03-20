@@ -1,5 +1,6 @@
 """Budget alerts + weekly summary formatting."""
 import os
+import json
 import logging
 import requests
 import pytz
@@ -13,8 +14,38 @@ from jobs.performance_analysis import analyze_campaign_trends
 
 logger = logging.getLogger(__name__)
 
-# Cooldown tracking: {alert_key: datetime}
-sent_alerts = {}
+_ALERTS_FILE = os.path.join(os.path.dirname(__file__), '..', 'data', 'sent_alerts.json')
+
+# Cooldown tracking: {alert_key: ISO datetime string} — persisted to disk
+sent_alerts: dict = {}
+
+
+def _load_sent_alerts():
+    """Load sent_alerts from disk (called once at startup)."""
+    global sent_alerts
+    try:
+        with open(_ALERTS_FILE) as f:
+            raw = json.load(f)
+        sent_alerts = {k: datetime.fromisoformat(v) for k, v in raw.items()}
+    except FileNotFoundError:
+        sent_alerts = {}
+    except Exception as e:
+        logger.warning(f"_load_sent_alerts error: {e}")
+        sent_alerts = {}
+
+
+def _save_sent_alerts():
+    """Persist sent_alerts to disk."""
+    try:
+        os.makedirs(os.path.dirname(_ALERTS_FILE), exist_ok=True)
+        with open(_ALERTS_FILE, 'w') as f:
+            json.dump({k: v.isoformat() for k, v in sent_alerts.items()}, f)
+    except Exception as e:
+        logger.warning(f"_save_sent_alerts error: {e}")
+
+
+# Load on import
+_load_sent_alerts()
 
 
 def format_budget_alert(alert):
@@ -90,6 +121,7 @@ def should_send_alert(alert_key, cooldown_hours=4):
 
 def mark_alert_sent(alert_key):
     sent_alerts[alert_key] = datetime.now()
+    _save_sent_alerts()
 
 
 def _get_meta_campaign_budgets(account_id: str) -> dict:
