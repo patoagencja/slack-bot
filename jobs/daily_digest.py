@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timedelta
 
 import _ctx
-from config.constants import CLIENT_GOALS, _DIGEST_INTERVAL_DAYS
+from config.constants import CLIENT_GOALS, _DIGEST_INTERVAL_DAYS, AD_CLIENTS
 from tools.meta_ads import meta_ads_tool
 from tools.google_ads import google_ads_tool
 from jobs.performance_analysis import (
@@ -259,7 +259,12 @@ def _build_main_message(date_label, total_spend, total_reach, avg_ctr,
     # GOOGLE section
     if google_error:
         lines += [
-            f"🔴 *GOOGLE ADS* — ⚠️ _Brak danych (błąd API Google — spróbuj później)_",
+            f"🔴 *GOOGLE ADS* — ⚠️ _Błąd API Google — spróbuj później_",
+            "",
+        ]
+    elif google_count == 0:
+        lines += [
+            f"🔴 *GOOGLE ADS* — ⚠️ _Brak danych (brak kampanii z wydatkiem ≥20 PLN lub błąd API)_",
             "",
         ]
     elif google_count > 0:
@@ -516,7 +521,7 @@ def _fetch_weekly_learnings_data():
         except Exception as e:
             logger.warning(f"weekly_learnings meta {label}: {e}")
 
-        for account in ["dre", "dre 2024", "dre 2025"]:
+        for account in AD_CLIENTS.get("dre", {}).get("google_accounts", ["dre", "dre 2024", "dre 2025"]):
             try:
                 gd = google_ads_tool(
                     client_name=account,
@@ -703,7 +708,7 @@ def generate_daily_digest_dre():
         # === GOOGLE ADS (ostatnie 7 dni) ===
         google_data_combined = []
         google_fetch_errors = 0
-        for account in ["dre", "dre 2024", "dre 2025"]:
+        for account in AD_CLIENTS.get("dre", {}).get("google_accounts", ["dre", "dre 2024", "dre 2025"]):
             data = google_ads_tool(
                 client_name=account,
                 date_from=week_ago, date_to=yesterday,
@@ -722,7 +727,7 @@ def generate_daily_digest_dre():
         # === GOOGLE ADS (od początku miesiąca) ===
         google_mtd_combined = []
         if month_start < week_ago:
-            for account in ["dre", "dre 2024", "dre 2025"]:
+            for account in AD_CLIENTS.get("dre", {}).get("google_accounts", ["dre", "dre 2024", "dre 2025"]):
                 data = google_ads_tool(
                     client_name=account,
                     date_from=month_start, date_to=yesterday,
