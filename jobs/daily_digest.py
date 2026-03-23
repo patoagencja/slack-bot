@@ -224,38 +224,45 @@ def _build_main_message(date_label, total_spend, total_reach, avg_ctr,
                          meta_count=0, google_count=0,
                          meta_spend=0, meta_reach=0, meta_ctr=0, meta_conversions=0,
                          google_spend=0, google_ctr=0, google_conversions=0,
-                         meta_error=False,
+                         meta_error=False, google_error=False,
                          # month-to-date totals
                          mtd_meta_spend=None, mtd_google_spend=None,
                          mtd_meta_conversions=None, mtd_google_conversions=None):
     """Buduje krótką wiadomość główną (widoczna na kanale)."""
     skipped_note = f" _(+{skipped_count} poniżej 20 PLN pominięto)_" if skipped_count > 0 else ""
-    both = meta_count > 0 and google_count > 0
+    show_both = meta_count > 0 or google_count > 0 or meta_error or google_error
 
     lines = [
-        f"📊 *META + GOOGLE ADS – DRE | {date_label}*{skipped_note}" if (both or meta_error)
-        else f"📊 *{'META ADS' if meta_count > 0 else 'GOOGLE ADS'} – DRE | {date_label}*{skipped_note}",
+        f"📊 *META + GOOGLE ADS – DRE | {date_label}*{skipped_note}",
         "",
     ]
 
-    if both or meta_error:
-        if meta_error:
-            lines += [
-                f"🔵 *META ADS* — ⚠️ _Brak danych (błąd API Meta — spróbuj później)_",
-                "",
-            ]
-        else:
-            meta_mtd = ""
-            if mtd_meta_spend is not None:
-                meta_mtd = f" _(miesiąc: {mtd_meta_spend:.0f} PLN"
-                if mtd_meta_conversions is not None:
-                    meta_mtd += f" | {mtd_meta_conversions} konwersji"
-                meta_mtd += ")_"
-            lines += [
-                f"🔵 *META ADS* — {meta_count} kampanii",
-                f"   💰 Spend 7d: *{meta_spend:.0f} PLN*{meta_mtd} | 👥 Reach: *{meta_reach:,}* | 📈 CTR: *{meta_ctr:.2f}%* | 🎯 Konwersje: *{meta_conversions}*",
-                "",
-            ]
+    # META section
+    if meta_error:
+        lines += [
+            f"🔵 *META ADS* — ⚠️ _Brak danych (błąd API Meta — spróbuj później)_",
+            "",
+        ]
+    elif meta_count > 0:
+        meta_mtd = ""
+        if mtd_meta_spend is not None:
+            meta_mtd = f" _(miesiąc: {mtd_meta_spend:.0f} PLN"
+            if mtd_meta_conversions is not None:
+                meta_mtd += f" | {mtd_meta_conversions} konwersji"
+            meta_mtd += ")_"
+        lines += [
+            f"🔵 *META ADS* — {meta_count} kampanii",
+            f"   💰 Spend 7d: *{meta_spend:.0f} PLN*{meta_mtd} | 👥 Reach: *{meta_reach:,}* | 📈 CTR: *{meta_ctr:.2f}%* | 🎯 Konwersje: *{meta_conversions}*",
+            "",
+        ]
+
+    # GOOGLE section
+    if google_error:
+        lines += [
+            f"🔴 *GOOGLE ADS* — ⚠️ _Brak danych (błąd API Google — spróbuj później)_",
+            "",
+        ]
+    elif google_count > 0:
         google_mtd = ""
         if mtd_google_spend is not None:
             google_mtd = f" _(miesiąc: {mtd_google_spend:.0f} PLN"
@@ -266,34 +273,23 @@ def _build_main_message(date_label, total_spend, total_reach, avg_ctr,
             f"🔴 *GOOGLE ADS* — {google_count} kampanii",
             f"   💰 Spend 7d: *{google_spend:.0f} PLN*{google_mtd} | 📈 Avg CTR: *{google_ctr:.2f}%* | 🎯 Konwersje: *{google_conversions}*",
             "",
-            f"📣 Łącznie aktywnych kampanii: *{campaign_count}*",
-        ]
-    else:
-        lines += [
-            f"💰 Spend: *{total_spend:.0f} PLN*",
-            f"👥 Reach: *{total_reach:,}*",
-            f"📈 Avg CTR: *{avg_ctr:.2f}%*",
-            f"🎯 Konwersje: *{total_conversions}*",
-            f"📣 Kampanie aktywne: *{campaign_count}*",
         ]
 
-    # Alerty pogrupowane per platforma
+    lines.append(f"📣 Łącznie aktywnych kampanii: *{campaign_count}*")
+
+    # Alerty
     meta_alerts   = [a for a in obj_alerts if '(Google)' not in a['campaign']]
     google_alerts = [a for a in obj_alerts if '(Google)' in a['campaign']]
 
     if obj_alerts:
         lines.append("")
         lines.append("⚠️ *ALERTY*")
-        if (both or meta_error) and meta_alerts:
-            lines.append("_Meta:_")
+        if meta_alerts:
             for alert in meta_alerts:
                 lines.append(f"• *{alert['campaign']}* — {alert['message']}")
-        if (both or meta_error) and google_alerts:
+        if google_alerts:
             lines.append("_Google:_")
             for alert in google_alerts:
-                lines.append(f"• *{alert['campaign']}* — {alert['message']}")
-        if not (both or meta_error):
-            for alert in obj_alerts:
                 lines.append(f"• *{alert['campaign']}* — {alert['message']}")
     else:
         lines.append("")
@@ -706,6 +702,7 @@ def generate_daily_digest_dre():
 
         # === GOOGLE ADS (ostatnie 7 dni) ===
         google_data_combined = []
+        google_fetch_errors = 0
         for account in ["dre", "dre 2024", "dre 2025"]:
             data = google_ads_tool(
                 client_name=account,
@@ -715,8 +712,12 @@ def generate_daily_digest_dre():
                          "metrics.cost_micros", "metrics.conversions", "metrics.ctr",
                          "metrics.average_cpc"]
             )
-            if data.get("data"):
+            if data.get("error"):
+                google_fetch_errors += 1
+            elif data.get("data"):
                 google_data_combined.extend(data["data"])
+        # Google error tylko gdy WSZYSTKIE konta zwróciły błąd i nie ma żadnych danych
+        google_error = google_fetch_errors == 3 and not google_data_combined
 
         # === GOOGLE ADS (od początku miesiąca) ===
         google_mtd_combined = []
@@ -734,8 +735,8 @@ def generate_daily_digest_dre():
         meta_campaigns_raw  = meta_data.get("data", [])
         all_campaigns_raw   = meta_campaigns_raw + google_data_combined
 
-        error_main = f"📊 *META ADS – DRE | {date_label}*\n\n⚠️ Brak danych za ostatnie 7 dni. Sprawdź czy kampanie są aktywne."
-        if not all_campaigns_raw:
+        if not all_campaigns_raw and not meta_error and not google_error:
+            error_main = f"📊 *META + GOOGLE ADS – DRE | {date_label}*\n\n⚠️ Brak danych za ostatnie 7 dni. Sprawdź czy kampanie są aktywne."
             return error_main, None
 
         MIN_SPEND_PLN = 20.0
@@ -821,7 +822,15 @@ def generate_daily_digest_dre():
         google_ctrs        = [float(c.get("ctr", 0) or 0) for c in google_data_combined if float(c.get("ctr", 0) or 0) > 0]
         google_ctr         = sum(google_ctrs) / len(google_ctrs) if google_ctrs else 0.0
 
-        obj_alerts = _build_objective_alerts(meta_campaigns, google_data_combined)
+        obj_alerts_raw = _build_objective_alerts(meta_campaigns, google_data_combined)
+        # Deduplicate alerts by (campaign, message)
+        seen_alerts = set()
+        obj_alerts = []
+        for a in obj_alerts_raw:
+            key = (a['campaign'], a['message'])
+            if key not in seen_alerts:
+                seen_alerts.add(key)
+                obj_alerts.append(a)
 
         # ── Eksperymenty + smart recs (dla threadu) ───────────────────────────
         experiments = []
@@ -864,6 +873,7 @@ def generate_daily_digest_dre():
             google_ctr=google_ctr,
             google_conversions=google_conversions,
             meta_error=meta_error,
+            google_error=google_error,
             mtd_meta_spend=mtd_meta_spend,
             mtd_meta_conversions=mtd_meta_conversions,
             mtd_google_spend=mtd_google_spend,

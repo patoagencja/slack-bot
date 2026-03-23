@@ -66,7 +66,7 @@ def parse_relative_date(date_string):
 
 def meta_ads_tool(date_from=None, date_to=None, level="campaign", campaign_name=None,
                   adset_name=None, ad_name=None, metrics=None, breakdown=None,
-                  limit=None, client_name=None):
+                  limit=None, client_name=None, time_increment=None):
     """Pobiera dane z Meta Ads API na różnych poziomach dla różnych klientów."""
     # Wspieramy oba env vary: META_AD_ACCOUNTS i META_AD_ACCOUNT_ID (fallback)
     accounts_json = os.environ.get("META_AD_ACCOUNTS") or os.environ.get("META_AD_ACCOUNT_ID", "{}")
@@ -131,8 +131,9 @@ def meta_ads_tool(date_from=None, date_to=None, level="campaign", campaign_name=
             'time_range': {'since': date_from, 'until': date_to},
             'level': level,
             'fields': metrics,
-            'time_increment': 1,
         }
+        if time_increment is not None:
+            params['time_increment'] = time_increment
         if breakdown:
             params['breakdowns'] = [breakdown] if isinstance(breakdown, str) else breakdown
         if limit:
