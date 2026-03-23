@@ -45,7 +45,7 @@ Zwróć odpowiedź jako JSON (bez żadnego tekstu przed ani po):
 # ── Published-news store ────────────────────────────────────────────────────────
 
 def _load_published() -> list[dict]:
-    """Zwraca listę {url, date} z ostatnich 30 dni."""
+    """Zwraca listę {headline, platform, date} z ostatnich 30 dni."""
     if not os.path.exists(PUBLISHED_NEWS_FILE):
         return []
     try:
@@ -66,13 +66,18 @@ def _save_published(entries: list[dict]) -> None:
         logger.error(f"Błąd zapisu published_news: {e}")
 
 
-def _record_urls(urls: list[str]) -> None:
+def _record_points(points: list[dict]) -> None:
+    """Zapisuje nagłówki + platformę opublikowanych newsów."""
     entries = _load_published()
     today = datetime.now().strftime('%Y-%m-%d')
-    existing = {e["url"] for e in entries}
-    for url in urls:
-        if url and url not in existing:
-            entries.append({"url": url, "date": today})
+    for p in points:
+        headline = p.get("headline", "").strip()
+        if headline:
+            entries.append({
+                "headline": headline,
+                "platform": p.get("platform", ""),
+                "date": today,
+            })
     _save_published(entries)
 
 
@@ -129,11 +134,16 @@ def generate_industry_news_digest() -> tuple[str, list[dict]]:
 
     published = _load_published()
     if published:
-        url_list = "\n".join(f"• {e['url']}" for e in published)
+        topics_list = "\n".join(
+            f"• [{e.get('platform', '')}] {e.get('headline', '')}"
+            for e in published
+            if e.get("headline")
+        )
         exclusion_block = (
-            f"\nNIE UŻYWAJ następujących źródeł/artykułów — były już opublikowane:\n"
-            f"{url_list}\n"
-            f"Znajdź wyłącznie nowe artykuły, których nie ma na powyższej liście.\n"
+            f"\nPONIŻSZE TEMATY zostały już opublikowane w poprzednich tygodniach — "
+            f"NIE powtarzaj ich ani podobnych zagadnień:\n"
+            f"{topics_list}\n"
+            f"Znajdź wyłącznie nowe tematy, których nie ma na powyższej liście.\n"
         )
     else:
         exclusion_block = ""
@@ -154,7 +164,7 @@ def generate_industry_news_digest() -> tuple[str, list[dict]]:
         logger.warning("Brak punktów w odpowiedzi — fallback do surowego tekstu")
         return raw + f"\n\n_Wygenerowano przez Sebol • {now.strftime('%d.%m.%Y %H:%M')}_", []
 
-    _record_urls([p.get("url", "") for p in points])
+    _record_points(points)
 
     # Główna wiadomość — same nagłówki
     lines = [f"📰 *Nowości branżowe — {now.strftime('%d.%m.%Y')}*\n"]

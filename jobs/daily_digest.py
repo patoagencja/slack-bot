@@ -492,60 +492,115 @@ def _aggregate_campaign_stats(entries):
     return total_spend, total_clicks, avg_ctr
 
 
+def _fetch_weekly_learnings_data():
+    """Pobiera dane Meta + Google dla ostatnich 7 dni i bieżącego miesiąca."""
+    from tools.meta_ads import meta_ads_tool
+    from tools.google_ads import google_ads_tool
+
+    now = datetime.now()
+    yesterday   = (now - timedelta(days=1)).strftime('%Y-%m-%d')
+    week_ago    = (now - timedelta(days=7)).strftime('%Y-%m-%d')
+    month_start = now.replace(day=1).strftime('%Y-%m-%d')
+
+    results = {}
+
+    for label, date_from, date_to in [
+        ("week",  week_ago,    yesterday),
+        ("month", month_start, yesterday),
+    ]:
+        meta_raw, google_raw = [], []
+        try:
+            md = meta_ads_tool(
+                client_name="drzwi dre",
+                date_from=date_from, date_to=date_to,
+                level="campaign",
+                metrics=["campaign_name", "spend", "impressions", "clicks", "ctr", "conversions"],
+            )
+            meta_raw = md.get("data", [])
+        except Exception as e:
+            logger.warning(f"weekly_learnings meta {label}: {e}")
+
+        for account in ["dre", "dre 2024", "dre 2025"]:
+            try:
+                gd = google_ads_tool(
+                    client_name=account,
+                    date_from=date_from, date_to=date_to,
+                    level="campaign",
+                    metrics=["campaign.name", "metrics.impressions", "metrics.clicks",
+                             "metrics.cost_micros", "metrics.conversions", "metrics.ctr"],
+                )
+                google_raw.extend(gd.get("data", []))
+            except Exception as e:
+                logger.warning(f"weekly_learnings google {account} {label}: {e}")
+
+        results[label] = {"meta": meta_raw, "google": google_raw}
+
+    return results
+
+
 def generate_weekly_learnings(client="dre"):
     """Weekly summary of predictions accuracy + learned patterns."""
     now = datetime.now()
     week_cutoff  = (now - timedelta(days=7)).strftime('%Y-%m-%d')
-    month_cutoff = now.replace(day=1).strftime('%Y-%m-%d')
 
-    # Load history for both windows
-    all_hist_week  = load_campaign_history(client, days_back=7)
-    all_hist_month = load_campaign_history(client, days_back=(now - now.replace(day=1)).days + 1)
+    # Pobierz dane bezpośrednio z API (niezależnie od historii)
+    live = _fetch_weekly_learnings_data()
+    week_meta    = live["week"]["meta"]
+    week_google  = live["week"]["google"]
+    month_meta   = live["month"]["meta"]
+    month_google = live["month"]["google"]
 
-    # Filter: only campaigns with >= 10 clicks in last week
-    active_campaigns = {
-        name: entries
-        for name, entries in all_hist_week.items()
-        if sum(int(e.get("clicks") or 0) for e in entries) >= 10
-    }
-
+    # Predykcje z historii (te nadal mają sens z pliku)
     data = _load_history_raw()
     predictions = data.get(client, {}).get("predictions", [])
     week_preds = [p for p in predictions if p.get("date", "") >= week_cutoff]
 
     patterns = analyze_patterns(client)
     summary  = patterns.get("summary", {})
-    text = "🧠 **WEEKLY LEARNINGS – Co nauczyłem się w tym tygodniu:**\n\n"
+    text = "🧠 *WEEKLY LEARNINGS – Co nauczyłem się w tym tygodniu:*\n\n"
 
     # ── Platform stats: last 7 days + current month ───────────────────────────
-    for platform, icon in [("meta", "🔵 META ADS"), ("google", "🔴 GOOGLE ADS")]:
-        # week entries for this platform, only from active campaigns
-        week_entries_all = [
-            e
-            for name, entries in active_campaigns.items()
-            for e in entries
-            if (e.get("platform") or "meta").startswith(platform)
-        ]
-        month_entries_all = [
-            e
-            for name, entries in all_hist_month.items()
-            if sum(int(x.get("clicks") or 0) for x in all_hist_week.get(name, [])) >= 10
-            for e in entries
-            if (e.get("platform") or "meta").startswith(platform)
-               and e.get("date", "") >= month_cutoff
-        ]
-        if not week_entries_all and not month_entries_all:
+    has_any_data = False
+
+    for platform, icon, w_raw, m_raw, spend_key in [
+        ("meta",   "🔵 META ADS",   week_meta,   month_meta,   "spend"),
+        ("google", "🔴 GOOGLE ADS", week_google, month_google, "cost"),
+    ]:
+        if not w_raw and not m_raw:
             continue
-        w_spend, w_clicks, w_ctr = _aggregate_campaign_stats(week_entries_all)
-        m_spend, m_clicks, m_ctr = _aggregate_campaign_stats(month_entries_all)
+        has_any_data = True
+
+        def _sum_stat(rows, key, spend_key=spend_key):
+            if key == "spend":
+                return sum(float(r.get(spend_key, r.get("spend", 0)) or 0) for r in rows)
+            if key == "clicks":
+                return sum(int(r.get("clicks", 0) or 0) for r in rows)
+            if key == "impressions":
+                return sum(int(r.get("impressions", 0) or 0) for r in rows)
+            if key == "conversions":
+                return sum(int(r.get("conversions", 0) or 0) for r in rows)
+            return 0
+
+        w_spend = _sum_stat(w_raw, "spend")
+        w_clicks = _sum_stat(w_raw, "clicks")
+        w_impr  = _sum_stat(w_raw, "impressions")
+        w_convs = _sum_stat(w_raw, "conversions")
+        w_ctr   = (w_clicks / w_impr * 100) if w_impr > 0 else 0.0
+
+        m_spend = _sum_stat(m_raw, "spend")
+        m_clicks = _sum_stat(m_raw, "clicks")
+        m_impr  = _sum_stat(m_raw, "impressions")
+        m_convs = _sum_stat(m_raw, "conversions")
+        m_ctr   = (m_clicks / m_impr * 100) if m_impr > 0 else 0.0
+
         text += (
-            f"📊 **{icon}**\n"
-            f"   7 dni:   💰 {w_spend:.0f} PLN | 👆 {w_clicks} kliknięć | 📈 CTR {w_ctr:.2f}%\n"
-            f"   Miesiąc: 💰 {m_spend:.0f} PLN | 👆 {m_clicks} kliknięć | 📈 CTR {m_ctr:.2f}%\n\n"
+            f"📊 *{icon}*\n"
+            f"   7 dni:   💰 {w_spend:.0f} PLN | 👆 {w_clicks:,} kliknięć | 📈 CTR {w_ctr:.2f}% | 🎯 {w_convs} konwersji\n"
+            f"   Miesiąc: 💰 {m_spend:.0f} PLN | 👆 {m_clicks:,} kliknięć | 📈 CTR {m_ctr:.2f}% | 🎯 {m_convs} konwersji\n\n"
         )
 
-    if not active_campaigns:
-        text += "ℹ️ Brak kampanii z ≥10 kliknięciami w ostatnim tygodniu.\n\n"
+    if not has_any_data:
+        text += "ℹ️ Brak danych z API za ostatni tydzień.\n\n"
 
     # ── Prediction verification ────────────────────────────────────────────────
     if week_preds:
