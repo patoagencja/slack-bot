@@ -333,17 +333,19 @@
 
       <div class="card" onclick="toggle(this)">
         <div class="card-head">
-          <div class="status-dot s-gap"></div>
+          <div class="status-dot s-done"></div>
           <div class="card-name">Token cost tracking</div>
-          <span class="badge b-gap">brak</span>
+          <span class="badge b-done">działa</span>
           <span class="chevron">▼</span>
         </div>
-        <div class="card-sub">Nie wiadomo ile kosztuje każde wywołanie</div>
+        <div class="card-sub">SQLite · koszty w PLN · /koszty w Slacku</div>
         <div class="card-detail">
-          <div class="detail-title">Co brakuje</div>
+          <div class="detail-title">Szczegóły</div>
           <div class="detail-body">
-            <p>Anthropic API zwraca <code>usage.input_tokens</code> i <code>usage.output_tokens</code> w każdej odpowiedzi — wystarczy logować do SQLite i sumować.</p>
-            <p><span class="tag tag-todo">TODO: dodaj token_log.py, liczy PLN na podstawie ceny modelu</span></p>
+            <p>Każde wywołanie Anthropic API jest automatycznie logowane do <code>data/token_usage.db</code> (SQLite) — model, tokeny in/out/cache, koszt USD i PLN.</p>
+            <p>Wrapper <code>TrackedAnthropicClient</code> opakowuje klienta przy starcie — brak zmian w pozostałych plikach.</p>
+            <p>Komenda <code>/koszty [dni]</code> wyświetla raport w Slacku: łączny koszt, breakdown per model.</p>
+            <p><span class="tag tag-file">tools/token_log.py</span></p>
           </div>
         </div>
       </div>

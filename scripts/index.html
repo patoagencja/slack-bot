@@ -113,6 +113,29 @@
     animation: fadeUp .7s .2s ease both;
   }
 
+  /* ── hero tag ── */
+  .hero-tag {
+    display: inline-flex; align-items: center; gap: 10px;
+    font-family: var(--mono);
+    font-size: clamp(9px, 1.8vw, 11px);
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--brand-pink-l);
+    border: 1px solid rgba(212,120,154,0.35);
+    background: rgba(212,120,154,0.07);
+    padding: 7px 18px;
+    border-radius: 40px;
+    margin-bottom: 28px;
+    animation: fadeUp .7s .05s ease both;
+  }
+  .hero-tag-dot {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: var(--brand-pink-l);
+    box-shadow: 0 0 6px var(--brand-pink-l);
+    animation: blink 2.4s ease-in-out infinite;
+    flex-shrink: 0;
+  }
+
   /* ── nav cards ── */
   .nav-grid {
     display: grid;
@@ -202,6 +225,7 @@
     </div>
   </div>
 
+  <div class="hero-tag"><span class="hero-tag-dot"></span>AI Digital Agent by PATOAGENCJA</div>
   <div class="wordmark">sebol</div>
   <div class="by-line">AI agent · performance marketing</div>
 
