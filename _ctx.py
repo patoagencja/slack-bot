@@ -38,6 +38,9 @@ meta_campaign_wizard: dict = {}
 # Allows thread handlers to recover voice message content from history
 voice_cache: dict = {}
 
+# Muted budget alerts: "{platform}_{client}_{campaign}" → ISO expiry datetime str
+muted_alerts: dict = {}
+
 
 # ── Wizard state persistence ──────────────────────────────────────────────────
 import json as _json
@@ -46,6 +49,34 @@ import os as _os
 _WIZARD_STATE_FILE = _os.path.join(
     _os.path.dirname(_os.path.abspath(__file__)), "data", "wizard_state.json"
 )
+
+_MUTED_ALERTS_FILE = _os.path.join(
+    _os.path.dirname(_os.path.abspath(__file__)), "data", "muted_alerts.json"
+)
+
+
+def save_muted_alerts():
+    """Persist muted alerts to disk."""
+    try:
+        _os.makedirs(_os.path.dirname(_MUTED_ALERTS_FILE), exist_ok=True)
+        with open(_MUTED_ALERTS_FILE, "w", encoding="utf-8") as f:
+            _json.dump(muted_alerts, f, ensure_ascii=False)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("save_muted_alerts failed: %s", e)
+
+
+def load_muted_alerts():
+    """Restore muted alerts from disk after restart."""
+    try:
+        if not _os.path.exists(_MUTED_ALERTS_FILE):
+            return
+        with open(_MUTED_ALERTS_FILE, encoding="utf-8") as f:
+            data = _json.load(f)
+        muted_alerts.update(data)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("load_muted_alerts failed: %s", e)
 
 
 def _wizard_to_json(wizard: dict) -> dict:

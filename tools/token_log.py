@@ -1,117 +1,136 @@
-"""Token usage logging and cost reporting for Sebol."""
-
-import json
+"""Token usage logging — SQLite + cost calculation in PLN."""
 import os
-from collections import defaultdict
-from datetime import datetime, timezone, timedelta
+import sqlite3
+from datetime import datetime
 
-_LOG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "token_log.jsonl")
+DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "token_usage.db")
 
-# Ceny za 1M tokenów w USD (api.anthropic.com, 2025/2026)
+# USD per million tokens (Anthropic pricing, 2025)
 _PRICING = {
-    "claude-opus-4-6":           {"input": 15.00, "output": 75.00},
-    "claude-sonnet-4-6":         {"input":  3.00, "output": 15.00},
-    "claude-sonnet-4-20250514":  {"input":  3.00, "output": 15.00},
-    "claude-haiku-4-5-20251001": {"input":  0.80, "output":  4.00},
-    "claude-haiku-4-5":          {"input":  0.80, "output":  4.00},
+    "claude-sonnet-4-20250514": {"input": 3.00, "output": 15.00, "cache_write": 3.75, "cache_read": 0.30},
+    "claude-sonnet-4-6":        {"input": 3.00, "output": 15.00, "cache_write": 3.75, "cache_read": 0.30},
+    "claude-opus-4-6":          {"input": 15.00, "output": 75.00, "cache_write": 18.75, "cache_read": 1.50},
+    "claude-haiku-4-5-20251001":{"input": 0.80, "output": 4.00,  "cache_write": 1.00,  "cache_read": 0.08},
 }
-_DEFAULT_PRICING = {"input": 3.00, "output": 15.00}
+_DEFAULT_PRICING = {"input": 3.00, "output": 15.00, "cache_write": 3.75, "cache_read": 0.30}
 
-USD_TO_PLN = 4.0
+USD_TO_PLN = float(os.environ.get("USD_TO_PLN", "4.0"))
 
 
-def _price(model: str, input_tokens: int, output_tokens: int) -> float:
-    """Zwraca koszt w PLN."""
+def init_token_log():
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    with sqlite3.connect(DB_PATH) as con:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS token_usage (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts                  TEXT    NOT NULL,
+                model               TEXT    NOT NULL,
+                context             TEXT,
+                input_tokens        INTEGER DEFAULT 0,
+                output_tokens       INTEGER DEFAULT 0,
+                cache_write_tokens  INTEGER DEFAULT 0,
+                cache_read_tokens   INTEGER DEFAULT 0,
+                cost_usd            REAL    DEFAULT 0,
+                cost_pln            REAL    DEFAULT 0
+            )
+        """)
+
+
+def _calc_cost_usd(model, input_tokens, output_tokens, cache_write=0, cache_read=0):
     p = _PRICING.get(model, _DEFAULT_PRICING)
-    usd = (input_tokens * p["input"] + output_tokens * p["output"]) / 1_000_000
-    return round(usd * USD_TO_PLN, 6)
+    return (
+        input_tokens  * p["input"]       / 1_000_000
+        + output_tokens * p["output"]      / 1_000_000
+        + cache_write   * p["cache_write"] / 1_000_000
+        + cache_read    * p["cache_read"]  / 1_000_000
+    )
 
 
-def log_usage(model: str, input_tokens: int, output_tokens: int) -> None:
-    """Dopisuje jeden wpis do data/token_log.jsonl."""
+def log_usage(model: str, usage, context: str = ""):
+    """Log token usage from an Anthropic API response.usage object."""
     try:
-        os.makedirs(os.path.dirname(_LOG_FILE), exist_ok=True)
-        entry = {
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "model": model,
-            "in": input_tokens,
-            "out": output_tokens,
-            "pln": _price(model, input_tokens, output_tokens),
-        }
-        with open(_LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
+        input_tokens  = getattr(usage, "input_tokens",                  0) or 0
+        output_tokens = getattr(usage, "output_tokens",                 0) or 0
+        cache_write   = getattr(usage, "cache_creation_input_tokens",   0) or 0
+        cache_read    = getattr(usage, "cache_read_input_tokens",       0) or 0
+
+        cost_usd = _calc_cost_usd(model, input_tokens, output_tokens, cache_write, cache_read)
+        cost_pln = cost_usd * USD_TO_PLN
+
+        with sqlite3.connect(DB_PATH) as con:
+            con.execute(
+                """INSERT INTO token_usage
+                   (ts, model, context, input_tokens, output_tokens,
+                    cache_write_tokens, cache_read_tokens, cost_usd, cost_pln)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (datetime.utcnow().isoformat(), model, context,
+                 input_tokens, output_tokens, cache_write, cache_read,
+                 cost_usd, cost_pln),
+            )
     except Exception:
-        pass  # nigdy nie blokuj bota przez logowanie
+        pass  # never let logging crash the bot
 
 
-def cost_report(days: int = 30) -> dict:
-    """
-    Zwraca słownik ze statystykami z ostatnich `days` dni.
-    {
-      "total_pln": float,
-      "total_calls": int,
-      "total_in": int,
-      "total_out": int,
-      "by_model": {model: {"calls", "in", "out", "pln"}},
-      "by_day":   {YYYY-MM-DD: {"calls", "pln"}},
-    }
-    """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    total_pln = 0.0
-    total_calls = 0
-    total_in = 0
-    total_out = 0
-    by_model: dict = defaultdict(lambda: {"calls": 0, "in": 0, "out": 0, "pln": 0.0})
-    by_day:   dict = defaultdict(lambda: {"calls": 0, "pln": 0.0})
+def get_summary(days: int = 30):
+    """Return (per_model_rows, totals_row) for the last `days` days."""
+    with sqlite3.connect(DB_PATH) as con:
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            """
+            SELECT model,
+                   COUNT(*)           AS calls,
+                   SUM(input_tokens)  AS input_tokens,
+                   SUM(output_tokens) AS output_tokens,
+                   SUM(cost_usd)      AS cost_usd,
+                   SUM(cost_pln)      AS cost_pln
+            FROM token_usage
+            WHERE ts >= datetime('now', ? || ' days')
+            GROUP BY model
+            ORDER BY cost_pln DESC
+            """,
+            (f"-{days}",),
+        ).fetchall()
 
-    if not os.path.exists(_LOG_FILE):
-        return {"total_pln": 0.0, "total_calls": 0, "total_in": 0, "total_out": 0, "by_model": {}, "by_day": {}}
+        total = con.execute(
+            """
+            SELECT COUNT(*)           AS calls,
+                   SUM(input_tokens)  AS input_tokens,
+                   SUM(output_tokens) AS output_tokens,
+                   SUM(cost_usd)      AS cost_usd,
+                   SUM(cost_pln)      AS cost_pln
+            FROM token_usage
+            WHERE ts >= datetime('now', ? || ' days')
+            """,
+            (f"-{days}",),
+        ).fetchone()
 
-    with open(_LOG_FILE, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                e = json.loads(line)
-                ts = datetime.fromisoformat(e["ts"])
-                if ts < cutoff:
-                    continue
-                model = e.get("model", "unknown")
-                inp   = e.get("in", 0)
-                out   = e.get("out", 0)
-                pln   = e.get("pln", 0.0)
-                day   = ts.strftime("%Y-%m-%d")
+        return rows, total
 
-                total_pln   += pln
-                total_calls += 1
-                total_in    += inp
-                total_out   += out
 
-                bm = by_model[model]
-                bm["calls"] += 1
-                bm["in"]    += inp
-                bm["out"]   += out
-                bm["pln"]   += pln
+# ── Wrapper around Anthropic client ──────────────────────────────────────────
 
-                bd = by_day[day]
-                bd["calls"] += 1
-                bd["pln"]   += pln
-            except Exception:
-                continue
+class _TrackedMessages:
+    """Wraps client.messages — auto-logs usage after every .create() call."""
 
-    # zaokrąglenia
-    total_pln = round(total_pln, 4)
-    for m in by_model.values():
-        m["pln"] = round(m["pln"], 4)
-    for d in by_day.values():
-        d["pln"] = round(d["pln"], 4)
+    def __init__(self, messages):
+        self._messages = messages
 
-    return {
-        "total_pln":   total_pln,
-        "total_calls": total_calls,
-        "total_in":    total_in,
-        "total_out":   total_out,
-        "by_model":    dict(by_model),
-        "by_day":      dict(sorted(by_day.items())),
-    }
+    def create(self, *args, **kwargs):
+        response = self._messages.create(*args, **kwargs)
+        model = kwargs.get("model", args[0] if args else "unknown")
+        log_usage(model, response.usage)
+        return response
+
+    def __getattr__(self, name):
+        return getattr(self._messages, name)
+
+
+class TrackedAnthropicClient:
+    """Drop-in replacement for Anthropic() that logs token usage to SQLite."""
+
+    def __init__(self, client):
+        self._client = client
+        self.messages = _TrackedMessages(client.messages)
+
+    def __getattr__(self, name):
+        return getattr(self._client, name)

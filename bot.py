@@ -64,7 +64,7 @@ from tools.icloud_calendar import icloud_calendar_tool
 from tools.google_slides import create_presentation
 from tools.memory import init_memory, remember, recall_as_context, get_history
 from tools.reminders import init_reminders, schedule_reminder, list_reminders
-import tools.token_log as _tlog
+from tools.token_log import init_token_log, TrackedAnthropicClient, get_summary, USD_TO_PLN
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -103,10 +103,12 @@ class _SlackErrorHandler(logging.Handler):
 
 # ── initialization ────────────────────────────────────────────────────────────
 _ctx.app    = App(token=os.environ.get("SLACK_BOT_TOKEN"))
-_ctx.claude = Anthropic(api_key=os.environ.get("CLAUDE_API_KEY"))
+_ctx.claude = TrackedAnthropicClient(Anthropic(api_key=os.environ.get("CLAUDE_API_KEY")))
 init_memory()
+init_token_log()
 init_reminders()
-_ctx.load_wizard_state()  # Restore wizard sessions that survived restart
+_ctx.load_wizard_state()   # Restore wizard sessions that survived restart
+_ctx.load_muted_alerts()  # Restore muted budget alert rules that survived restart
 
 # Odtwórz nieobecności z historii Slacka po restarcie (Render usuwa pliki)
 try:
@@ -116,23 +118,6 @@ except Exception as _sync_err:
 
 app       = _ctx.app       # local alias for @app.event / @app.command decorators
 anthropic = _ctx.claude    # local alias for handle_mention / handle_message_events
-
-# ── token usage tracking — patch messages.create ──────────────────────────────
-_orig_messages_create = _ctx.claude.messages.create
-
-def _tracked_messages_create(*args, **kwargs):
-    resp = _orig_messages_create(*args, **kwargs)
-    try:
-        _tlog.log_usage(
-            model=kwargs.get("model", args[0] if args else "unknown"),
-            input_tokens=resp.usage.input_tokens,
-            output_tokens=resp.usage.output_tokens,
-        )
-    except Exception:
-        pass
-    return resp
-
-_ctx.claude.messages.create = _tracked_messages_create
 
 
 # ── conversation history ──────────────────────────────────────────────────────
@@ -797,6 +782,24 @@ Pytanie → Direct answer → Context → Actionable next step
                 "required": ["title"]
             }
         },
+        {
+            "name": "mute_budget_alert",
+            "description": (
+                "Wycisza alerty budżetowe dla konkretnej kampanii na podaną liczbę godzin. "
+                "ZAWSZE wywołaj to narzędzie gdy mówisz że wyłączasz/wyciszasz/ignorujesz alerty dla kampanii. "
+                "Użyj gdy użytkownik prosi o wyłączenie alertów, lub gdy alerty wynikają z planowanych zmian budżetu."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "platform":      {"type": "string", "enum": ["meta", "google"], "description": "Platforma: 'meta' lub 'google'."},
+                    "client_name":   {"type": "string", "description": "Nazwa klienta, np. 'drzwi dre', 'instax'."},
+                    "campaign_name": {"type": "string", "description": "Nazwa kampanii (lub jej fragment) do wyciszenia."},
+                    "hours":         {"type": "integer", "description": "Na ile godzin wyciszyć alerty (domyślnie 24)."},
+                },
+                "required": ["platform", "client_name", "campaign_name"]
+            }
+        },
     ]
 
     try:
@@ -945,6 +948,14 @@ Pytanie → Direct answer → Context → Actionable next step
                             description=tool_input.get('description'),
                             calendar_name=tool_input.get('calendar_name'),
                         )
+                elif tool_name == "mute_budget_alert":
+                    from jobs.budget_alerts import mute_campaign_alert
+                    tool_result = mute_campaign_alert(
+                        platform=tool_input.get('platform', 'meta'),
+                        client_name=tool_input.get('client_name', ''),
+                        campaign_name=tool_input.get('campaign_name', ''),
+                        hours=tool_input.get('hours', 24),
+                    )
                 else:
                     tool_result = {"error": "Nieznane narzędzie"}
 
@@ -1032,26 +1043,27 @@ def handle_koszty_slash(ack, respond, command):
     except ValueError:
         days = 30
 
-    r = _tlog.cost_report(days=days)
+    rows, total = get_summary(days=days)
 
-    if r["total_calls"] == 0:
+    if not total or not total["calls"]:
         respond(f"Brak danych o tokenach z ostatnich {days} dni.")
         return
 
     lines = [f"*Koszty API Claude — ostatnie {days} dni*"]
-    lines.append(f"Łącznie: *{r['total_pln']:.4f} PLN*  |  wywołań: {r['total_calls']}  |  tokenów in: {r['total_in']:,}  out: {r['total_out']:,}")
+    lines.append(
+        f"Łącznie: *{total['cost_pln']:.4f} PLN*  ({total['cost_usd']:.4f} USD)"
+        f"  |  wywołań: {total['calls']}  |  tokenów in: {total['input_tokens']:,}  out: {total['output_tokens']:,}"
+    )
 
-    if r["by_model"]:
+    if rows:
         lines.append("\n*Według modelu:*")
-        for model, m in sorted(r["by_model"].items(), key=lambda x: -x[1]["pln"]):
-            lines.append(f"  `{model}`: {m['pln']:.4f} PLN  ({m['calls']} wywołań, in {m['in']:,} / out {m['out']:,})")
+        for row in rows:
+            lines.append(
+                f"  `{row['model']}`: {row['cost_pln']:.4f} PLN"
+                f"  ({row['calls']} wywołań, in {row['input_tokens']:,} / out {row['output_tokens']:,})"
+            )
 
-    if r["by_day"]:
-        lines.append("\n*Ostatnie dni:*")
-        for day, d in list(r["by_day"].items())[-7:]:
-            lines.append(f"  {day}: {d['pln']:.4f} PLN  ({d['calls']} wywołań)")
-
-    lines.append(f"\n_Kurs: 1 USD = {_tlog.USD_TO_PLN} PLN_")
+    lines.append(f"\n_Kurs: 1 USD = {USD_TO_PLN} PLN_")
     respond("\n".join(lines))
 
 
