@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timedelta
 
 import _ctx
-from config.constants import CLIENT_GOALS, _DIGEST_INTERVAL_DAYS
+from config.constants import CLIENT_GOALS, _DIGEST_INTERVAL_DAYS, AD_CLIENTS
 from tools.meta_ads import meta_ads_tool
 from tools.google_ads import google_ads_tool
 from jobs.performance_analysis import (
@@ -224,38 +224,55 @@ def _build_main_message(date_label, total_spend, total_reach, avg_ctr,
                          meta_count=0, google_count=0,
                          meta_spend=0, meta_reach=0, meta_ctr=0, meta_conversions=0,
                          google_spend=0, google_ctr=0, google_conversions=0,
-                         meta_error=False,
+                         meta_error=False, google_error=False, google_api_ok=True,
                          # month-to-date totals
                          mtd_meta_spend=None, mtd_google_spend=None,
                          mtd_meta_conversions=None, mtd_google_conversions=None):
     """Buduje krótką wiadomość główną (widoczna na kanale)."""
     skipped_note = f" _(+{skipped_count} poniżej 20 PLN pominięto)_" if skipped_count > 0 else ""
-    both = meta_count > 0 and google_count > 0
+    show_both = meta_count > 0 or google_count > 0 or meta_error or google_error
 
     lines = [
-        f"📊 *META + GOOGLE ADS – DRE | {date_label}*{skipped_note}" if (both or meta_error)
-        else f"📊 *{'META ADS' if meta_count > 0 else 'GOOGLE ADS'} – DRE | {date_label}*{skipped_note}",
+        f"📊 *META + GOOGLE ADS – DRE | {date_label}*{skipped_note}",
         "",
     ]
 
-    if both or meta_error:
-        if meta_error:
-            lines += [
-                f"🔵 *META ADS* — ⚠️ _Brak danych (błąd API Meta — spróbuj później)_",
-                "",
-            ]
-        else:
-            meta_mtd = ""
-            if mtd_meta_spend is not None:
-                meta_mtd = f" _(miesiąc: {mtd_meta_spend:.0f} PLN"
-                if mtd_meta_conversions is not None:
-                    meta_mtd += f" | {mtd_meta_conversions} konwersji"
-                meta_mtd += ")_"
-            lines += [
-                f"🔵 *META ADS* — {meta_count} kampanii",
-                f"   💰 Spend 7d: *{meta_spend:.0f} PLN*{meta_mtd} | 👥 Reach: *{meta_reach:,}* | 📈 CTR: *{meta_ctr:.2f}%* | 🎯 Konwersje: *{meta_conversions}*",
-                "",
-            ]
+    # META section
+    if meta_error:
+        lines += [
+            f"🔵 *META ADS* — ⚠️ _Brak danych (błąd API Meta — spróbuj później)_",
+            "",
+        ]
+    elif meta_count > 0:
+        meta_mtd = ""
+        if mtd_meta_spend is not None:
+            meta_mtd = f" _(miesiąc: {mtd_meta_spend:.0f} PLN"
+            if mtd_meta_conversions is not None:
+                meta_mtd += f" | {mtd_meta_conversions} konwersji"
+            meta_mtd += ")_"
+        lines += [
+            f"🔵 *META ADS* — {meta_count} kampanii",
+            f"   💰 Spend 7d: *{meta_spend:.0f} PLN*{meta_mtd} | 👥 Reach: *{meta_reach:,}* | 📈 CTR: *{meta_ctr:.2f}%* | 🎯 Konwersje: *{meta_conversions}*",
+            "",
+        ]
+
+    # GOOGLE section
+    if google_error:
+        lines += [
+            f"🔴 *GOOGLE ADS* — ⚠️ _Błąd API Google — spróbuj później_",
+            "",
+        ]
+    elif google_count == 0 and google_api_ok:
+        lines += [
+            f"🔴 *GOOGLE ADS* — ℹ️ _Brak aktywnych kampanii z wydatkiem ≥20 PLN w tym okresie_",
+            "",
+        ]
+    elif google_count == 0:
+        lines += [
+            f"🔴 *GOOGLE ADS* — ⚠️ _Błąd API Google — spróbuj później_",
+            "",
+        ]
+    elif google_count > 0:
         google_mtd = ""
         if mtd_google_spend is not None:
             google_mtd = f" _(miesiąc: {mtd_google_spend:.0f} PLN"
@@ -266,34 +283,23 @@ def _build_main_message(date_label, total_spend, total_reach, avg_ctr,
             f"🔴 *GOOGLE ADS* — {google_count} kampanii",
             f"   💰 Spend 7d: *{google_spend:.0f} PLN*{google_mtd} | 📈 Avg CTR: *{google_ctr:.2f}%* | 🎯 Konwersje: *{google_conversions}*",
             "",
-            f"📣 Łącznie aktywnych kampanii: *{campaign_count}*",
-        ]
-    else:
-        lines += [
-            f"💰 Spend: *{total_spend:.0f} PLN*",
-            f"👥 Reach: *{total_reach:,}*",
-            f"📈 Avg CTR: *{avg_ctr:.2f}%*",
-            f"🎯 Konwersje: *{total_conversions}*",
-            f"📣 Kampanie aktywne: *{campaign_count}*",
         ]
 
-    # Alerty pogrupowane per platforma
+    lines.append(f"📣 Łącznie aktywnych kampanii: *{campaign_count}*")
+
+    # Alerty
     meta_alerts   = [a for a in obj_alerts if '(Google)' not in a['campaign']]
     google_alerts = [a for a in obj_alerts if '(Google)' in a['campaign']]
 
     if obj_alerts:
         lines.append("")
         lines.append("⚠️ *ALERTY*")
-        if (both or meta_error) and meta_alerts:
-            lines.append("_Meta:_")
+        if meta_alerts:
             for alert in meta_alerts:
                 lines.append(f"• *{alert['campaign']}* — {alert['message']}")
-        if (both or meta_error) and google_alerts:
+        if google_alerts:
             lines.append("_Google:_")
             for alert in google_alerts:
-                lines.append(f"• *{alert['campaign']}* — {alert['message']}")
-        if not (both or meta_error):
-            for alert in obj_alerts:
                 lines.append(f"• *{alert['campaign']}* — {alert['message']}")
     else:
         lines.append("")
@@ -492,60 +498,115 @@ def _aggregate_campaign_stats(entries):
     return total_spend, total_clicks, avg_ctr
 
 
+def _fetch_weekly_learnings_data():
+    """Pobiera dane Meta + Google dla ostatnich 7 dni i bieżącego miesiąca."""
+    from tools.meta_ads import meta_ads_tool
+    from tools.google_ads import google_ads_tool
+
+    now = datetime.now()
+    yesterday   = (now - timedelta(days=1)).strftime('%Y-%m-%d')
+    week_ago    = (now - timedelta(days=7)).strftime('%Y-%m-%d')
+    month_start = now.replace(day=1).strftime('%Y-%m-%d')
+
+    results = {}
+
+    for label, date_from, date_to in [
+        ("week",  week_ago,    yesterday),
+        ("month", month_start, yesterday),
+    ]:
+        meta_raw, google_raw = [], []
+        try:
+            md = meta_ads_tool(
+                client_name="drzwi dre",
+                date_from=date_from, date_to=date_to,
+                level="campaign",
+                metrics=["campaign_name", "spend", "impressions", "clicks", "ctr", "conversions"],
+            )
+            meta_raw = md.get("data", [])
+        except Exception as e:
+            logger.warning(f"weekly_learnings meta {label}: {e}")
+
+        for account in AD_CLIENTS.get("dre", {}).get("google_accounts", ["dre", "dre 2024", "dre 2025"]):
+            try:
+                gd = google_ads_tool(
+                    client_name=account,
+                    date_from=date_from, date_to=date_to,
+                    level="campaign",
+                    metrics=["campaign.name", "metrics.impressions", "metrics.clicks",
+                             "metrics.cost_micros", "metrics.conversions", "metrics.ctr"],
+                )
+                google_raw.extend(gd.get("data", []))
+            except Exception as e:
+                logger.warning(f"weekly_learnings google {account} {label}: {e}")
+
+        results[label] = {"meta": meta_raw, "google": google_raw}
+
+    return results
+
+
 def generate_weekly_learnings(client="dre"):
     """Weekly summary of predictions accuracy + learned patterns."""
     now = datetime.now()
     week_cutoff  = (now - timedelta(days=7)).strftime('%Y-%m-%d')
-    month_cutoff = now.replace(day=1).strftime('%Y-%m-%d')
 
-    # Load history for both windows
-    all_hist_week  = load_campaign_history(client, days_back=7)
-    all_hist_month = load_campaign_history(client, days_back=(now - now.replace(day=1)).days + 1)
+    # Pobierz dane bezpośrednio z API (niezależnie od historii)
+    live = _fetch_weekly_learnings_data()
+    week_meta    = live["week"]["meta"]
+    week_google  = live["week"]["google"]
+    month_meta   = live["month"]["meta"]
+    month_google = live["month"]["google"]
 
-    # Filter: only campaigns with >= 10 clicks in last week
-    active_campaigns = {
-        name: entries
-        for name, entries in all_hist_week.items()
-        if sum(int(e.get("clicks") or 0) for e in entries) >= 10
-    }
-
+    # Predykcje z historii (te nadal mają sens z pliku)
     data = _load_history_raw()
     predictions = data.get(client, {}).get("predictions", [])
     week_preds = [p for p in predictions if p.get("date", "") >= week_cutoff]
 
     patterns = analyze_patterns(client)
     summary  = patterns.get("summary", {})
-    text = "🧠 **WEEKLY LEARNINGS – Co nauczyłem się w tym tygodniu:**\n\n"
+    text = "🧠 *WEEKLY LEARNINGS – Co nauczyłem się w tym tygodniu:*\n\n"
 
     # ── Platform stats: last 7 days + current month ───────────────────────────
-    for platform, icon in [("meta", "🔵 META ADS"), ("google", "🔴 GOOGLE ADS")]:
-        # week entries for this platform, only from active campaigns
-        week_entries_all = [
-            e
-            for name, entries in active_campaigns.items()
-            for e in entries
-            if (e.get("platform") or "meta").startswith(platform)
-        ]
-        month_entries_all = [
-            e
-            for name, entries in all_hist_month.items()
-            if sum(int(x.get("clicks") or 0) for x in all_hist_week.get(name, [])) >= 10
-            for e in entries
-            if (e.get("platform") or "meta").startswith(platform)
-               and e.get("date", "") >= month_cutoff
-        ]
-        if not week_entries_all and not month_entries_all:
+    has_any_data = False
+
+    for platform, icon, w_raw, m_raw, spend_key in [
+        ("meta",   "🔵 META ADS",   week_meta,   month_meta,   "spend"),
+        ("google", "🔴 GOOGLE ADS", week_google, month_google, "cost"),
+    ]:
+        if not w_raw and not m_raw:
             continue
-        w_spend, w_clicks, w_ctr = _aggregate_campaign_stats(week_entries_all)
-        m_spend, m_clicks, m_ctr = _aggregate_campaign_stats(month_entries_all)
+        has_any_data = True
+
+        def _sum_stat(rows, key, spend_key=spend_key):
+            if key == "spend":
+                return sum(float(r.get(spend_key, r.get("spend", 0)) or 0) for r in rows)
+            if key == "clicks":
+                return sum(int(r.get("clicks", 0) or 0) for r in rows)
+            if key == "impressions":
+                return sum(int(r.get("impressions", 0) or 0) for r in rows)
+            if key == "conversions":
+                return sum(int(r.get("conversions", 0) or 0) for r in rows)
+            return 0
+
+        w_spend = _sum_stat(w_raw, "spend")
+        w_clicks = _sum_stat(w_raw, "clicks")
+        w_impr  = _sum_stat(w_raw, "impressions")
+        w_convs = _sum_stat(w_raw, "conversions")
+        w_ctr   = (w_clicks / w_impr * 100) if w_impr > 0 else 0.0
+
+        m_spend = _sum_stat(m_raw, "spend")
+        m_clicks = _sum_stat(m_raw, "clicks")
+        m_impr  = _sum_stat(m_raw, "impressions")
+        m_convs = _sum_stat(m_raw, "conversions")
+        m_ctr   = (m_clicks / m_impr * 100) if m_impr > 0 else 0.0
+
         text += (
-            f"📊 **{icon}**\n"
-            f"   7 dni:   💰 {w_spend:.0f} PLN | 👆 {w_clicks} kliknięć | 📈 CTR {w_ctr:.2f}%\n"
-            f"   Miesiąc: 💰 {m_spend:.0f} PLN | 👆 {m_clicks} kliknięć | 📈 CTR {m_ctr:.2f}%\n\n"
+            f"📊 *{icon}*\n"
+            f"   7 dni:   💰 {w_spend:.0f} PLN | 👆 {w_clicks:,} kliknięć | 📈 CTR {w_ctr:.2f}% | 🎯 {w_convs} konwersji\n"
+            f"   Miesiąc: 💰 {m_spend:.0f} PLN | 👆 {m_clicks:,} kliknięć | 📈 CTR {m_ctr:.2f}% | 🎯 {m_convs} konwersji\n\n"
         )
 
-    if not active_campaigns:
-        text += "ℹ️ Brak kampanii z ≥10 kliknięciami w ostatnim tygodniu.\n\n"
+    if not has_any_data:
+        text += "ℹ️ Brak danych z API za ostatni tydzień.\n\n"
 
     # ── Prediction verification ────────────────────────────────────────────────
     if week_preds:
@@ -651,7 +712,9 @@ def generate_daily_digest_dre():
 
         # === GOOGLE ADS (ostatnie 7 dni) ===
         google_data_combined = []
-        for account in ["dre", "dre 2024", "dre 2025"]:
+        google_fetch_errors = 0
+        google_accounts_list = AD_CLIENTS.get("dre", {}).get("google_accounts", ["dre", "dre 2024", "dre 2025"])
+        for account in google_accounts_list:
             data = google_ads_tool(
                 client_name=account,
                 date_from=week_ago, date_to=yesterday,
@@ -660,13 +723,19 @@ def generate_daily_digest_dre():
                          "metrics.cost_micros", "metrics.conversions", "metrics.ctr",
                          "metrics.average_cpc"]
             )
-            if data.get("data"):
+            if data.get("error"):
+                google_fetch_errors += 1
+            elif data.get("data"):
                 google_data_combined.extend(data["data"])
+        # True = wszystkie konta zwróciły błąd API; False = dane są (lub brak kampanii)
+        google_error = google_fetch_errors == len(google_accounts_list) and not google_data_combined
+        # Czy przynajmniej jedno konto odpowiedziało poprawnie (choćby pustym wynikiem)
+        google_api_ok = google_fetch_errors < len(google_accounts_list)
 
         # === GOOGLE ADS (od początku miesiąca) ===
         google_mtd_combined = []
         if month_start < week_ago:
-            for account in ["dre", "dre 2024", "dre 2025"]:
+            for account in AD_CLIENTS.get("dre", {}).get("google_accounts", ["dre", "dre 2024", "dre 2025"]):
                 data = google_ads_tool(
                     client_name=account,
                     date_from=month_start, date_to=yesterday,
@@ -679,8 +748,8 @@ def generate_daily_digest_dre():
         meta_campaigns_raw  = meta_data.get("data", [])
         all_campaigns_raw   = meta_campaigns_raw + google_data_combined
 
-        error_main = f"📊 *META ADS – DRE | {date_label}*\n\n⚠️ Brak danych za ostatnie 7 dni. Sprawdź czy kampanie są aktywne."
-        if not all_campaigns_raw:
+        if not all_campaigns_raw and not meta_error and not google_error:
+            error_main = f"📊 *META + GOOGLE ADS – DRE | {date_label}*\n\n⚠️ Brak danych za ostatnie 7 dni. Sprawdź czy kampanie są aktywne."
             return error_main, None
 
         MIN_SPEND_PLN = 20.0
@@ -766,7 +835,15 @@ def generate_daily_digest_dre():
         google_ctrs        = [float(c.get("ctr", 0) or 0) for c in google_data_combined if float(c.get("ctr", 0) or 0) > 0]
         google_ctr         = sum(google_ctrs) / len(google_ctrs) if google_ctrs else 0.0
 
-        obj_alerts = _build_objective_alerts(meta_campaigns, google_data_combined)
+        obj_alerts_raw = _build_objective_alerts(meta_campaigns, google_data_combined)
+        # Deduplicate alerts by (campaign, message)
+        seen_alerts = set()
+        obj_alerts = []
+        for a in obj_alerts_raw:
+            key = (a['campaign'], a['message'])
+            if key not in seen_alerts:
+                seen_alerts.add(key)
+                obj_alerts.append(a)
 
         # ── Eksperymenty + smart recs (dla threadu) ───────────────────────────
         experiments = []
@@ -809,6 +886,8 @@ def generate_daily_digest_dre():
             google_ctr=google_ctr,
             google_conversions=google_conversions,
             meta_error=meta_error,
+            google_error=google_error,
+            google_api_ok=google_api_ok,
             mtd_meta_spend=mtd_meta_spend,
             mtd_meta_conversions=mtd_meta_conversions,
             mtd_google_spend=mtd_google_spend,

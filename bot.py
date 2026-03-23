@@ -64,7 +64,7 @@ from tools.icloud_calendar import icloud_calendar_tool
 from tools.google_slides import create_presentation
 from tools.memory import init_memory, remember, recall_as_context, get_history
 from tools.reminders import init_reminders, schedule_reminder, list_reminders
-from tools.token_log import init_token_log, TrackedAnthropicClient
+from tools.token_log import init_token_log, TrackedAnthropicClient, get_summary, USD_TO_PLN
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1029,6 +1029,42 @@ def handle_news_slash(ack, respond, command):
     ack()
     respond("⏳ Szukam nowości... To może zająć chwilę.")
     threading.Thread(target=_news_worker, args=(respond,), daemon=True).start()
+
+
+# ── /koszty slash command ─────────────────────────────────────────────────────
+
+@app.command("/koszty")
+def handle_koszty_slash(ack, respond, command):
+    """Raport kosztów tokenów Anthropic API w PLN."""
+    ack()
+    text = (command.get("text") or "").strip()
+    try:
+        days = int(text) if text else 30
+    except ValueError:
+        days = 30
+
+    rows, total = get_summary(days=days)
+
+    if not total or not total["calls"]:
+        respond(f"Brak danych o tokenach z ostatnich {days} dni.")
+        return
+
+    lines = [f"*Koszty API Claude — ostatnie {days} dni*"]
+    lines.append(
+        f"Łącznie: *{total['cost_pln']:.4f} PLN*  ({total['cost_usd']:.4f} USD)"
+        f"  |  wywołań: {total['calls']}  |  tokenów in: {total['input_tokens']:,}  out: {total['output_tokens']:,}"
+    )
+
+    if rows:
+        lines.append("\n*Według modelu:*")
+        for row in rows:
+            lines.append(
+                f"  `{row['model']}`: {row['cost_pln']:.4f} PLN"
+                f"  ({row['calls']} wywołań, in {row['input_tokens']:,} / out {row['output_tokens']:,})"
+            )
+
+    lines.append(f"\n_Kurs: 1 USD = {USD_TO_PLN} PLN_")
+    respond("\n".join(lines))
 
 
 # ── /cleanup slash command ────────────────────────────────────────────────────
