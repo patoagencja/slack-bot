@@ -224,7 +224,7 @@ def _build_main_message(date_label, total_spend, total_reach, avg_ctr,
                          meta_count=0, google_count=0,
                          meta_spend=0, meta_reach=0, meta_ctr=0, meta_conversions=0,
                          google_spend=0, google_ctr=0, google_conversions=0,
-                         meta_error=False, google_error=False,
+                         meta_error=False, google_error=False, google_api_ok=True,
                          # month-to-date totals
                          mtd_meta_spend=None, mtd_google_spend=None,
                          mtd_meta_conversions=None, mtd_google_conversions=None):
@@ -262,9 +262,14 @@ def _build_main_message(date_label, total_spend, total_reach, avg_ctr,
             f"🔴 *GOOGLE ADS* — ⚠️ _Błąd API Google — spróbuj później_",
             "",
         ]
+    elif google_count == 0 and google_api_ok:
+        lines += [
+            f"🔴 *GOOGLE ADS* — ℹ️ _Brak aktywnych kampanii z wydatkiem ≥20 PLN w tym okresie_",
+            "",
+        ]
     elif google_count == 0:
         lines += [
-            f"🔴 *GOOGLE ADS* — ⚠️ _Brak danych (brak kampanii z wydatkiem ≥20 PLN lub błąd API)_",
+            f"🔴 *GOOGLE ADS* — ⚠️ _Błąd API Google — spróbuj później_",
             "",
         ]
     elif google_count > 0:
@@ -708,7 +713,8 @@ def generate_daily_digest_dre():
         # === GOOGLE ADS (ostatnie 7 dni) ===
         google_data_combined = []
         google_fetch_errors = 0
-        for account in AD_CLIENTS.get("dre", {}).get("google_accounts", ["dre", "dre 2024", "dre 2025"]):
+        google_accounts_list = AD_CLIENTS.get("dre", {}).get("google_accounts", ["dre", "dre 2024", "dre 2025"])
+        for account in google_accounts_list:
             data = google_ads_tool(
                 client_name=account,
                 date_from=week_ago, date_to=yesterday,
@@ -721,8 +727,10 @@ def generate_daily_digest_dre():
                 google_fetch_errors += 1
             elif data.get("data"):
                 google_data_combined.extend(data["data"])
-        # Google error tylko gdy WSZYSTKIE konta zwróciły błąd i nie ma żadnych danych
-        google_error = google_fetch_errors == 3 and not google_data_combined
+        # True = wszystkie konta zwróciły błąd API; False = dane są (lub brak kampanii)
+        google_error = google_fetch_errors == len(google_accounts_list) and not google_data_combined
+        # Czy przynajmniej jedno konto odpowiedziało poprawnie (choćby pustym wynikiem)
+        google_api_ok = google_fetch_errors < len(google_accounts_list)
 
         # === GOOGLE ADS (od początku miesiąca) ===
         google_mtd_combined = []
@@ -879,6 +887,7 @@ def generate_daily_digest_dre():
             google_conversions=google_conversions,
             meta_error=meta_error,
             google_error=google_error,
+            google_api_ok=google_api_ok,
             mtd_meta_spend=mtd_meta_spend,
             mtd_meta_conversions=mtd_meta_conversions,
             mtd_google_spend=mtd_google_spend,
