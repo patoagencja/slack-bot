@@ -64,6 +64,7 @@ from tools.icloud_calendar import icloud_calendar_tool
 from tools.google_slides import create_presentation
 from tools.memory import init_memory, remember, recall_as_context, get_history
 from tools.reminders import init_reminders, schedule_reminder, list_reminders
+import tools.token_log as _tlog
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -115,6 +116,23 @@ except Exception as _sync_err:
 
 app       = _ctx.app       # local alias for @app.event / @app.command decorators
 anthropic = _ctx.claude    # local alias for handle_mention / handle_message_events
+
+# ── token usage tracking — patch messages.create ──────────────────────────────
+_orig_messages_create = _ctx.claude.messages.create
+
+def _tracked_messages_create(*args, **kwargs):
+    resp = _orig_messages_create(*args, **kwargs)
+    try:
+        _tlog.log_usage(
+            model=kwargs.get("model", args[0] if args else "unknown"),
+            input_tokens=resp.usage.input_tokens,
+            output_tokens=resp.usage.output_tokens,
+        )
+    except Exception:
+        pass
+    return resp
+
+_ctx.claude.messages.create = _tracked_messages_create
 
 
 # ── conversation history ──────────────────────────────────────────────────────
@@ -1000,6 +1018,41 @@ def handle_news_slash(ack, respond, command):
     ack()
     respond("⏳ Szukam nowości... To może zająć chwilę.")
     threading.Thread(target=_news_worker, args=(respond,), daemon=True).start()
+
+
+# ── /koszty slash command ─────────────────────────────────────────────────────
+
+@app.command("/koszty")
+def handle_koszty_slash(ack, respond, command):
+    """Raport kosztów tokenów Anthropic API w PLN."""
+    ack()
+    text = (command.get("text") or "").strip()
+    try:
+        days = int(text) if text else 30
+    except ValueError:
+        days = 30
+
+    r = _tlog.cost_report(days=days)
+
+    if r["total_calls"] == 0:
+        respond(f"Brak danych o tokenach z ostatnich {days} dni.")
+        return
+
+    lines = [f"*Koszty API Claude — ostatnie {days} dni*"]
+    lines.append(f"Łącznie: *{r['total_pln']:.4f} PLN*  |  wywołań: {r['total_calls']}  |  tokenów in: {r['total_in']:,}  out: {r['total_out']:,}")
+
+    if r["by_model"]:
+        lines.append("\n*Według modelu:*")
+        for model, m in sorted(r["by_model"].items(), key=lambda x: -x[1]["pln"]):
+            lines.append(f"  `{model}`: {m['pln']:.4f} PLN  ({m['calls']} wywołań, in {m['in']:,} / out {m['out']:,})")
+
+    if r["by_day"]:
+        lines.append("\n*Ostatnie dni:*")
+        for day, d in list(r["by_day"].items())[-7:]:
+            lines.append(f"  {day}: {d['pln']:.4f} PLN  ({d['calls']} wywołań)")
+
+    lines.append(f"\n_Kurs: 1 USD = {_tlog.USD_TO_PLN} PLN_")
+    respond("\n".join(lines))
 
 
 # ── /cleanup slash command ────────────────────────────────────────────────────
