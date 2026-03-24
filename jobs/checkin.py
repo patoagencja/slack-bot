@@ -4,6 +4,22 @@ import logging
 import _ctx
 from config.constants import TEAM_MEMBERS
 
+_ZARZOND_CHANNEL_NAME = "zarzondpato"
+_zarzond_channel_id_cache = None
+
+def _get_zarzond_channel_id():
+    global _zarzond_channel_id_cache
+    if _zarzond_channel_id_cache:
+        return _zarzond_channel_id_cache
+    try:
+        for ch in _ctx.app.client.conversations_list(types="public_channel,private_channel", limit=200)["channels"]:
+            if ch.get("name") == _ZARZOND_CHANNEL_NAME:
+                _zarzond_channel_id_cache = ch["id"]
+                return _zarzond_channel_id_cache
+    except Exception as e:
+        logger.warning(f"Nie znaleziono kanału #{_ZARZOND_CHANNEL_NAME}: {e}")
+    return None
+
 logger = logging.getLogger(__name__)
 
 
@@ -137,10 +153,12 @@ def checkin_summary():
         if no_answer:
             footer_parts.append(f"⏰ Brak odpowiedzi: {', '.join(no_answer)}")
 
-        YOUR_USER_ID = "UTE1RN6SJ"
-        dm = _ctx.app.client.conversations_open(users=YOUR_USER_ID)["channel"]["id"]
+        channel_id = _get_zarzond_channel_id()
+        if not channel_id:
+            logger.error(f"Nie znaleziono #{_ZARZOND_CHANNEL_NAME} — pomijam wysyłkę checkin summary")
+            return
         _ctx.app.client.chat_postMessage(
-            channel=dm,
+            channel=channel_id,
             text=(
                 f"📊 *WEEKLY CHECK-IN — PODSUMOWANIE ZESPOŁU*\n\n"
                 f"{summary_text}\n\n"
