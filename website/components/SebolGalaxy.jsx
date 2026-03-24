@@ -31,8 +31,7 @@ const PLANET_IMAGES = {
   slack:      "https://upload.wikimedia.org/wikipedia/commons/thumb/9/97/The_Earth_seen_from_Apollo_17.jpg/600px-The_Earth_seen_from_Apollo_17.jpg",
   // Jupiter — Juno mission PJ21 closeup (vivid bands & storms)
   meta:       "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Jupiter_New_Horizons.jpg/600px-Jupiter_New_Horizons.jpg",
-  // Saturn — Cassini equinox (iconic rings)
-  google:     "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c7/Saturn_during_Equinox.jpg/600px-Saturn_during_Equinox.jpg",
+  // Saturn — NO image here: rendered as canvas gradient sphere so ring texture doesn't double up
   // Mercury — MESSENGER true color
   digest:     "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4a/Mercury_in_true_color.jpg/600px-Mercury_in_true_color.jpg",
   // Mars — OSIRIS true color (rusty red)
@@ -454,6 +453,78 @@ export default function SebolGalaxy() {
               ctx.beginPath();
               ctx.ellipse(node.x, node.y, or_, or_ * PY, 0, 0, Math.PI, false);
               ctx.ellipse(node.x, node.y, ir,  ir  * PY, 0, Math.PI, 0,        true);
+              ctx.closePath();
+              ctx.fill();
+            });
+            ctx.restore();
+          }
+        } else if (node.id === "google") {
+          // Saturn: canvas-drawn banded sphere (no texture image → no ring double-up)
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
+          ctx.clip();
+
+          // Base — warm tan gradient
+          const satBase = ctx.createRadialGradient(node.x - r*0.25, node.y - r*0.25, 0, node.x, node.y, r);
+          satBase.addColorStop(0,   `rgba(255,240,190,${alpha})`);
+          satBase.addColorStop(0.5, `rgba(220,190,120,${alpha})`);
+          satBase.addColorStop(1,   `rgba(160,130, 70,${alpha * 0.7})`);
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = satBase;
+          ctx.fillRect(node.x - r, node.y - r, r*2, r*2);
+
+          // Atmosphere bands — thin horizontal stripes (linear gradient)
+          const bands = ctx.createLinearGradient(node.x, node.y - r, node.x, node.y + r);
+          bands.addColorStop(0.00, "rgba(200,170,100,0)");
+          bands.addColorStop(0.12, "rgba(180,150, 90,0.55)");
+          bands.addColorStop(0.22, "rgba(240,210,140,0.30)");
+          bands.addColorStop(0.34, "rgba(170,140, 80,0.60)");
+          bands.addColorStop(0.44, "rgba(230,200,130,0.25)");
+          bands.addColorStop(0.50, "rgba(200,175,110,0.40)"); // equator
+          bands.addColorStop(0.56, "rgba(240,215,145,0.25)");
+          bands.addColorStop(0.66, "rgba(165,138, 78,0.60)");
+          bands.addColorStop(0.78, "rgba(235,205,135,0.30)");
+          bands.addColorStop(0.88, "rgba(175,148, 88,0.55)");
+          bands.addColorStop(1.00, "rgba(200,170,100,0)");
+          ctx.fillStyle = bands;
+          ctx.fillRect(node.x - r, node.y - r, r*2, r*2);
+
+          // Limb darkening
+          const limb = ctx.createRadialGradient(node.x - r*0.18, node.y - r*0.18, r*0.3, node.x, node.y, r);
+          limb.addColorStop(0,    "rgba(0,0,0,0)");
+          limb.addColorStop(0.65, "rgba(0,0,0,0)");
+          limb.addColorStop(1,    `rgba(0,0,0,${0.65*alpha})`);
+          ctx.fillStyle = limb;
+          ctx.fillRect(node.x - r, node.y - r, r*2, r*2);
+
+          // Specular highlight
+          ctx.globalAlpha = alpha * 0.45;
+          const spec = ctx.createRadialGradient(node.x - r*0.38, node.y - r*0.38, 0, node.x - r*0.38, node.y - r*0.38, r*0.65);
+          spec.addColorStop(0,   "rgba(255,255,255,1)");
+          spec.addColorStop(0.3, "rgba(255,255,255,0.4)");
+          spec.addColorStop(1,   "rgba(255,255,255,0)");
+          ctx.fillStyle = spec;
+          ctx.fillRect(node.x - r, node.y - r, r*2, r*2);
+
+          ctx.restore();
+
+          // Saturn rings front half (drawn OVER the sphere)
+          {
+            const PY = 0.38;
+            const satBands = [
+              [r*1.22, r*1.44, "#c8b478", 0.50],
+              [r*1.46, r*1.92, "#ead490", 0.92],
+              [r*2.02, r*2.32, "#d4b87c", 0.74],
+              [r*2.32, r*2.42, "#c0a864", 0.30],
+            ];
+            ctx.save();
+            satBands.forEach(([ir, or_, color, oa]) => {
+              ctx.globalAlpha = alpha * oa;
+              ctx.fillStyle = color;
+              ctx.beginPath();
+              ctx.ellipse(node.x, node.y, or_, or_ * PY, 0, 0, Math.PI, false);
+              ctx.ellipse(node.x, node.y, ir,  ir  * PY, 0, Math.PI, 0, true);
               ctx.closePath();
               ctx.fill();
             });
