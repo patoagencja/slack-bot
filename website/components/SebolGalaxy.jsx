@@ -3,22 +3,22 @@ import { useEffect, useRef, useState } from "react";
 
 const NODES = [
   { id: "core",       label: "Sebol Core",       importance: 5, desc: "AI Agent Hub",         color: "#00d4ff", angle: 0,   radius: 0,   orbitSpeed: 0 },
-  // Imp4 — każda na osobnej orbicie, 44px odstęp (> 2×rozmiar=40px)
-  { id: "claude",     label: "Claude AI",         importance: 4, desc: "LLM Engine",           color: "#a78bfa", angle: 25,  radius: 92,  orbitSpeed: 0.000200 },
-  { id: "slack",      label: "Slack",             importance: 4, desc: "Bolt + Socket Mode",   color: "#4ade80", angle: 148, radius: 136, orbitSpeed: 0.000164 },
-  { id: "meta",       label: "Meta Ads",          importance: 4, desc: "Facebook / Instagram", color: "#fb923c", angle: 245, radius: 180, orbitSpeed: 0.000142 },
-  { id: "google",     label: "Google Ads",        importance: 4, desc: "Search & Display",     color: "#facc15", angle: 320, radius: 224, orbitSpeed: 0.000127 },
-  // Imp3 — 32px odstęp (> 2×rozmiar=28px)
-  { id: "strategy",   label: "Strategy Engine",   importance: 3, desc: "Self-Learning AI",     color: "#c084fc", angle: 348, radius: 262, orbitSpeed: 0.000118 },
-  { id: "standup",    label: "Standup Bot",       importance: 3, desc: "Team Automation",      color: "#34d399", angle: 128, radius: 294, orbitSpeed: 0.000111 },
-  { id: "campaign",   label: "Kampanie",          importance: 3, desc: "Approval Workflow",    color: "#f472b6", angle: 190, radius: 326, orbitSpeed: 0.000106 },
-  { id: "digest",     label: "Daily Digest",      importance: 3, desc: "Performance Alerts",   color: "#38bdf8", angle: 68,  radius: 358, orbitSpeed: 0.000101 },
-  // Imp2 — 20px odstęp (> 2×rozmiar=18px), naprzemiennie szybsze/wolniejsze
-  { id: "token",      label: "Token Optimizer",   importance: 2, desc: "API Cost Reducer",     color: "#fbbf24", angle: 290, radius: 382, orbitSpeed: 0.000105 },
-  { id: "blockkit",   label: "Block Kit UI",      importance: 2, desc: "Slack Modals",         color: "#22d3ee", angle: 160, radius: 402, orbitSpeed: 0.000078 },
-  { id: "scheduler",  label: "APScheduler",       importance: 2, desc: "Job Scheduling",       color: "#64748b", angle: 20,  radius: 422, orbitSpeed: 0.000115 },
-  { id: "onboarding", label: "Onboarding",        importance: 2, desc: "Client Checklists",    color: "#86efac", angle: 210, radius: 442, orbitSpeed: 0.000072 },
-  { id: "render",     label: "Render.com",        importance: 2, desc: "Cloud Deployment",     color: "#94a3b8", angle: 55,  radius: 462, orbitSpeed: 0.000098 },
+  // Imp4 — każda na osobnej orbicie, 52px odstęp (> 2×rozmiar=52px)
+  { id: "claude",     label: "Claude AI",         importance: 4, desc: "LLM Engine",           color: "#a78bfa", angle: 25,  radius: 96,  orbitSpeed: 0.000200 },
+  { id: "slack",      label: "Slack",             importance: 4, desc: "Bolt + Socket Mode",   color: "#4ade80", angle: 148, radius: 148, orbitSpeed: 0.000164 },
+  { id: "meta",       label: "Meta Ads",          importance: 4, desc: "Facebook / Instagram", color: "#fb923c", angle: 245, radius: 200, orbitSpeed: 0.000142 },
+  { id: "google",     label: "Google Ads",        importance: 4, desc: "Search & Display",     color: "#facc15", angle: 320, radius: 252, orbitSpeed: 0.000127 },
+  // Imp3 — 36px odstęp (> 2×rozmiar=36px)
+  { id: "strategy",   label: "Strategy Engine",   importance: 3, desc: "Self-Learning AI",     color: "#c084fc", angle: 348, radius: 292, orbitSpeed: 0.000118 },
+  { id: "standup",    label: "Standup Bot",       importance: 3, desc: "Team Automation",      color: "#34d399", angle: 128, radius: 328, orbitSpeed: 0.000111 },
+  { id: "campaign",   label: "Kampanie",          importance: 3, desc: "Approval Workflow",    color: "#f472b6", angle: 190, radius: 364, orbitSpeed: 0.000106 },
+  { id: "digest",     label: "Daily Digest",      importance: 3, desc: "Performance Alerts",   color: "#38bdf8", angle: 68,  radius: 400, orbitSpeed: 0.000101 },
+  // Imp2 — 24px odstęp (= 2×rozmiar=24px), naprzemiennie szybsze/wolniejsze
+  { id: "token",      label: "Token Optimizer",   importance: 2, desc: "API Cost Reducer",     color: "#fbbf24", angle: 290, radius: 428, orbitSpeed: 0.000105 },
+  { id: "blockkit",   label: "Block Kit UI",      importance: 2, desc: "Slack Modals",         color: "#22d3ee", angle: 160, radius: 452, orbitSpeed: 0.000078 },
+  { id: "scheduler",  label: "APScheduler",       importance: 2, desc: "Job Scheduling",       color: "#64748b", angle: 20,  radius: 476, orbitSpeed: 0.000115 },
+  { id: "onboarding", label: "Onboarding",        importance: 2, desc: "Client Checklists",    color: "#86efac", angle: 210, radius: 500, orbitSpeed: 0.000072 },
+  { id: "render",     label: "Render.com",        importance: 2, desc: "Cloud Deployment",     color: "#94a3b8", angle: 55,  radius: 524, orbitSpeed: 0.000098 },
 ];
 
 // NASA / Wikimedia Commons public domain planet textures (thumbnail versions for fast loading)
@@ -84,7 +84,7 @@ const EDGES = [
   ["render","scheduler"],
 ];
 
-const SIZES = { 5: 30, 4: 20, 3: 14, 2: 9 };
+const SIZES = { 5: 38, 4: 26, 3: 18, 2: 12 };
 
 const hexToRgb = (hex) => {
   const r = parseInt(hex.slice(1,3), 16);
@@ -171,7 +171,7 @@ export default function SebolGalaxy() {
     const getScale = () => Math.min(
       canvas.width / devicePixelRatio,
       canvas.height / devicePixelRatio
-    ) / 1050;
+    ) / 1180;
 
     const getPositions = (t) => {
       const cw = canvas.width / devicePixelRatio / 2;
@@ -311,20 +311,23 @@ export default function SebolGalaxy() {
         const img = imagesRef.current[node.id];
         const imgLoaded = imagesLoadedRef.current[node.id];
 
-        // Saturn rings — drawn behind planet first (back half)
+        // Saturn rings — back half (upper arc, drawn BEHIND planet)
         if (node.id === "google") {
+          const tilt = 0.28;
+          const rings = [
+            { rx: r*1.3,  ry: r*0.22, lw: r*0.07, a: `rgba(185,160,105,${0.55*alpha})` },
+            { rx: r*1.55, ry: r*0.26, lw: r*0.16, a: `rgba(228,202,140,${0.80*alpha})` },
+            { rx: r*1.82, ry: r*0.31, lw: r*0.12, a: `rgba(210,185,128,${0.65*alpha})` },
+            { rx: r*2.05, ry: r*0.35, lw: r*0.05, a: `rgba(190,165,110,${0.35*alpha})` },
+          ];
           ctx.save();
-          ctx.globalAlpha = alpha * 0.7;
-          ctx.strokeStyle = `rgba(230,200,140,0.55)`;
-          ctx.lineWidth = r * 0.55;
-          ctx.beginPath();
-          ctx.ellipse(node.x, node.y, r * 2.1, r * 0.45, 0.22, Math.PI, Math.PI * 2);
-          ctx.stroke();
-          ctx.strokeStyle = `rgba(200,170,100,0.3)`;
-          ctx.lineWidth = r * 0.25;
-          ctx.beginPath();
-          ctx.ellipse(node.x, node.y, r * 2.6, r * 0.55, 0.22, Math.PI, Math.PI * 2);
-          ctx.stroke();
+          rings.forEach(({ rx, ry, lw, a }) => {
+            ctx.strokeStyle = a;
+            ctx.lineWidth = lw;
+            ctx.beginPath();
+            ctx.ellipse(node.x, node.y, rx, ry, tilt, Math.PI, Math.PI * 2);
+            ctx.stroke();
+          });
           ctx.restore();
         }
 
@@ -357,8 +360,8 @@ export default function SebolGalaxy() {
             ctx.restore();
           }
 
-          // Outer atmosphere glow (thin colored halo just outside the sphere)
-          if (node.id !== "core") {
+          // Outer atmosphere glow — skip for Saturn (rings replace it visually)
+          if (node.id !== "core" && node.id !== "google") {
             ctx.save();
             ctx.globalAlpha = alpha;
             const outerAtmo = ctx.createRadialGradient(node.x, node.y, r * 0.9, node.x, node.y, r * 1.28);
@@ -430,20 +433,23 @@ export default function SebolGalaxy() {
           ctx.fillRect(node.x - r, node.y - r, imgSize, imgSize);
           ctx.restore();
 
-          // Saturn rings — front half (over planet)
+          // Saturn rings — front half (lower arc, drawn IN FRONT of planet)
           if (node.id === "google") {
+            const tilt = 0.28;
+            const rings = [
+              { rx: r*1.3,  ry: r*0.22, lw: r*0.07, a: `rgba(185,160,105,${0.65*alpha})` },
+              { rx: r*1.55, ry: r*0.26, lw: r*0.16, a: `rgba(228,202,140,${0.92*alpha})` },
+              { rx: r*1.82, ry: r*0.31, lw: r*0.12, a: `rgba(210,185,128,${0.78*alpha})` },
+              { rx: r*2.05, ry: r*0.35, lw: r*0.05, a: `rgba(190,165,110,${0.42*alpha})` },
+            ];
             ctx.save();
-            ctx.globalAlpha = alpha * 0.85;
-            ctx.strokeStyle = `rgba(230,200,140,0.7)`;
-            ctx.lineWidth = r * 0.55;
-            ctx.beginPath();
-            ctx.ellipse(node.x, node.y, r * 2.1, r * 0.45, 0.22, 0, Math.PI);
-            ctx.stroke();
-            ctx.strokeStyle = `rgba(200,170,100,0.4)`;
-            ctx.lineWidth = r * 0.25;
-            ctx.beginPath();
-            ctx.ellipse(node.x, node.y, r * 2.6, r * 0.55, 0.22, 0, Math.PI);
-            ctx.stroke();
+            rings.forEach(({ rx, ry, lw, a }) => {
+              ctx.strokeStyle = a;
+              ctx.lineWidth = lw;
+              ctx.beginPath();
+              ctx.ellipse(node.x, node.y, rx, ry, tilt, 0, Math.PI);
+              ctx.stroke();
+            });
             ctx.restore();
           }
         } else {
@@ -463,23 +469,25 @@ export default function SebolGalaxy() {
           ctx.shadowBlur = 0;
         }
 
-        // Glowing border ring
-        ctx.beginPath();
-        ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(${hexToRgb(node.color)},${0.65 * alpha})`;
-        ctx.lineWidth = isHov ? 2.5 : 1.5;
-        ctx.shadowColor = node.color;
-        ctx.shadowBlur = isHov ? 30 : 14;
-        ctx.stroke();
-        ctx.shadowBlur = 0;
+        // Hover ring only (no permanent border)
+        if (isHov) {
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, r + 4, 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(${hexToRgb(node.color)},0.7)`;
+          ctx.lineWidth = 1.5;
+          ctx.shadowColor = node.color;
+          ctx.shadowBlur = 20;
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+        }
 
         if (node.importance === 5) {
           ctx.beginPath();
-          ctx.arc(node.x, node.y, r + 6 + 3 * Math.sin(ts * 0.003), 0, Math.PI * 2);
-          ctx.strokeStyle = `rgba(${hexToRgb(node.color)},${0.4 * alpha})`;
+          ctx.arc(node.x, node.y, r + 8 + 4 * Math.sin(ts * 0.003), 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(${hexToRgb(node.color)},${0.35 * alpha})`;
           ctx.lineWidth = 1.2;
           ctx.shadowColor = node.color;
-          ctx.shadowBlur = 8;
+          ctx.shadowBlur = 10;
           ctx.stroke();
           ctx.shadowBlur = 0;
         }
@@ -541,41 +549,48 @@ export default function SebolGalaxy() {
   }, []);
 
   return (
-    <div style={{ width:"100vw", height:"100vh", background:"#03060e", overflow:"hidden", position:"relative" }}>
+    <div style={{ width:"100vw", height:"100vh", background:"#03060e", display:"flex", flexDirection:"column", overflow:"hidden" }}>
+
+      {/* ── Title bar — separate section, never overlaps galaxy ── */}
       <div style={{
-        position:"absolute", top:64, left:"50%", transform:"translateX(-50%)",
-        textAlign:"center", zIndex:10, pointerEvents:"none",
+        flexShrink: 0, height: 72,
+        display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+        borderBottom:"1px solid rgba(0,212,255,0.08)",
+        background:"linear-gradient(180deg,rgba(0,20,40,0.9) 0%,rgba(3,6,14,0) 100%)",
       }}>
-        <div style={{ fontFamily:"'Orbitron',monospace", fontWeight:900, fontSize:"clamp(20px,3.5vw,38px)",
+        <div style={{ fontFamily:"'Orbitron',monospace", fontWeight:900, fontSize:"clamp(18px,2.8vw,32px)",
           color:"#00d4ff", letterSpacing:"0.35em",
-          textShadow:"0 0 20px #00d4ff, 0 0 60px rgba(0,212,255,0.4)",
+          textShadow:"0 0 18px #00d4ff, 0 0 50px rgba(0,212,255,0.35)",
         }}>SEBOL</div>
-        <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:"clamp(8px,1.1vw,11px)",
-          color:"rgba(0,212,255,0.5)", letterSpacing:"0.5em", marginTop:4,
+        <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:"clamp(8px,1vw,11px)",
+          color:"rgba(0,212,255,0.45)", letterSpacing:"0.5em", marginTop:3,
         }}>GALAKTYKA SYSTEMU · v2.0</div>
       </div>
 
-      <div style={{
-        position:"absolute", bottom:24, left:24, zIndex:10,
-        fontFamily:"'Share Tech Mono',monospace", fontSize:10,
-        color:"rgba(100,180,255,0.5)", letterSpacing:"0.1em", lineHeight:1.8,
-        pointerEvents:"none",
-      }}>
-        <div>● RDZEŃ &nbsp; ◉ API &nbsp; ○ MODUŁ &nbsp; · NARZĘDZIE</div>
-        <div style={{ marginTop:4, color:"rgba(100,180,255,0.3)" }}>hover → podświetl zależności</div>
-      </div>
+      {/* ── Galaxy canvas — fills remaining space ── */}
+      <div style={{ flex:1, position:"relative", overflow:"hidden" }}>
+        <div style={{
+          position:"absolute", bottom:20, left:20, zIndex:10,
+          fontFamily:"'Share Tech Mono',monospace", fontSize:10,
+          color:"rgba(100,180,255,0.45)", letterSpacing:"0.1em", lineHeight:1.8,
+          pointerEvents:"none",
+        }}>
+          <div>● RDZEŃ &nbsp; ◉ API &nbsp; ○ MODUŁ &nbsp; · NARZĘDZIE</div>
+          <div style={{ marginTop:3, color:"rgba(100,180,255,0.28)" }}>hover → podświetl zależności</div>
+        </div>
 
-      <div style={{
-        position:"absolute", bottom:24, right:24, zIndex:10,
-        fontFamily:"'Share Tech Mono',monospace", fontSize:10,
-        color:"rgba(100,180,255,0.4)", letterSpacing:"0.1em", textAlign:"right",
-        pointerEvents:"none",
-      }}>
-        <div>{NODES.length} WĘZŁÓW</div>
-        <div>{EDGES.length} POŁĄCZEŃ</div>
-      </div>
+        <div style={{
+          position:"absolute", bottom:20, right:20, zIndex:10,
+          fontFamily:"'Share Tech Mono',monospace", fontSize:10,
+          color:"rgba(100,180,255,0.35)", letterSpacing:"0.1em", textAlign:"right",
+          pointerEvents:"none",
+        }}>
+          <div>{NODES.length} WĘZŁÓW</div>
+          <div>{EDGES.length} POŁĄCZEŃ</div>
+        </div>
 
-      <canvas ref={canvasRef} style={{ width:"100%", height:"100%", display:"block" }} />
+        <canvas ref={canvasRef} style={{ width:"100%", height:"100%", display:"block" }} />
+      </div>
     </div>
   );
 }
