@@ -8,17 +8,17 @@ const NODES = [
   { id: "slack",      label: "Slack",             importance: 4, desc: "Bolt + Socket Mode",   color: "#4ade80", angle: 148, radius: 180, orbitSpeed: 0.000164 },
   { id: "meta",       label: "Meta Ads",          importance: 4, desc: "Facebook / Instagram", color: "#fb923c", angle: 245, radius: 264, orbitSpeed: 0.000142 },
   { id: "google",     label: "Google Ads",        importance: 4, desc: "Search & Display",     color: "#facc15", angle: 320, radius: 348, orbitSpeed: 0.000127 },
-  // Imp3 — 60px gap first, 50px between peers (> sum radii 36–44 + buffer)
-  { id: "strategy",   label: "Strategy Engine",   importance: 3, desc: "Self-Learning AI",     color: "#c084fc", angle: 348, radius: 408, orbitSpeed: 0.000118 },
-  { id: "standup",    label: "Standup Bot",       importance: 3, desc: "Team Automation",      color: "#34d399", angle: 128, radius: 458, orbitSpeed: 0.000111 },
-  { id: "campaign",   label: "Kampanie",          importance: 3, desc: "Approval Workflow",    color: "#f472b6", angle: 190, radius: 508, orbitSpeed: 0.000106 },
-  { id: "digest",     label: "Daily Digest",      importance: 3, desc: "Performance Alerts",   color: "#38bdf8", angle: 68,  radius: 558, orbitSpeed: 0.000101 },
-  // Imp2 — 42px gap first, 35px between peers (> sum radii 24–30 + buffer)
-  { id: "token",      label: "Token Optimizer",   importance: 2, desc: "API Cost Reducer",     color: "#fbbf24", angle: 290, radius: 600, orbitSpeed: 0.000105 },
-  { id: "blockkit",   label: "Block Kit UI",      importance: 2, desc: "Slack Modals",         color: "#22d3ee", angle: 160, radius: 635, orbitSpeed: 0.000078 },
-  { id: "scheduler",  label: "APScheduler",       importance: 2, desc: "Job Scheduling",       color: "#64748b", angle: 20,  radius: 670, orbitSpeed: 0.000115 },
-  { id: "onboarding", label: "Onboarding",        importance: 2, desc: "Client Checklists",    color: "#86efac", angle: 210, radius: 705, orbitSpeed: 0.000072 },
-  { id: "render",     label: "Render.com",        importance: 2, desc: "Cloud Deployment",     color: "#94a3b8", angle: 55,  radius: 740, orbitSpeed: 0.000098 },
+  // Imp3 — expanded gaps (Saturn rings extend to r*2.1 → need >54px clear from orbit 348)
+  { id: "strategy",   label: "Strategy Engine",   importance: 3, desc: "Self-Learning AI",     color: "#c084fc", angle: 348, radius: 440, orbitSpeed: 0.000118 },
+  { id: "standup",    label: "Standup Bot",       importance: 3, desc: "Team Automation",      color: "#34d399", angle: 128, radius: 490, orbitSpeed: 0.000111 },
+  { id: "campaign",   label: "Kampanie",          importance: 3, desc: "Approval Workflow",    color: "#f472b6", angle: 190, radius: 540, orbitSpeed: 0.000106 },
+  { id: "digest",     label: "Daily Digest",      importance: 3, desc: "Performance Alerts",   color: "#38bdf8", angle: 68,  radius: 590, orbitSpeed: 0.000101 },
+  // Imp2 — expanded outward proportionally
+  { id: "token",      label: "Token Optimizer",   importance: 2, desc: "API Cost Reducer",     color: "#fbbf24", angle: 290, radius: 635, orbitSpeed: 0.000105 },
+  { id: "blockkit",   label: "Block Kit UI",      importance: 2, desc: "Slack Modals",         color: "#22d3ee", angle: 160, radius: 672, orbitSpeed: 0.000078 },
+  { id: "scheduler",  label: "APScheduler",       importance: 2, desc: "Job Scheduling",       color: "#64748b", angle: 20,  radius: 708, orbitSpeed: 0.000115 },
+  { id: "onboarding", label: "Onboarding",        importance: 2, desc: "Client Checklists",    color: "#86efac", angle: 210, radius: 742, orbitSpeed: 0.000072 },
+  { id: "render",     label: "Render.com",        importance: 2, desc: "Cloud Deployment",     color: "#94a3b8", angle: 55,  radius: 775, orbitSpeed: 0.000098 },
 ];
 
 // NASA / Wikimedia Commons public domain planet textures (thumbnail versions for fast loading)
@@ -85,6 +85,19 @@ const EDGES = [
 
 const SIZES = { 5: 38, 4: 26, 3: 18, 2: 12 };
 
+const TICKER_MSGS = [
+  "14:23 · Meta Ads · 3 kampanie zaktualizowane · spend +12%",
+  "14:18 · Google Ads · Budget alert · Campaign at 87% pace",
+  "14:15 · Claude API · 2,340 tokenów · cache hit 78%",
+  "14:12 · Standup Bot · @team daily check-in wysłany do 5 osób",
+  "14:08 · Daily Digest · 5 klientów · raport wygenerowany ✓",
+  "14:05 · Block Kit UI · Wizard kampanii Meta · krok 3/5",
+  "14:01 · Token Optimizer · Oszczędność 340 tokenów w ostatniej godz.",
+  "13:58 · Render.com · Deploy #371 · Build successful ✓",
+  "13:55 · APScheduler · Budget alert job · 12 kampanii sprawdzonych",
+  "13:50 · Strategy Engine · Weekly learnings · 7 sugestii wygenerowanych",
+];
+
 const hexToRgb = (hex) => {
   const r = parseInt(hex.slice(1,3), 16);
   const g = parseInt(hex.slice(3,5), 16);
@@ -112,6 +125,7 @@ class EdgeParticle {
 
 export default function SebolGalaxy() {
   const canvasRef = useRef(null);
+  const canvasWrapRef = useRef(null);
   const animRef = useRef(null);
   const starsRef = useRef([]);
   const particlesRef = useRef([]);
@@ -120,6 +134,13 @@ export default function SebolGalaxy() {
   const lastParticleSpawn = useRef(0);
   const imagesRef = useRef({});
   const imagesLoadedRef = useRef({});
+  const tailsRef = useRef({});
+  const orbitPacketsRef = useRef([]);
+  const lastOrbitPacketRef = useRef(0);
+  const shootingStarsRef = useRef([]);
+  const lastShootingStarRef = useRef(0);
+  const tiltRef = useRef({ x: 0, y: 0, tx: 0, ty: 0 });
+  const [clickedNode, setClickedNode] = useState(null);
   const [tooltip, setTooltip] = useState(null);
   const [imagesReady, setImagesReady] = useState(false);
 
@@ -170,7 +191,7 @@ export default function SebolGalaxy() {
     const getScale = () => Math.min(
       canvas.width / devicePixelRatio,
       canvas.height / devicePixelRatio
-    ) / 1600;
+    ) / 1500;
 
     const getPositions = (t) => {
       const cw = canvas.width / devicePixelRatio / 2;
@@ -249,6 +270,95 @@ export default function SebolGalaxy() {
 
       particlesRef.current = particlesRef.current.filter(p => p.update());
 
+      // ── Shooting stars ──────────────────────────────────────────────────────
+      if (ts - lastShootingStarRef.current > 2800 + Math.random() * 3200) {
+        lastShootingStarRef.current = ts;
+        const angle = Math.PI * (0.15 + Math.random() * 0.25);
+        const speed = 5 + Math.random() * 7;
+        shootingStarsRef.current.push({
+          x: Math.random() * W, y: -10,
+          vx: Math.cos(angle + (Math.random()-0.5)*0.4) * speed,
+          vy: Math.sin(angle) * speed,
+          life: 1.0, tailLen: 60 + Math.random() * 80,
+        });
+      }
+      shootingStarsRef.current = shootingStarsRef.current.filter(ss => {
+        ss.x += ss.vx; ss.y += ss.vy; ss.life -= 0.022;
+        if (ss.life <= 0 || ss.y > H + 50) return false;
+        const spd = Math.hypot(ss.vx, ss.vy);
+        const nx = ss.vx / spd, ny = ss.vy / spd;
+        const grad = ctx.createLinearGradient(
+          ss.x - nx * ss.tailLen, ss.y - ny * ss.tailLen, ss.x, ss.y
+        );
+        grad.addColorStop(0, "rgba(255,255,255,0)");
+        grad.addColorStop(1, `rgba(210,230,255,${0.95 * ss.life})`);
+        ctx.beginPath();
+        ctx.moveTo(ss.x - nx * ss.tailLen, ss.y - ny * ss.tailLen);
+        ctx.lineTo(ss.x, ss.y);
+        ctx.strokeStyle = grad;
+        ctx.lineWidth = 1.8 * ss.life;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(ss.x, ss.y, 2, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,255,255,${ss.life})`;
+        ctx.shadowColor = "#aaccff"; ctx.shadowBlur = 10;
+        ctx.fill(); ctx.shadowBlur = 0;
+        return true;
+      });
+
+      const s = getScale();
+
+      // ── Subtle orbit rings ──────────────────────────────────────────────────
+      positions.forEach(node => {
+        if (node.radius === 0) return;
+        const orbitR = node.radius * s;
+        const isActive = hovered && (node.id === hovered || connected.has(node.id));
+        const opacity = isActive ? 0.18 : (hovered ? 0.03 : 0.07);
+        ctx.beginPath();
+        ctx.arc(cx, cy, orbitR, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(${hexToRgb(node.color)},${opacity})`;
+        ctx.lineWidth = isActive ? 1 : 0.5;
+        ctx.stroke();
+      });
+
+      // ── Orbit data packets ──────────────────────────────────────────────────
+      if (ts - lastOrbitPacketRef.current > 350 + Math.random() * 400) {
+        lastOrbitPacketRef.current = ts;
+        const orbitNodes = NODES.filter(n => n.radius > 0);
+        const n = orbitNodes[Math.floor(Math.random() * orbitNodes.length)];
+        orbitPacketsRef.current.push({
+          orbitRadius: n.radius,
+          angle: Math.random() * Math.PI * 2,
+          angularSpeed: (0.0015 + Math.random() * 0.002) * (Math.random() > 0.5 ? 1 : -1),
+          color: n.color,
+          life: 1.0,
+        });
+      }
+      orbitPacketsRef.current = orbitPacketsRef.current.filter(p => {
+        p.angle += p.angularSpeed;
+        p.life -= 0.0025;
+        if (p.life <= 0) return false;
+        const screenR = p.orbitRadius * s;
+        const fade = Math.min(1, p.life * 4) * Math.min(1, (1 - p.life) * 4 + 0.3);
+        for (let t = 1; t <= 4; t++) {
+          const ga = p.angle - p.angularSpeed * t * 6;
+          const gx = cx + Math.cos(ga) * screenR;
+          const gy = cy + Math.sin(ga) * screenR;
+          ctx.beginPath();
+          ctx.arc(gx, gy, Math.max(0.5, 2 - t * 0.4), 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(${hexToRgb(p.color)},${(0.7 - t * 0.15) * fade})`;
+          ctx.fill();
+        }
+        const px = cx + Math.cos(p.angle) * screenR;
+        const py = cy + Math.sin(p.angle) * screenR;
+        ctx.beginPath();
+        ctx.arc(px, py, 3, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${hexToRgb(p.color)},${fade})`;
+        ctx.shadowColor = p.color; ctx.shadowBlur = 12;
+        ctx.fill(); ctx.shadowBlur = 0;
+        return true;
+      });
+
       EDGES.forEach(([a, b]) => {
         const na = posMap[a], nb = posMap[b];
         if (!na || !nb) return;
@@ -295,6 +405,21 @@ export default function SebolGalaxy() {
         const r = node.r * pulse * extraScale;
         const alpha = dimmed ? 0.25 : 1;
 
+        // ── Comet tail ─────────────────────────────────────────────────────────
+        if (node.radius > 0) {
+          if (!tailsRef.current[node.id]) tailsRef.current[node.id] = [];
+          const tail = tailsRef.current[node.id];
+          tail.push({ x: node.x, y: node.y });
+          if (tail.length > 28) tail.shift();
+          for (let i = 1; i < tail.length; i++) {
+            const t = i / tail.length;
+            ctx.beginPath();
+            ctx.arc(tail[i].x, tail[i].y, Math.max(0.4, t * node.r * 0.45), 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(${hexToRgb(node.color)},${t * t * 0.40 * (dimmed ? 0.2 : 1)})`;
+            ctx.fill();
+          }
+        }
+
         // Halo glow
         const haloR = r * (isHov ? 4.5 : 3.2);
         const halo = ctx.createRadialGradient(node.x, node.y, r*0.5, node.x, node.y, haloR);
@@ -314,13 +439,11 @@ export default function SebolGalaxy() {
         if (node.id === "google") {
           // ry/rx ratio = perspective squish (0.38 ≈ 22° tilt looks natural)
           const PY = 0.38;
-          // Each band: [innerRx, outerRx, fillColor, opacity]
+          // Each band: [innerRx, outerRx, fillColor, opacity] — outer capped at r*2.1 to not clip adjacent orbit
           const bands = [
-            [r*1.22, r*1.44, "#c8b478", 0.42],   // C ring — narrow, faint
-            [r*1.46, r*1.92, "#ead490", 0.80],   // B ring — brightest
-            // Cassini Division gap: r*1.92 → r*2.02 (no ring)
-            [r*2.02, r*2.32, "#d4b87c", 0.62],   // A ring
-            [r*2.32, r*2.42, "#c0a864", 0.25],   // outer fringe
+            [r*1.20, r*1.40, "#c8b478", 0.42],   // C ring
+            [r*1.42, r*1.82, "#ead490", 0.80],   // B ring
+            [r*1.90, r*2.10, "#d4b87c", 0.62],   // A ring
           ];
           ctx.save();
           bands.forEach(([ir, or_, color, oa]) => {
@@ -441,10 +564,9 @@ export default function SebolGalaxy() {
           if (node.id === "google") {
             const PY = 0.38;
             const bands = [
-              [r*1.22, r*1.44, "#c8b478", 0.50],
-              [r*1.46, r*1.92, "#ead490", 0.92],
-              [r*2.02, r*2.32, "#d4b87c", 0.74],
-              [r*2.32, r*2.42, "#c0a864", 0.30],
+              [r*1.20, r*1.40, "#c8b478", 0.50],
+              [r*1.42, r*1.82, "#ead490", 0.92],
+              [r*1.90, r*2.10, "#d4b87c", 0.74],
             ];
             ctx.save();
             bands.forEach(([ir, or_, color, oa]) => {
@@ -513,10 +635,9 @@ export default function SebolGalaxy() {
           {
             const PY = 0.38;
             const satBands = [
-              [r*1.22, r*1.44, "#c8b478", 0.50],
-              [r*1.46, r*1.92, "#ead490", 0.92],
-              [r*2.02, r*2.32, "#d4b87c", 0.74],
-              [r*2.32, r*2.42, "#c0a864", 0.30],
+              [r*1.20, r*1.40, "#c8b478", 0.50],
+              [r*1.42, r*1.82, "#ead490", 0.92],
+              [r*1.90, r*2.10, "#d4b87c", 0.74],
             ];
             ctx.save();
             satBands.forEach(([ir, or_, color, oa]) => {
@@ -592,6 +713,15 @@ export default function SebolGalaxy() {
         }
       });
 
+      // ── 3D tilt lerp ───────────────────────────────────────────────────────
+      const tilt = tiltRef.current;
+      tilt.x += (tilt.tx - tilt.x) * 0.06;
+      tilt.y += (tilt.ty - tilt.y) * 0.06;
+      if (canvasWrapRef.current) {
+        canvasWrapRef.current.style.transform =
+          `perspective(900px) rotateX(${tilt.x.toFixed(3)}deg) rotateY(${tilt.y.toFixed(3)}deg)`;
+      }
+
       animRef.current = requestAnimationFrame(draw);
     };
 
@@ -601,6 +731,11 @@ export default function SebolGalaxy() {
       const rect = canvas.getBoundingClientRect();
       const mx = (e.clientX - rect.left);
       const my = (e.clientY - rect.top);
+      const W2 = canvas.width / devicePixelRatio;
+      const H2 = canvas.height / devicePixelRatio;
+      // 3D tilt target
+      tiltRef.current.tx = ((my / H2) - 0.5) * -6;
+      tiltRef.current.ty = ((mx / W2) - 0.5) * 8;
       const positions = getPositions(timeRef.current);
       const scale = getScale();
       let found = null;
@@ -618,15 +753,41 @@ export default function SebolGalaxy() {
       }
     };
 
+    const handleClick = (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const positions = getPositions(timeRef.current);
+      const scale = getScale();
+      for (const n of positions) {
+        const hit = SIZES[n.importance] * Math.max(0.55, scale) + 12;
+        if (Math.hypot(mx - n.x, my - n.y) < hit) {
+          setClickedNode(prev => prev?.id === n.id ? null : { id: n.id, label: n.label, desc: n.desc, color: n.color, cx: mx, cy: my });
+          return;
+        }
+      }
+      setClickedNode(null);
+    };
+
+    const handleMouseLeave = () => {
+      tiltRef.current.tx = 0;
+      tiltRef.current.ty = 0;
+    };
+
     canvas.addEventListener("mousemove", handleMove);
+    canvas.addEventListener("click", handleClick);
+    canvas.addEventListener("mouseleave", handleMouseLeave);
     return () => {
       cancelAnimationFrame(animRef.current);
       window.removeEventListener("resize", resize);
       canvas.removeEventListener("mousemove", handleMove);
+      canvas.removeEventListener("click", handleClick);
+      canvas.removeEventListener("mouseleave", handleMouseLeave);
     };
   }, []);
 
   return (
+    <>
     <div style={{ width:"100vw", height:"100vh", background:"#03060e", display:"flex", flexDirection:"column", overflow:"hidden" }}>
 
       {/* ── Title bar — separate section, never overlaps galaxy ── */}
@@ -646,19 +807,25 @@ export default function SebolGalaxy() {
       </div>
 
       {/* ── Galaxy canvas — fills remaining space ── */}
-      <div style={{ flex:1, position:"relative", overflow:"hidden" }}>
+      <div
+        ref={canvasWrapRef}
+        style={{
+          flex:1, position:"relative", overflow:"hidden",
+          transformOrigin:"center center", transformStyle:"preserve-3d",
+        }}
+      >
         <div style={{
-          position:"absolute", bottom:20, left:20, zIndex:10,
+          position:"absolute", bottom:34, left:20, zIndex:10,
           fontFamily:"'Share Tech Mono',monospace", fontSize:10,
           color:"rgba(100,180,255,0.45)", letterSpacing:"0.1em", lineHeight:1.8,
           pointerEvents:"none",
         }}>
           <div>● RDZEŃ &nbsp; ◉ API &nbsp; ○ MODUŁ &nbsp; · NARZĘDZIE</div>
-          <div style={{ marginTop:3, color:"rgba(100,180,255,0.28)" }}>hover → podświetl zależności</div>
+          <div style={{ marginTop:3, color:"rgba(100,180,255,0.28)" }}>hover → podświetl · kliknij → szczegóły</div>
         </div>
 
         <div style={{
-          position:"absolute", bottom:20, right:20, zIndex:10,
+          position:"absolute", bottom:34, right:20, zIndex:10,
           fontFamily:"'Share Tech Mono',monospace", fontSize:10,
           color:"rgba(100,180,255,0.35)", letterSpacing:"0.1em", textAlign:"right",
           pointerEvents:"none",
@@ -668,7 +835,62 @@ export default function SebolGalaxy() {
         </div>
 
         <canvas ref={canvasRef} style={{ width:"100%", height:"100%", display:"block" }} />
+
+        {/* Info card on planet click */}
+        {clickedNode && (
+          <div key={clickedNode.id} style={{
+            position:"absolute",
+            left: Math.min(clickedNode.cx + 18, "calc(100% - 220px)"),
+            top: Math.max(10, clickedNode.cy - 50),
+            background:"rgba(2,8,22,0.94)",
+            backdropFilter:"blur(18px)",
+            border:`1px solid rgba(${hexToRgb(clickedNode.color)},0.45)`,
+            borderRadius:10, padding:"14px 18px",
+            zIndex:20, pointerEvents:"none", width:200,
+            boxShadow:`0 4px 32px rgba(${hexToRgb(clickedNode.color)},0.22)`,
+            animation:"infoFadeIn .18s ease",
+          }}>
+            <div style={{ width:32, height:3, borderRadius:2, background:clickedNode.color, marginBottom:10, opacity:0.8 }} />
+            <div style={{ fontFamily:"'Orbitron',monospace", fontSize:11, fontWeight:700, color:clickedNode.color, marginBottom:5 }}>
+              {clickedNode.label}
+            </div>
+            <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:10, color:"rgba(160,210,255,0.7)", lineHeight:1.6, marginBottom:10 }}>
+              {clickedNode.desc}
+            </div>
+            <div style={{ fontFamily:"'Share Tech Mono',monospace", fontSize:9, color:"rgba(80,120,180,0.5)", letterSpacing:".05em" }}>
+              KLIKNIJ ABY ZAMKNĄĆ
+            </div>
+          </div>
+        )}
+
+        {/* Live activity ticker */}
+        <div style={{
+          position:"absolute", bottom:0, left:0, right:0, height:26,
+          background:"rgba(1,4,12,0.88)",
+          borderTop:"1px solid rgba(0,212,255,0.1)",
+          overflow:"hidden", display:"flex", alignItems:"center",
+          zIndex:15, pointerEvents:"none",
+        }}>
+          <div style={{ display:"flex", animation:"tickerScroll 55s linear infinite", whiteSpace:"nowrap" }}>
+            {[...TICKER_MSGS, ...TICKER_MSGS].map((msg, i) => (
+              <span key={i} style={{
+                fontFamily:"'Share Tech Mono',monospace",
+                fontSize:10, padding:"0 44px",
+                color:"rgba(0,195,255,0.45)",
+              }}>
+                <span style={{ color:"rgba(0,195,255,0.22)", marginRight:8 }}>►</span>
+                {msg}
+              </span>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
+    <style>{`
+      @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+      @keyframes tickerScroll { from{transform:translateX(0)} to{transform:translateX(-50%)} }
+      @keyframes infoFadeIn { from{opacity:0;transform:translateY(-6px)} to{opacity:1;transform:translateY(0)} }
+    `}</style>
+    </>
   );
 }
