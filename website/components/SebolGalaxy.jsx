@@ -18,6 +18,24 @@ const NODES = [
   { id: "render",     label: "Render.com",        importance: 2, desc: "Cloud Deployment",     color: "#94a3b8", angle: 55,  radius: 392, orbitSpeed: 0.000052 },
 ];
 
+// NASA / Wikimedia Commons public domain planet textures
+const PLANET_IMAGES = {
+  core:       "https://upload.wikimedia.org/wikipedia/commons/b/b4/The_Sun_by_the_Atmospheric_Imaging_Assembly_of_NASA%27s_Solar_Dynamics_Observatory_-_20100819.jpg",
+  claude:     "https://upload.wikimedia.org/wikipedia/commons/5/56/Neptune_Full.jpg",
+  slack:      "https://upload.wikimedia.org/wikipedia/commons/9/97/The_Earth_seen_from_Apollo_17.jpg",
+  meta:       "https://upload.wikimedia.org/wikipedia/commons/2/2b/Jupiter_and_its_shrunken_Great_Red_Spot.jpg",
+  google:     "https://upload.wikimedia.org/wikipedia/commons/c/c7/Saturn_during_Equinox.jpg",
+  digest:     "https://upload.wikimedia.org/wikipedia/commons/4/4a/Mercury_in_true_color.jpg",
+  campaign:   "https://upload.wikimedia.org/wikipedia/commons/0/02/OSIRIS_Mars_true_color.jpg",
+  standup:    "https://upload.wikimedia.org/wikipedia/commons/e/e5/Venus-real_color.jpg",
+  strategy:   "https://upload.wikimedia.org/wikipedia/commons/3/3d/Uranus2.jpg",
+  scheduler:  "https://upload.wikimedia.org/wikipedia/commons/e/e1/FullMoon2010.jpg",
+  blockkit:   "https://upload.wikimedia.org/wikipedia/commons/7/7b/Io_highest_resolution_true_color.jpg",
+  onboarding: "https://upload.wikimedia.org/wikipedia/commons/e/e4/Europa-moon-with-margins.jpg",
+  token:      "https://upload.wikimedia.org/wikipedia/commons/e/ef/Pluto_in_True_Color_-_High-Res.jpg",
+  render:     "https://upload.wikimedia.org/wikipedia/commons/4/45/Titan_in_true_color.jpg",
+};
+
 const EDGES = [
   ["core","claude"],["core","slack"],["core","meta"],["core","google"],
   ["core","scheduler"],["core","render"],
@@ -66,7 +84,20 @@ export default function SebolGalaxy() {
   const timeRef = useRef(0);
   const hoveredRef = useRef(null);
   const lastParticleSpawn = useRef(0);
+  const imagesRef = useRef({});
+  const imagesLoadedRef = useRef({});
   const [tooltip, setTooltip] = useState(null);
+
+  // Preload planet images
+  useEffect(() => {
+    Object.entries(PLANET_IMAGES).forEach(([id, url]) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => { imagesLoadedRef.current[id] = true; };
+      img.src = url;
+      imagesRef.current[id] = img;
+    });
+  }, []);
 
   useEffect(() => {
     starsRef.current = Array.from({ length: 350 }, () => ({
@@ -217,6 +248,7 @@ export default function SebolGalaxy() {
         const r = node.r * pulse * extraScale;
         const alpha = dimmed ? 0.25 : 1;
 
+        // Halo glow
         const haloR = r * (isHov ? 4.5 : 3.2);
         const halo = ctx.createRadialGradient(node.x, node.y, r*0.5, node.x, node.y, haloR);
         halo.addColorStop(0, `rgba(${hexToRgb(node.color)},${0.28 * alpha})`);
@@ -227,19 +259,49 @@ export default function SebolGalaxy() {
         ctx.arc(node.x, node.y, haloR, 0, Math.PI * 2);
         ctx.fill();
 
-        const body = ctx.createRadialGradient(
-          node.x - r*0.3, node.y - r*0.3, 0,
-          node.x, node.y, r
-        );
-        body.addColorStop(0, `rgba(255,255,255,${0.95 * alpha})`);
-        body.addColorStop(0.35, `rgba(${hexToRgb(node.color)},${0.85 * alpha})`);
-        body.addColorStop(1, `rgba(${hexToRgb(node.color)},${0.4 * alpha})`);
+        // Planet body — use real texture if loaded, else gradient fallback
+        const img = imagesRef.current[node.id];
+        const imgLoaded = imagesLoadedRef.current[node.id];
+
+        if (img && imgLoaded) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
+          ctx.clip();
+          ctx.globalAlpha = alpha;
+          ctx.drawImage(img, node.x - r, node.y - r, r * 2, r * 2);
+          // Subtle colored atmosphere rim
+          const atmo = ctx.createRadialGradient(node.x, node.y, r * 0.55, node.x, node.y, r);
+          atmo.addColorStop(0, `rgba(${hexToRgb(node.color)},0)`);
+          atmo.addColorStop(1, `rgba(${hexToRgb(node.color)},${0.4 * alpha})`);
+          ctx.fillStyle = atmo;
+          ctx.fillRect(node.x - r, node.y - r, r * 2, r * 2);
+          ctx.restore();
+        } else {
+          const body = ctx.createRadialGradient(
+            node.x - r*0.3, node.y - r*0.3, 0,
+            node.x, node.y, r
+          );
+          body.addColorStop(0, `rgba(255,255,255,${0.95 * alpha})`);
+          body.addColorStop(0.35, `rgba(${hexToRgb(node.color)},${0.85 * alpha})`);
+          body.addColorStop(1, `rgba(${hexToRgb(node.color)},${0.4 * alpha})`);
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
+          ctx.fillStyle = body;
+          ctx.shadowColor = node.color;
+          ctx.shadowBlur = isHov ? 30 : 14;
+          ctx.fill();
+          ctx.shadowBlur = 0;
+        }
+
+        // Glowing border ring
         ctx.beginPath();
         ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
-        ctx.fillStyle = body;
+        ctx.strokeStyle = `rgba(${hexToRgb(node.color)},${0.65 * alpha})`;
+        ctx.lineWidth = isHov ? 2.5 : 1.5;
         ctx.shadowColor = node.color;
         ctx.shadowBlur = isHov ? 30 : 14;
-        ctx.fill();
+        ctx.stroke();
         ctx.shadowBlur = 0;
 
         if (node.importance === 5) {
