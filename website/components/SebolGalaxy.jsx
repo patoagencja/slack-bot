@@ -3,19 +3,22 @@ import { useEffect, useRef, useState } from "react";
 
 const NODES = [
   { id: "core",       label: "Sebol Core",       importance: 5, desc: "AI Agent Hub",         color: "#00d4ff", angle: 0,   radius: 0,   orbitSpeed: 0 },
-  { id: "claude",     label: "Claude AI",         importance: 4, desc: "LLM Engine",           color: "#a78bfa", angle: 25,  radius: 160, orbitSpeed: 0.00014 },
-  { id: "slack",      label: "Slack",             importance: 4, desc: "Bolt + Socket Mode",   color: "#4ade80", angle: 148, radius: 148, orbitSpeed: 0.00017 },
-  { id: "meta",       label: "Meta Ads",          importance: 4, desc: "Facebook / Instagram", color: "#fb923c", angle: 245, radius: 162, orbitSpeed: 0.00013 },
-  { id: "google",     label: "Google Ads",        importance: 4, desc: "Search & Display",     color: "#facc15", angle: 320, radius: 168, orbitSpeed: 0.00015 },
-  { id: "digest",     label: "Daily Digest",      importance: 3, desc: "Performance Alerts",   color: "#38bdf8", angle: 68,  radius: 288, orbitSpeed: 0.000085 },
-  { id: "campaign",   label: "Kampanie",          importance: 3, desc: "Approval Workflow",    color: "#f472b6", angle: 190, radius: 272, orbitSpeed: 0.000095 },
-  { id: "standup",    label: "Standup Bot",       importance: 3, desc: "Team Automation",      color: "#34d399", angle: 128, radius: 258, orbitSpeed: 0.00009 },
-  { id: "strategy",   label: "Strategy Engine",   importance: 3, desc: "Self-Learning AI",     color: "#c084fc", angle: 348, radius: 242, orbitSpeed: 0.00011 },
-  { id: "scheduler",  label: "APScheduler",       importance: 2, desc: "Job Scheduling",       color: "#64748b", angle: 20,  radius: 358, orbitSpeed: 0.000058 },
-  { id: "blockkit",   label: "Block Kit UI",      importance: 2, desc: "Slack Modals",         color: "#22d3ee", angle: 160, radius: 338, orbitSpeed: 0.000068 },
-  { id: "onboarding", label: "Onboarding",        importance: 2, desc: "Client Checklists",    color: "#86efac", angle: 210, radius: 362, orbitSpeed: 0.000062 },
-  { id: "token",      label: "Token Optimizer",   importance: 2, desc: "API Cost Reducer",     color: "#fbbf24", angle: 290, radius: 328, orbitSpeed: 0.000072 },
-  { id: "render",     label: "Render.com",        importance: 2, desc: "Cloud Deployment",     color: "#94a3b8", angle: 55,  radius: 392, orbitSpeed: 0.000052 },
+  // Imp4 — każda na osobnej orbicie, 44px odstęp (> 2×rozmiar=40px)
+  { id: "claude",     label: "Claude AI",         importance: 4, desc: "LLM Engine",           color: "#a78bfa", angle: 25,  radius: 92,  orbitSpeed: 0.000200 },
+  { id: "slack",      label: "Slack",             importance: 4, desc: "Bolt + Socket Mode",   color: "#4ade80", angle: 148, radius: 136, orbitSpeed: 0.000164 },
+  { id: "meta",       label: "Meta Ads",          importance: 4, desc: "Facebook / Instagram", color: "#fb923c", angle: 245, radius: 180, orbitSpeed: 0.000142 },
+  { id: "google",     label: "Google Ads",        importance: 4, desc: "Search & Display",     color: "#facc15", angle: 320, radius: 224, orbitSpeed: 0.000127 },
+  // Imp3 — 32px odstęp (> 2×rozmiar=28px)
+  { id: "strategy",   label: "Strategy Engine",   importance: 3, desc: "Self-Learning AI",     color: "#c084fc", angle: 348, radius: 262, orbitSpeed: 0.000118 },
+  { id: "standup",    label: "Standup Bot",       importance: 3, desc: "Team Automation",      color: "#34d399", angle: 128, radius: 294, orbitSpeed: 0.000111 },
+  { id: "campaign",   label: "Kampanie",          importance: 3, desc: "Approval Workflow",    color: "#f472b6", angle: 190, radius: 326, orbitSpeed: 0.000106 },
+  { id: "digest",     label: "Daily Digest",      importance: 3, desc: "Performance Alerts",   color: "#38bdf8", angle: 68,  radius: 358, orbitSpeed: 0.000101 },
+  // Imp2 — 20px odstęp (> 2×rozmiar=18px), naprzemiennie szybsze/wolniejsze
+  { id: "token",      label: "Token Optimizer",   importance: 2, desc: "API Cost Reducer",     color: "#fbbf24", angle: 290, radius: 382, orbitSpeed: 0.000105 },
+  { id: "blockkit",   label: "Block Kit UI",      importance: 2, desc: "Slack Modals",         color: "#22d3ee", angle: 160, radius: 402, orbitSpeed: 0.000078 },
+  { id: "scheduler",  label: "APScheduler",       importance: 2, desc: "Job Scheduling",       color: "#64748b", angle: 20,  radius: 422, orbitSpeed: 0.000115 },
+  { id: "onboarding", label: "Onboarding",        importance: 2, desc: "Client Checklists",    color: "#86efac", angle: 210, radius: 442, orbitSpeed: 0.000072 },
+  { id: "render",     label: "Render.com",        importance: 2, desc: "Cloud Deployment",     color: "#94a3b8", angle: 55,  radius: 462, orbitSpeed: 0.000098 },
 ];
 
 // NASA / Wikimedia Commons public domain planet textures (thumbnail versions for fast loading)
@@ -168,7 +171,7 @@ export default function SebolGalaxy() {
     const getScale = () => Math.min(
       canvas.width / devicePixelRatio,
       canvas.height / devicePixelRatio
-    ) / 950;
+    ) / 1050;
 
     const getPositions = (t) => {
       const cw = canvas.width / devicePixelRatio / 2;
@@ -369,23 +372,29 @@ export default function SebolGalaxy() {
             ctx.restore();
           }
 
-          // Rotating texture: scroll horizontally to simulate axial spin
+          // Rotating texture via context rotation — no seam, no sliding edges
           const rotSpeed = ROTATION_SPEEDS[node.id] || 0.0001;
-          const rotOffset = (ts * rotSpeed) % 1;
-          const imgX = node.x - r - rotOffset * imgSize;
-          const wobbleY = r * 0.015 * Math.sin(ts * 0.00035 + node.angle);
+          const rotAngle = node.id === "core" ? 0 : ts * rotSpeed * 1.5;
 
           ctx.save();
           ctx.beginPath();
           ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
           ctx.clip();
           ctx.globalAlpha = alpha;
-          // Two copies for seamless wrap
-          ctx.drawImage(img, imgX,           node.y - r + wobbleY, imgSize, imgSize);
-          ctx.drawImage(img, imgX + imgSize, node.y - r + wobbleY, imgSize, imgSize);
+          ctx.translate(node.x, node.y);
+          ctx.rotate(rotAngle);
+          ctx.translate(-node.x, -node.y);
+          ctx.drawImage(img, node.x - r, node.y - r, imgSize, imgSize);
+          ctx.restore(); // end rotation
 
-          // Limb darkening — edges of a sphere are naturally darker
-          // (light from upper-left, so offset focal point there)
+          // Fixed lighting overlays (not rotated) — limb darkening + atmosphere
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
+          ctx.clip();
+          ctx.globalAlpha = alpha;
+
+          // Limb darkening — edges darker, light from upper-left
           const limbFx = node.x - r * 0.18;
           const limbFy = node.y - r * 0.18;
           const limb = ctx.createRadialGradient(limbFx, limbFy, r * 0.25, node.x, node.y, r);
