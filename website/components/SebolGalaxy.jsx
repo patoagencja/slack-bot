@@ -326,6 +326,8 @@ export default function SebolGalaxy() {
         }
 
         if (img && imgLoaded) {
+          const imgSize = r * 2;
+
           // Sun: animated corona rays BEFORE planet body
           if (node.id === "core") {
             const rayCount = 14;
@@ -352,51 +354,69 @@ export default function SebolGalaxy() {
             ctx.restore();
           }
 
-          // Rotating texture: scroll image horizontally to simulate spin
+          // Outer atmosphere glow (thin colored halo just outside the sphere)
+          if (node.id !== "core") {
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            const outerAtmo = ctx.createRadialGradient(node.x, node.y, r * 0.9, node.x, node.y, r * 1.28);
+            outerAtmo.addColorStop(0, `rgba(${hexToRgb(node.color)},${0.55 * alpha})`);
+            outerAtmo.addColorStop(0.5, `rgba(${hexToRgb(node.color)},${0.18 * alpha})`);
+            outerAtmo.addColorStop(1,   "rgba(0,0,0,0)");
+            ctx.fillStyle = outerAtmo;
+            ctx.beginPath();
+            ctx.arc(node.x, node.y, r * 1.28, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+          }
+
+          // Rotating texture: scroll horizontally to simulate axial spin
           const rotSpeed = ROTATION_SPEEDS[node.id] || 0.0001;
-          const rotOffset = (ts * rotSpeed) % 1; // 0–1 normalized
-          const imgSize = r * 2;
+          const rotOffset = (ts * rotSpeed) % 1;
           const imgX = node.x - r - rotOffset * imgSize;
-          // Subtle vertical atmosphere wobble
-          const wobbleY = r * 0.018 * Math.sin(ts * 0.00035 + node.angle);
+          const wobbleY = r * 0.015 * Math.sin(ts * 0.00035 + node.angle);
 
           ctx.save();
           ctx.beginPath();
           ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
           ctx.clip();
           ctx.globalAlpha = alpha;
-          // Draw twice for seamless horizontal wrap
+          // Two copies for seamless wrap
           ctx.drawImage(img, imgX,           node.y - r + wobbleY, imgSize, imgSize);
           ctx.drawImage(img, imgX + imgSize, node.y - r + wobbleY, imgSize, imgSize);
 
-          // Colored atmosphere rim
-          const atmo = ctx.createRadialGradient(node.x, node.y, r * 0.55, node.x, node.y, r);
-          atmo.addColorStop(0, `rgba(${hexToRgb(node.color)},0)`);
-          atmo.addColorStop(1, `rgba(${hexToRgb(node.color)},${0.38 * alpha})`);
-          ctx.fillStyle = atmo;
+          // Limb darkening — edges of a sphere are naturally darker
+          // (light from upper-left, so offset focal point there)
+          const limbFx = node.x - r * 0.18;
+          const limbFy = node.y - r * 0.18;
+          const limb = ctx.createRadialGradient(limbFx, limbFy, r * 0.25, node.x, node.y, r);
+          limb.addColorStop(0,    "rgba(0,0,0,0)");
+          limb.addColorStop(0.58, "rgba(0,0,0,0)");
+          limb.addColorStop(0.80, `rgba(0,0,0,${0.18 * alpha})`);
+          limb.addColorStop(1,    `rgba(0,0,0,${0.72 * alpha})`);
+          ctx.fillStyle = limb;
           ctx.fillRect(node.x - r, node.y - r, imgSize, imgSize);
 
-          // Dark terminator shadow (night side — right edge)
-          const shadow = ctx.createLinearGradient(node.x, node.y, node.x + r, node.y);
-          shadow.addColorStop(0,   "rgba(0,0,0,0)");
-          shadow.addColorStop(0.6, "rgba(0,0,0,0)");
-          shadow.addColorStop(1,   `rgba(0,0,0,${0.55 * alpha})`);
-          ctx.fillStyle = shadow;
+          // Colored atmosphere inner rim
+          const atmo = ctx.createRadialGradient(node.x, node.y, r * 0.7, node.x, node.y, r);
+          atmo.addColorStop(0, `rgba(${hexToRgb(node.color)},0)`);
+          atmo.addColorStop(1, `rgba(${hexToRgb(node.color)},${0.4 * alpha})`);
+          ctx.fillStyle = atmo;
           ctx.fillRect(node.x - r, node.y - r, imgSize, imgSize);
           ctx.restore();
 
-          // Specular highlight — fixed bright spot top-left (light source)
+          // Specular highlight — strong, sells the 3D sphere illusion
           ctx.save();
           ctx.beginPath();
           ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
           ctx.clip();
-          ctx.globalAlpha = alpha * 0.32;
+          ctx.globalAlpha = alpha * (node.id === "core" ? 0.12 : 0.5);
           const specG = ctx.createRadialGradient(
-            node.x - r * 0.32, node.y - r * 0.32, 0,
-            node.x - r * 0.32, node.y - r * 0.32, r * 0.55,
+            node.x - r * 0.38, node.y - r * 0.38, 0,
+            node.x - r * 0.38, node.y - r * 0.38, r * 0.72,
           );
-          specG.addColorStop(0, "rgba(255,255,255,0.9)");
-          specG.addColorStop(1, "rgba(255,255,255,0)");
+          specG.addColorStop(0,   "rgba(255,255,255,1.0)");
+          specG.addColorStop(0.25,"rgba(255,255,255,0.5)");
+          specG.addColorStop(1,   "rgba(255,255,255,0)");
           ctx.fillStyle = specG;
           ctx.fillRect(node.x - r, node.y - r, imgSize, imgSize);
           ctx.restore();
