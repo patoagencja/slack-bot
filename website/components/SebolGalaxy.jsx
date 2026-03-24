@@ -18,22 +18,36 @@ const NODES = [
   { id: "render",     label: "Render.com",        importance: 2, desc: "Cloud Deployment",     color: "#94a3b8", angle: 55,  radius: 392, orbitSpeed: 0.000052 },
 ];
 
-// NASA / Wikimedia Commons public domain planet textures
+// NASA / Wikimedia Commons public domain planet textures (thumbnail versions for fast loading)
 const PLANET_IMAGES = {
-  core:       "https://upload.wikimedia.org/wikipedia/commons/b/b4/The_Sun_by_the_Atmospheric_Imaging_Assembly_of_NASA%27s_Solar_Dynamics_Observatory_-_20100819.jpg",
-  claude:     "https://upload.wikimedia.org/wikipedia/commons/5/56/Neptune_Full.jpg",
-  slack:      "https://upload.wikimedia.org/wikipedia/commons/9/97/The_Earth_seen_from_Apollo_17.jpg",
-  meta:       "https://upload.wikimedia.org/wikipedia/commons/2/2b/Jupiter_and_its_shrunken_Great_Red_Spot.jpg",
-  google:     "https://upload.wikimedia.org/wikipedia/commons/c/c7/Saturn_during_Equinox.jpg",
-  digest:     "https://upload.wikimedia.org/wikipedia/commons/4/4a/Mercury_in_true_color.jpg",
-  campaign:   "https://upload.wikimedia.org/wikipedia/commons/0/02/OSIRIS_Mars_true_color.jpg",
-  standup:    "https://upload.wikimedia.org/wikipedia/commons/e/e5/Venus-real_color.jpg",
-  strategy:   "https://upload.wikimedia.org/wikipedia/commons/3/3d/Uranus2.jpg",
-  scheduler:  "https://upload.wikimedia.org/wikipedia/commons/e/e1/FullMoon2010.jpg",
-  blockkit:   "https://upload.wikimedia.org/wikipedia/commons/7/7b/Io_highest_resolution_true_color.jpg",
-  onboarding: "https://upload.wikimedia.org/wikipedia/commons/e/e4/Europa-moon-with-margins.jpg",
-  token:      "https://upload.wikimedia.org/wikipedia/commons/e/ef/Pluto_in_True_Color_-_High-Res.jpg",
-  render:     "https://upload.wikimedia.org/wikipedia/commons/4/45/Titan_in_true_color.jpg",
+  // Sun — NASA SDO (AIA 304 Å extreme ultraviolet, vivid orange/gold)
+  core:       "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b4/The_Sun_by_the_Atmospheric_Imaging_Assembly_of_NASA%27s_Solar_Dynamics_Observatory_-_20100819.jpg/600px-The_Sun_by_the_Atmospheric_Imaging_Assembly_of_NASA%27s_Solar_Dynamics_Observatory_-_20100819.jpg",
+  // Neptune — Voyager 2 true color (deep blue)
+  claude:     "https://upload.wikimedia.org/wikipedia/commons/thumb/5/56/Neptune_Full.jpg/600px-Neptune_Full.jpg",
+  // Earth — Apollo 17 Blue Marble
+  slack:      "https://upload.wikimedia.org/wikipedia/commons/thumb/9/97/The_Earth_seen_from_Apollo_17.jpg/600px-The_Earth_seen_from_Apollo_17.jpg",
+  // Jupiter — Juno mission PJ21 closeup (vivid bands & storms)
+  meta:       "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Jupiter_New_Horizons.jpg/600px-Jupiter_New_Horizons.jpg",
+  // Saturn — Cassini equinox (iconic rings)
+  google:     "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c7/Saturn_during_Equinox.jpg/600px-Saturn_during_Equinox.jpg",
+  // Mercury — MESSENGER true color
+  digest:     "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4a/Mercury_in_true_color.jpg/600px-Mercury_in_true_color.jpg",
+  // Mars — OSIRIS true color (rusty red)
+  campaign:   "https://upload.wikimedia.org/wikipedia/commons/thumb/0/02/OSIRIS_Mars_true_color.jpg/600px-OSIRIS_Mars_true_color.jpg",
+  // Venus — Mariner 10 (golden clouds)
+  standup:    "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e5/Venus-real_color.jpg/600px-Venus-real_color.jpg",
+  // Uranus — Voyager 2 (pale blue-green)
+  strategy:   "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3d/Uranus2.jpg/600px-Uranus2.jpg",
+  // Moon — full moon true color
+  scheduler:  "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e1/FullMoon2010.jpg/600px-FullMoon2010.jpg",
+  // Io — Galileo spacecraft (volcanic yellow-orange)
+  blockkit:   "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7b/Io_highest_resolution_true_color.jpg/600px-Io_highest_resolution_true_color.jpg",
+  // Europa — Galileo (icy blue-white cracks)
+  onboarding: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Europa-moon-with-margins.jpg/600px-Europa-moon-with-margins.jpg",
+  // Pluto — New Horizons true color (heart terrain)
+  token:      "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ef/Pluto_in_True_Color_-_High-Res.jpg/600px-Pluto_in_True_Color_-_High-Res.jpg",
+  // Titan — Cassini (orange haze)
+  render:     "https://upload.wikimedia.org/wikipedia/commons/thumb/4/45/Titan_in_true_color.jpg/600px-Titan_in_true_color.jpg",
 };
 
 const EDGES = [
@@ -87,13 +101,26 @@ export default function SebolGalaxy() {
   const imagesRef = useRef({});
   const imagesLoadedRef = useRef({});
   const [tooltip, setTooltip] = useState(null);
+  const [imagesReady, setImagesReady] = useState(false);
 
   // Preload planet images
   useEffect(() => {
+    let loaded = 0;
+    const total = Object.keys(PLANET_IMAGES).length;
     Object.entries(PLANET_IMAGES).forEach(([id, url]) => {
       const img = new Image();
       img.crossOrigin = "anonymous";
-      img.onload = () => { imagesLoadedRef.current[id] = true; };
+      img.onload = () => {
+        imagesLoadedRef.current[id] = true;
+        loaded++;
+        if (loaded >= total) setImagesReady(true);
+      };
+      img.onerror = () => {
+        // fallback: mark as failed so gradient is used for this node
+        imagesLoadedRef.current[id] = false;
+        loaded++;
+        if (loaded >= total) setImagesReady(true);
+      };
       img.src = url;
       imagesRef.current[id] = img;
     });
@@ -263,6 +290,23 @@ export default function SebolGalaxy() {
         const img = imagesRef.current[node.id];
         const imgLoaded = imagesLoadedRef.current[node.id];
 
+        // Saturn rings — drawn behind planet first (back half)
+        if (node.id === "google") {
+          ctx.save();
+          ctx.globalAlpha = alpha * 0.7;
+          ctx.strokeStyle = `rgba(230,200,140,0.55)`;
+          ctx.lineWidth = r * 0.55;
+          ctx.beginPath();
+          ctx.ellipse(node.x, node.y, r * 2.1, r * 0.45, 0.22, Math.PI, Math.PI * 2);
+          ctx.stroke();
+          ctx.strokeStyle = `rgba(200,170,100,0.3)`;
+          ctx.lineWidth = r * 0.25;
+          ctx.beginPath();
+          ctx.ellipse(node.x, node.y, r * 2.6, r * 0.55, 0.22, Math.PI, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+
         if (img && imgLoaded) {
           ctx.save();
           ctx.beginPath();
@@ -277,6 +321,23 @@ export default function SebolGalaxy() {
           ctx.fillStyle = atmo;
           ctx.fillRect(node.x - r, node.y - r, r * 2, r * 2);
           ctx.restore();
+
+          // Saturn rings — front half (over planet)
+          if (node.id === "google") {
+            ctx.save();
+            ctx.globalAlpha = alpha * 0.85;
+            ctx.strokeStyle = `rgba(230,200,140,0.7)`;
+            ctx.lineWidth = r * 0.55;
+            ctx.beginPath();
+            ctx.ellipse(node.x, node.y, r * 2.1, r * 0.45, 0.22, 0, Math.PI);
+            ctx.stroke();
+            ctx.strokeStyle = `rgba(200,170,100,0.4)`;
+            ctx.lineWidth = r * 0.25;
+            ctx.beginPath();
+            ctx.ellipse(node.x, node.y, r * 2.6, r * 0.55, 0.22, 0, Math.PI);
+            ctx.stroke();
+            ctx.restore();
+          }
         } else {
           const body = ctx.createRadialGradient(
             node.x - r*0.3, node.y - r*0.3, 0,
