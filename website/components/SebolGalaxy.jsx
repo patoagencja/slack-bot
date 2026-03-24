@@ -50,6 +50,24 @@ const PLANET_IMAGES = {
   render:     "https://upload.wikimedia.org/wikipedia/commons/thumb/4/45/Titan_in_true_color.jpg/600px-Titan_in_true_color.jpg",
 };
 
+// Axial rotation speed (texture scroll) — faster = spins quicker
+const ROTATION_SPEEDS = {
+  core:       0.000055, // Sun   — slow, majestic
+  claude:     0.000048, // Neptune — slow gas giant
+  slack:      0.000110, // Earth — medium
+  meta:       0.000038, // Jupiter — slow (huge mass)
+  google:     0.000032, // Saturn — slowest large planet
+  digest:     0.000190, // Mercury — fast tiny planet
+  campaign:   0.000075, // Mars
+  standup:    0.000028, // Venus — very slow retrograde
+  strategy:   0.000060, // Uranus
+  scheduler:  0.000130, // Moon — moderate
+  blockkit:   0.000160, // Io — fast (tidal lock makes it orbit fast)
+  onboarding: 0.000120, // Europa
+  token:      0.000058, // Pluto — slow dwarf planet
+  render:     0.000045, // Titan
+};
+
 const EDGES = [
   ["core","claude"],["core","slack"],["core","meta"],["core","google"],
   ["core","scheduler"],["core","render"],
@@ -308,18 +326,79 @@ export default function SebolGalaxy() {
         }
 
         if (img && imgLoaded) {
+          // Sun: animated corona rays BEFORE planet body
+          if (node.id === "core") {
+            const rayCount = 14;
+            const rayAngle = ts * 0.00055;
+            ctx.save();
+            for (let i = 0; i < rayCount; i++) {
+              const a = (i / rayCount) * Math.PI * 2 + rayAngle;
+              const innerR = r * 1.08;
+              const outerR = r * (1.75 + 0.28 * Math.sin(ts * 0.0013 + i * 0.9));
+              const half = 0.055 + 0.025 * Math.sin(ts * 0.0019 + i);
+              const grad = ctx.createLinearGradient(
+                node.x + Math.cos(a) * innerR, node.y + Math.sin(a) * innerR,
+                node.x + Math.cos(a) * outerR, node.y + Math.sin(a) * outerR,
+              );
+              grad.addColorStop(0, `rgba(255,210,60,${0.55 * alpha})`);
+              grad.addColorStop(1, "rgba(255,120,0,0)");
+              ctx.beginPath();
+              ctx.moveTo(node.x + Math.cos(a - half) * innerR, node.y + Math.sin(a - half) * innerR);
+              ctx.lineTo(node.x + Math.cos(a) * outerR, node.y + Math.sin(a) * outerR);
+              ctx.lineTo(node.x + Math.cos(a + half) * innerR, node.y + Math.sin(a + half) * innerR);
+              ctx.fillStyle = grad;
+              ctx.fill();
+            }
+            ctx.restore();
+          }
+
+          // Rotating texture: scroll image horizontally to simulate spin
+          const rotSpeed = ROTATION_SPEEDS[node.id] || 0.0001;
+          const rotOffset = (ts * rotSpeed) % 1; // 0–1 normalized
+          const imgSize = r * 2;
+          const imgX = node.x - r - rotOffset * imgSize;
+          // Subtle vertical atmosphere wobble
+          const wobbleY = r * 0.018 * Math.sin(ts * 0.00035 + node.angle);
+
           ctx.save();
           ctx.beginPath();
           ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
           ctx.clip();
           ctx.globalAlpha = alpha;
-          ctx.drawImage(img, node.x - r, node.y - r, r * 2, r * 2);
-          // Subtle colored atmosphere rim
+          // Draw twice for seamless horizontal wrap
+          ctx.drawImage(img, imgX,           node.y - r + wobbleY, imgSize, imgSize);
+          ctx.drawImage(img, imgX + imgSize, node.y - r + wobbleY, imgSize, imgSize);
+
+          // Colored atmosphere rim
           const atmo = ctx.createRadialGradient(node.x, node.y, r * 0.55, node.x, node.y, r);
           atmo.addColorStop(0, `rgba(${hexToRgb(node.color)},0)`);
-          atmo.addColorStop(1, `rgba(${hexToRgb(node.color)},${0.4 * alpha})`);
+          atmo.addColorStop(1, `rgba(${hexToRgb(node.color)},${0.38 * alpha})`);
           ctx.fillStyle = atmo;
-          ctx.fillRect(node.x - r, node.y - r, r * 2, r * 2);
+          ctx.fillRect(node.x - r, node.y - r, imgSize, imgSize);
+
+          // Dark terminator shadow (night side — right edge)
+          const shadow = ctx.createLinearGradient(node.x, node.y, node.x + r, node.y);
+          shadow.addColorStop(0,   "rgba(0,0,0,0)");
+          shadow.addColorStop(0.6, "rgba(0,0,0,0)");
+          shadow.addColorStop(1,   `rgba(0,0,0,${0.55 * alpha})`);
+          ctx.fillStyle = shadow;
+          ctx.fillRect(node.x - r, node.y - r, imgSize, imgSize);
+          ctx.restore();
+
+          // Specular highlight — fixed bright spot top-left (light source)
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
+          ctx.clip();
+          ctx.globalAlpha = alpha * 0.32;
+          const specG = ctx.createRadialGradient(
+            node.x - r * 0.32, node.y - r * 0.32, 0,
+            node.x - r * 0.32, node.y - r * 0.32, r * 0.55,
+          );
+          specG.addColorStop(0, "rgba(255,255,255,0.9)");
+          specG.addColorStop(1, "rgba(255,255,255,0)");
+          ctx.fillStyle = specG;
+          ctx.fillRect(node.x - r, node.y - r, imgSize, imgSize);
           ctx.restore();
 
           // Saturn rings — front half (over planet)
