@@ -376,13 +376,15 @@ export default function SebolGalaxy() {
           ctx.fillStyle = atmo;
           ctx.fillRect(node.x - r, node.y - r, imgSize, imgSize);
 
-          // Dark terminator shadow (night side — right edge)
-          const shadow = ctx.createLinearGradient(node.x, node.y, node.x + r, node.y);
-          shadow.addColorStop(0,   "rgba(0,0,0,0)");
-          shadow.addColorStop(0.6, "rgba(0,0,0,0)");
-          shadow.addColorStop(1,   `rgba(0,0,0,${0.55 * alpha})`);
-          ctx.fillStyle = shadow;
-          ctx.fillRect(node.x - r, node.y - r, imgSize, imgSize);
+          // Subtle terminator (night side) — only for non-star nodes
+          if (node.id !== "core") {
+            const shadow = ctx.createLinearGradient(node.x - r * 0.2, node.y, node.x + r, node.y);
+            shadow.addColorStop(0,   "rgba(0,0,0,0)");
+            shadow.addColorStop(0.72, "rgba(0,0,0,0)");
+            shadow.addColorStop(1,   `rgba(0,0,0,${0.28 * alpha})`);
+            ctx.fillStyle = shadow;
+            ctx.fillRect(node.x - r, node.y - r, imgSize, imgSize);
+          }
           ctx.restore();
 
           // Specular highlight — fixed bright spot top-left (light source)
