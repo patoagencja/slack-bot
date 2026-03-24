@@ -3,22 +3,22 @@ import { useEffect, useRef, useState } from "react";
 
 const NODES = [
   { id: "core",       label: "Sebol Core",       importance: 5, desc: "AI Agent Hub",         color: "#00d4ff", angle: 0,   radius: 0,   orbitSpeed: 0 },
-  // Imp4 — każda na osobnej orbicie, 52px odstęp (> 2×rozmiar=52px)
+  // Imp4 — 84px gap (> sum radii 52 + big buffer → zero collision)
   { id: "claude",     label: "Claude AI",         importance: 4, desc: "LLM Engine",           color: "#a78bfa", angle: 25,  radius: 96,  orbitSpeed: 0.000200 },
-  { id: "slack",      label: "Slack",             importance: 4, desc: "Bolt + Socket Mode",   color: "#4ade80", angle: 148, radius: 148, orbitSpeed: 0.000164 },
-  { id: "meta",       label: "Meta Ads",          importance: 4, desc: "Facebook / Instagram", color: "#fb923c", angle: 245, radius: 200, orbitSpeed: 0.000142 },
-  { id: "google",     label: "Google Ads",        importance: 4, desc: "Search & Display",     color: "#facc15", angle: 320, radius: 252, orbitSpeed: 0.000127 },
-  // Imp3 — 36px odstęp (> 2×rozmiar=36px)
-  { id: "strategy",   label: "Strategy Engine",   importance: 3, desc: "Self-Learning AI",     color: "#c084fc", angle: 348, radius: 292, orbitSpeed: 0.000118 },
-  { id: "standup",    label: "Standup Bot",       importance: 3, desc: "Team Automation",      color: "#34d399", angle: 128, radius: 328, orbitSpeed: 0.000111 },
-  { id: "campaign",   label: "Kampanie",          importance: 3, desc: "Approval Workflow",    color: "#f472b6", angle: 190, radius: 364, orbitSpeed: 0.000106 },
-  { id: "digest",     label: "Daily Digest",      importance: 3, desc: "Performance Alerts",   color: "#38bdf8", angle: 68,  radius: 400, orbitSpeed: 0.000101 },
-  // Imp2 — 24px odstęp (= 2×rozmiar=24px), naprzemiennie szybsze/wolniejsze
-  { id: "token",      label: "Token Optimizer",   importance: 2, desc: "API Cost Reducer",     color: "#fbbf24", angle: 290, radius: 428, orbitSpeed: 0.000105 },
-  { id: "blockkit",   label: "Block Kit UI",      importance: 2, desc: "Slack Modals",         color: "#22d3ee", angle: 160, radius: 452, orbitSpeed: 0.000078 },
-  { id: "scheduler",  label: "APScheduler",       importance: 2, desc: "Job Scheduling",       color: "#64748b", angle: 20,  radius: 476, orbitSpeed: 0.000115 },
-  { id: "onboarding", label: "Onboarding",        importance: 2, desc: "Client Checklists",    color: "#86efac", angle: 210, radius: 500, orbitSpeed: 0.000072 },
-  { id: "render",     label: "Render.com",        importance: 2, desc: "Cloud Deployment",     color: "#94a3b8", angle: 55,  radius: 524, orbitSpeed: 0.000098 },
+  { id: "slack",      label: "Slack",             importance: 4, desc: "Bolt + Socket Mode",   color: "#4ade80", angle: 148, radius: 180, orbitSpeed: 0.000164 },
+  { id: "meta",       label: "Meta Ads",          importance: 4, desc: "Facebook / Instagram", color: "#fb923c", angle: 245, radius: 264, orbitSpeed: 0.000142 },
+  { id: "google",     label: "Google Ads",        importance: 4, desc: "Search & Display",     color: "#facc15", angle: 320, radius: 348, orbitSpeed: 0.000127 },
+  // Imp3 — 60px gap first, 50px between peers (> sum radii 36–44 + buffer)
+  { id: "strategy",   label: "Strategy Engine",   importance: 3, desc: "Self-Learning AI",     color: "#c084fc", angle: 348, radius: 408, orbitSpeed: 0.000118 },
+  { id: "standup",    label: "Standup Bot",       importance: 3, desc: "Team Automation",      color: "#34d399", angle: 128, radius: 458, orbitSpeed: 0.000111 },
+  { id: "campaign",   label: "Kampanie",          importance: 3, desc: "Approval Workflow",    color: "#f472b6", angle: 190, radius: 508, orbitSpeed: 0.000106 },
+  { id: "digest",     label: "Daily Digest",      importance: 3, desc: "Performance Alerts",   color: "#38bdf8", angle: 68,  radius: 558, orbitSpeed: 0.000101 },
+  // Imp2 — 42px gap first, 35px between peers (> sum radii 24–30 + buffer)
+  { id: "token",      label: "Token Optimizer",   importance: 2, desc: "API Cost Reducer",     color: "#fbbf24", angle: 290, radius: 600, orbitSpeed: 0.000105 },
+  { id: "blockkit",   label: "Block Kit UI",      importance: 2, desc: "Slack Modals",         color: "#22d3ee", angle: 160, radius: 635, orbitSpeed: 0.000078 },
+  { id: "scheduler",  label: "APScheduler",       importance: 2, desc: "Job Scheduling",       color: "#64748b", angle: 20,  radius: 670, orbitSpeed: 0.000115 },
+  { id: "onboarding", label: "Onboarding",        importance: 2, desc: "Client Checklists",    color: "#86efac", angle: 210, radius: 705, orbitSpeed: 0.000072 },
+  { id: "render",     label: "Render.com",        importance: 2, desc: "Cloud Deployment",     color: "#94a3b8", angle: 55,  radius: 740, orbitSpeed: 0.000098 },
 ];
 
 // NASA / Wikimedia Commons public domain planet textures (thumbnail versions for fast loading)
@@ -171,7 +171,7 @@ export default function SebolGalaxy() {
     const getScale = () => Math.min(
       canvas.width / devicePixelRatio,
       canvas.height / devicePixelRatio
-    ) / 1180;
+    ) / 1600;
 
     const getPositions = (t) => {
       const cw = canvas.width / devicePixelRatio / 2;
@@ -183,7 +183,7 @@ export default function SebolGalaxy() {
           ...n,
           x: cw + Math.cos(a) * n.radius * s,
           y: ch + Math.sin(a) * n.radius * s,
-          r: SIZES[n.importance] * Math.max(0.55, s),
+          r: SIZES[n.importance] * s,
         };
       });
     };
@@ -311,22 +311,27 @@ export default function SebolGalaxy() {
         const img = imagesRef.current[node.id];
         const imgLoaded = imagesLoadedRef.current[node.id];
 
-        // Saturn rings — back half (upper arc, drawn BEHIND planet)
+        // Saturn rings — back half (upper visual arc, behind planet)
         if (node.id === "google") {
-          const tilt = 0.28;
-          const rings = [
-            { rx: r*1.3,  ry: r*0.22, lw: r*0.07, a: `rgba(185,160,105,${0.55*alpha})` },
-            { rx: r*1.55, ry: r*0.26, lw: r*0.16, a: `rgba(228,202,140,${0.80*alpha})` },
-            { rx: r*1.82, ry: r*0.31, lw: r*0.12, a: `rgba(210,185,128,${0.65*alpha})` },
-            { rx: r*2.05, ry: r*0.35, lw: r*0.05, a: `rgba(190,165,110,${0.35*alpha})` },
+          // ry/rx ratio = perspective squish (0.38 ≈ 22° tilt looks natural)
+          const PY = 0.38;
+          // Each band: [innerRx, outerRx, fillColor, opacity]
+          const bands = [
+            [r*1.22, r*1.44, "#c8b478", 0.42],   // C ring — narrow, faint
+            [r*1.46, r*1.92, "#ead490", 0.80],   // B ring — brightest
+            // Cassini Division gap: r*1.92 → r*2.02 (no ring)
+            [r*2.02, r*2.32, "#d4b87c", 0.62],   // A ring
+            [r*2.32, r*2.42, "#c0a864", 0.25],   // outer fringe
           ];
           ctx.save();
-          rings.forEach(({ rx, ry, lw, a }) => {
-            ctx.strokeStyle = a;
-            ctx.lineWidth = lw;
+          bands.forEach(([ir, or_, color, oa]) => {
+            ctx.globalAlpha = alpha * oa;
+            ctx.fillStyle = color;
             ctx.beginPath();
-            ctx.ellipse(node.x, node.y, rx, ry, tilt, Math.PI, Math.PI * 2);
-            ctx.stroke();
+            ctx.ellipse(node.x, node.y, or_, or_ * PY, 0, Math.PI, Math.PI * 2, false);
+            ctx.ellipse(node.x, node.y, ir,  ir  * PY, 0, Math.PI * 2, Math.PI, true);
+            ctx.closePath();
+            ctx.fill();
           });
           ctx.restore();
         }
@@ -433,22 +438,24 @@ export default function SebolGalaxy() {
           ctx.fillRect(node.x - r, node.y - r, imgSize, imgSize);
           ctx.restore();
 
-          // Saturn rings — front half (lower arc, drawn IN FRONT of planet)
+          // Saturn rings — front half (lower visual arc, in front of planet)
           if (node.id === "google") {
-            const tilt = 0.28;
-            const rings = [
-              { rx: r*1.3,  ry: r*0.22, lw: r*0.07, a: `rgba(185,160,105,${0.65*alpha})` },
-              { rx: r*1.55, ry: r*0.26, lw: r*0.16, a: `rgba(228,202,140,${0.92*alpha})` },
-              { rx: r*1.82, ry: r*0.31, lw: r*0.12, a: `rgba(210,185,128,${0.78*alpha})` },
-              { rx: r*2.05, ry: r*0.35, lw: r*0.05, a: `rgba(190,165,110,${0.42*alpha})` },
+            const PY = 0.38;
+            const bands = [
+              [r*1.22, r*1.44, "#c8b478", 0.50],
+              [r*1.46, r*1.92, "#ead490", 0.92],
+              [r*2.02, r*2.32, "#d4b87c", 0.74],
+              [r*2.32, r*2.42, "#c0a864", 0.30],
             ];
             ctx.save();
-            rings.forEach(({ rx, ry, lw, a }) => {
-              ctx.strokeStyle = a;
-              ctx.lineWidth = lw;
+            bands.forEach(([ir, or_, color, oa]) => {
+              ctx.globalAlpha = alpha * oa;
+              ctx.fillStyle = color;
               ctx.beginPath();
-              ctx.ellipse(node.x, node.y, rx, ry, tilt, 0, Math.PI);
-              ctx.stroke();
+              ctx.ellipse(node.x, node.y, or_, or_ * PY, 0, 0, Math.PI, false);
+              ctx.ellipse(node.x, node.y, ir,  ir  * PY, 0, Math.PI, 0,        true);
+              ctx.closePath();
+              ctx.fill();
             });
             ctx.restore();
           }
