@@ -1,6 +1,6 @@
 "use client";
 import dynamic from "next/dynamic";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 const SebolGalaxy = dynamic(() => import("../components/SebolGalaxy"), { ssr: false });
 
@@ -117,6 +117,50 @@ const MODULES: CardData[] = [
     detail:`Google Slides API już jest (${code("tools/google_slides.py")}). Brakuje szablonu raportu klientowego + komendy ${code("/raport klient_nazwa")} która generuje i wysyła link do Slides.` },
 ];
 
+function AnimatedNum({ target, duration = 1200 }: { target: number; duration?: number }) {
+  const [val, setVal] = useState(0);
+  const elRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const el = elRef.current; if (!el) return;
+    const obs = new IntersectionObserver(([e]) => {
+      if (!e.isIntersecting) return;
+      obs.disconnect();
+      let start: number | null = null;
+      const step = (ts: number) => {
+        if (start === null) start = ts;
+        const p = Math.min((ts - start) / duration, 1);
+        const ease = 1 - Math.pow(1 - p, 3);
+        setVal(Math.round(ease * target));
+        if (p < 1) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    }, { threshold: 0.5 });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [target, duration]);
+  return <span ref={elRef}>{val}</span>;
+}
+
+function AnimatedBar({ pct }: { pct: number }) {
+  const [w, setW] = useState(0);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    const obs = new IntersectionObserver(([e]) => {
+      if (!e.isIntersecting) return;
+      obs.disconnect();
+      setTimeout(() => setW(pct), 80);
+    }, { threshold: 0.5 });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [pct]);
+  return (
+    <div ref={ref} style={{ height:4, background:"var(--bg3)", borderRadius:2, overflow:"hidden" }}>
+      <div style={{ height:"100%", borderRadius:2, background:"linear-gradient(90deg,var(--green) 0%,#16a34a 100%)", width:`${w}%`, transition:"width 1.3s cubic-bezier(0.34,1.2,0.64,1)" }} />
+    </div>
+  );
+}
+
 function Section({ label, cards }: { label: string; cards: CardData[] }) {
   return (
     <div style={{ marginBottom:44 }}>
@@ -214,12 +258,12 @@ export default function Page() {
               [19, "Planowane",       "var(--blue)"],
             ] as [number, string, string][]).map(([n, label, color]) => (
               <div key={label} style={{ display:"flex", flexDirection:"column", gap:3 }}>
-                <div style={{ fontFamily:"var(--mono)", fontSize:22, fontWeight:500, lineHeight:1, color }}>{n}</div>
+                <div style={{ fontFamily:"var(--mono)", fontSize:22, fontWeight:500, lineHeight:1, color }}><AnimatedNum target={n} /></div>
                 <div style={{ fontSize:11, color:"var(--muted)" }}>{label}</div>
               </div>
             ))}
             <div style={{ display:"flex", flexDirection:"column", gap:3, marginLeft:"auto" }}>
-              <div style={{ fontFamily:"var(--mono)", fontSize:22, fontWeight:500, lineHeight:1, color:"var(--text)" }}>369</div>
+              <div style={{ fontFamily:"var(--mono)", fontSize:22, fontWeight:500, lineHeight:1, color:"var(--text)" }}><AnimatedNum target={369} duration={2000} /></div>
               <div style={{ fontSize:11, color:"var(--muted)" }}>commitów</div>
             </div>
           </div>
@@ -230,9 +274,7 @@ export default function Page() {
               <span>Ogólny postęp</span>
               <span style={{ color:"var(--green)", fontFamily:"var(--mono)" }}>35%</span>
             </div>
-            <div style={{ height:4, background:"var(--bg3)", borderRadius:2, overflow:"hidden" }}>
-              <div style={{ height:"100%", borderRadius:2, background:"linear-gradient(90deg,var(--green) 0%,#16a34a 100%)", width:"35%" }} />
-            </div>
+            <AnimatedBar pct={35} />
           </div>
 
           {/* Legend */}
