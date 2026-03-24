@@ -312,7 +312,7 @@ export default function SebolGalaxy() {
   return (
     <div style={{ width:"100vw", height:"100vh", background:"#03060e", overflow:"hidden", position:"relative" }}>
       <div style={{
-        position:"absolute", top:22, left:"50%", transform:"translateX(-50%)",
+        position:"absolute", top:64, left:"50%", transform:"translateX(-50%)",
         textAlign:"center", zIndex:10, pointerEvents:"none",
       }}>
         <div style={{ fontFamily:"'Orbitron',monospace", fontWeight:900, fontSize:"clamp(20px,3.5vw,38px)",
