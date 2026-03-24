@@ -166,7 +166,7 @@ function FloatingNav() {
 
   return (
     <nav style={{
-      position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)",
+      position: "fixed", top: 18, right: 24,
       zIndex: 1000, display: "flex", gap: 2, alignItems: "center",
       background: "rgba(10,10,10,0.75)", backdropFilter: "blur(12px)",
       border: "1px solid rgba(255,255,255,0.1)", borderRadius: 24,
