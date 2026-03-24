@@ -1,6 +1,6 @@
 "use client";
 import dynamic from "next/dynamic";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 const SebolGalaxy = dynamic(() => import("../components/SebolGalaxy"), { ssr: false });
 
@@ -128,16 +128,68 @@ function Section({ label, cards }: { label: string; cards: CardData[] }) {
   );
 }
 
+function FloatingNav() {
+  const [active, setActive] = useState<"galaxy" | "status">("galaxy");
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach(e => {
+          if (e.isIntersecting) setActive(e.target.id as "galaxy" | "status");
+        });
+      },
+      { threshold: 0.4 }
+    );
+    const galaxy = document.getElementById("galaxy");
+    const status = document.getElementById("status");
+    if (galaxy) observer.observe(galaxy);
+    if (status) observer.observe(status);
+    return () => observer.disconnect();
+  }, []);
+
+  const scrollTo = (id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  const btnStyle = (id: string): React.CSSProperties => ({
+    fontFamily: "var(--mono)",
+    fontSize: 11,
+    fontWeight: 500,
+    padding: "5px 14px",
+    borderRadius: 20,
+    border: "none",
+    cursor: "pointer",
+    transition: "all .2s",
+    background: active === id ? "rgba(255,255,255,0.12)" : "transparent",
+    color: active === id ? "#e8e8e8" : "#666",
+  });
+
+  return (
+    <nav style={{
+      position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)",
+      zIndex: 1000, display: "flex", gap: 2, alignItems: "center",
+      background: "rgba(10,10,10,0.75)", backdropFilter: "blur(12px)",
+      border: "1px solid rgba(255,255,255,0.1)", borderRadius: 24,
+      padding: "4px 4px",
+    }}>
+      <button style={btnStyle("galaxy")} onClick={() => scrollTo("galaxy")}>galaxy</button>
+      <button style={btnStyle("status")} onClick={() => scrollTo("status")}>status</button>
+    </nav>
+  );
+}
+
 export default function Page() {
   return (
     <>
+      <FloatingNav />
+
       {/* Galaxy hero section */}
       <section id="galaxy" style={{ height:"100vh", width:"100vw" }}>
         <SebolGalaxy />
       </section>
 
       {/* Status dashboard */}
-      <div style={{ background:"var(--bg)", minHeight:"100vh" }}>
+      <div id="status" style={{ background:"var(--bg)", minHeight:"100vh" }}>
         <header style={{ borderBottom:"1px solid var(--border)", padding:"28px 40px 24px", display:"flex", alignItems:"center", justifyContent:"space-between", gap:16, flexWrap:"wrap" }}>
           <div style={{ display:"flex", alignItems:"center", gap:14 }}>
             <div style={{ width:36, height:36, borderRadius:8, background:"linear-gradient(135deg,#1d4ed8,#7c3aed)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, flexShrink:0 }}>🤖</div>
