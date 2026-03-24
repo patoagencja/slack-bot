@@ -18,24 +18,6 @@ const NODES = [
   { id: "render",     label: "Render.com",        importance: 2, desc: "Cloud Deployment",     color: "#94a3b8", angle: 55,  radius: 392, orbitSpeed: 0.000052 },
 ];
 
-// NASA / Wikimedia Commons public domain planet textures
-const PLANET_IMAGES = {
-  core:       "https://upload.wikimedia.org/wikipedia/commons/b/b4/The_Sun_by_the_Atmospheric_Imaging_Assembly_of_NASA%27s_Solar_Dynamics_Observatory_-_20100819.jpg",
-  claude:     "https://upload.wikimedia.org/wikipedia/commons/5/56/Neptune_Full.jpg",
-  slack:      "https://upload.wikimedia.org/wikipedia/commons/9/97/The_Earth_seen_from_Apollo_17.jpg",
-  meta:       "https://upload.wikimedia.org/wikipedia/commons/2/2b/Jupiter_and_its_shrunken_Great_Red_Spot.jpg",
-  google:     "https://upload.wikimedia.org/wikipedia/commons/c/c7/Saturn_during_Equinox.jpg",
-  digest:     "https://upload.wikimedia.org/wikipedia/commons/4/4a/Mercury_in_true_color.jpg",
-  campaign:   "https://upload.wikimedia.org/wikipedia/commons/0/02/OSIRIS_Mars_true_color.jpg",
-  standup:    "https://upload.wikimedia.org/wikipedia/commons/e/e5/Venus-real_color.jpg",
-  strategy:   "https://upload.wikimedia.org/wikipedia/commons/3/3d/Uranus2.jpg",
-  scheduler:  "https://upload.wikimedia.org/wikipedia/commons/e/e1/FullMoon2010.jpg",
-  blockkit:   "https://upload.wikimedia.org/wikipedia/commons/7/7b/Io_highest_resolution_true_color.jpg",
-  onboarding: "https://upload.wikimedia.org/wikipedia/commons/e/e4/Europa-moon-with-margins.jpg",
-  token:      "https://upload.wikimedia.org/wikipedia/commons/e/ef/Pluto_in_True_Color_-_High-Res.jpg",
-  render:     "https://upload.wikimedia.org/wikipedia/commons/4/45/Titan_in_true_color.jpg",
-};
-
 const EDGES = [
   ["core","claude"],["core","slack"],["core","meta"],["core","google"],
   ["core","scheduler"],["core","render"],
@@ -56,6 +38,210 @@ const hexToRgb = (hex) => {
   const g = parseInt(hex.slice(3,5), 16);
   const b = parseInt(hex.slice(5,7), 16);
   return `${r},${g},${b}`;
+};
+
+// Draw procedural planet for each node id
+const drawPlanetSurface = (ctx, id, x, y, r, a, ts) => {
+  const fill = (style) => {
+    ctx.fillStyle = style;
+    ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  };
+
+  switch (id) {
+    case "core": { // Sun — animated fiery gradient
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0,   `rgba(255,255,200,${a})`);
+      g.addColorStop(0.25,`rgba(255,230,50,${a})`);
+      g.addColorStop(0.6, `rgba(255,110,0,${a})`);
+      g.addColorStop(1,   `rgba(180,30,0,${a})`);
+      fill(g);
+      // Animated bright convection cells
+      for (let i = 0; i < 7; i++) {
+        const ang = ts * 0.0003 + i * Math.PI * 2 / 7;
+        const d = r * 0.42;
+        const sx = x + Math.cos(ang) * d, sy = y + Math.sin(ang) * d;
+        const sg = ctx.createRadialGradient(sx, sy, 0, sx, sy, r * 0.28);
+        sg.addColorStop(0, `rgba(255,255,180,${0.45 * a})`);
+        sg.addColorStop(1, "transparent");
+        fill(sg);
+      }
+      break;
+    }
+    case "claude": { // Neptune — deep blue with storm
+      const g = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, 0, x, y, r);
+      g.addColorStop(0, `rgba(90,130,255,${a})`);
+      g.addColorStop(0.5,`rgba(30,65,200,${a})`);
+      g.addColorStop(1, `rgba(10,20,120,${a})`);
+      fill(g);
+      [0.28, 0.62].forEach(f => {
+        ctx.fillStyle = `rgba(160,200,255,${0.22 * a})`;
+        ctx.fillRect(x - r, y - r + r * 2 * f - r * 0.07, r * 2, r * 0.13);
+      });
+      const sg = ctx.createRadialGradient(x + r*0.25, y - r*0.1, 0, x + r*0.25, y - r*0.1, r * 0.22);
+      sg.addColorStop(0, `rgba(200,230,255,${0.55 * a})`);
+      sg.addColorStop(1, "transparent");
+      fill(sg);
+      break;
+    }
+    case "slack": { // Earth — blue ocean, green continents, clouds
+      const g = ctx.createRadialGradient(x - r*0.3, y - r*0.3, 0, x, y, r);
+      g.addColorStop(0, `rgba(100,185,255,${a})`);
+      g.addColorStop(0.5,`rgba(30,105,200,${a})`);
+      g.addColorStop(1, `rgba(0,50,140,${a})`);
+      fill(g);
+      ctx.fillStyle = `rgba(55,155,55,${0.85 * a})`;
+      ctx.beginPath(); ctx.ellipse(x - r*0.1, y - r*0.15, r*0.35, r*0.24, -0.3, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(x + r*0.35, y + r*0.2,  r*0.2,  r*0.28,  0.4, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(x - r*0.38, y + r*0.3,  r*0.19, r*0.13,  0.2, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = `rgba(255,255,255,${0.32 * a})`;
+      ctx.beginPath(); ctx.ellipse(x + r*0.08, y - r*0.38, r*0.38, r*0.08, -0.5, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(x - r*0.18, y + r*0.1,  r*0.28, r*0.07,  0.3, 0, Math.PI*2); ctx.fill();
+      break;
+    }
+    case "meta": { // Jupiter — orange banded + Great Red Spot
+      const g = ctx.createRadialGradient(x - r*0.3, y - r*0.3, 0, x, y, r);
+      g.addColorStop(0, `rgba(255,205,155,${a})`);
+      g.addColorStop(0.5,`rgba(200,130,80,${a})`);
+      g.addColorStop(1, `rgba(140,80,40,${a})`);
+      fill(g);
+      [[0.22,0.09],[0.40,0.07],[0.57,0.09],[0.74,0.07],[0.88,0.08]].forEach(([f,h]) => {
+        ctx.fillStyle = `rgba(130,65,28,${0.45 * a})`;
+        ctx.fillRect(x - r, y - r + r*2*f - r*h, r*2, r*h*2);
+      });
+      const rs = ctx.createRadialGradient(x - r*0.2, y + r*0.08, 0, x - r*0.2, y + r*0.08, r * 0.22);
+      rs.addColorStop(0, `rgba(215,75,35,${0.85 * a})`);
+      rs.addColorStop(0.6,`rgba(200,100,55,${0.5 * a})`);
+      rs.addColorStop(1, "transparent");
+      fill(rs);
+      break;
+    }
+    case "google": { // Saturn — pale yellow banded
+      const g = ctx.createRadialGradient(x - r*0.3, y - r*0.3, 0, x, y, r);
+      g.addColorStop(0, `rgba(255,248,205,${a})`);
+      g.addColorStop(0.5,`rgba(205,185,125,${a})`);
+      g.addColorStop(1, `rgba(155,125,70,${a})`);
+      fill(g);
+      [[0.3,0.07],[0.5,0.06],[0.67,0.07]].forEach(([f,h]) => {
+        ctx.fillStyle = `rgba(165,135,70,${0.35 * a})`;
+        ctx.fillRect(x - r, y - r + r*2*f - r*h, r*2, r*h*2);
+      });
+      break;
+    }
+    case "digest": { // Mercury — gray cratered
+      const g = ctx.createRadialGradient(x - r*0.3, y - r*0.3, 0, x, y, r);
+      g.addColorStop(0, `rgba(195,185,175,${a})`);
+      g.addColorStop(0.5,`rgba(140,132,122,${a})`);
+      g.addColorStop(1, `rgba(78,70,65,${a})`);
+      fill(g);
+      [[x-r*0.2,y-r*0.1,r*0.13],[x+r*0.3,y+r*0.25,r*0.1],[x-r*0.35,y+r*0.15,r*0.1]].forEach(([cx2,cy2,cr]) => {
+        ctx.fillStyle = `rgba(55,50,45,${0.5 * a})`;
+        ctx.beginPath(); ctx.arc(cx2, cy2, cr, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = `rgba(205,195,185,${0.3 * a})`;
+        ctx.beginPath(); ctx.arc(cx2 - cr*0.2, cy2 - cr*0.2, cr*0.5, 0, Math.PI*2); ctx.fill();
+      });
+      break;
+    }
+    case "campaign": { // Mars — rusty red
+      const g = ctx.createRadialGradient(x - r*0.3, y - r*0.3, 0, x, y, r);
+      g.addColorStop(0, `rgba(220,130,80,${a})`);
+      g.addColorStop(0.5,`rgba(180,78,50,${a})`);
+      g.addColorStop(1, `rgba(115,38,18,${a})`);
+      fill(g);
+      ctx.fillStyle = `rgba(240,240,255,${0.65 * a})`;
+      ctx.beginPath(); ctx.ellipse(x, y - r*0.76, r*0.24, r*0.11, 0, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = `rgba(75,28,12,${0.38 * a})`;
+      ctx.beginPath(); ctx.ellipse(x + r*0.2, y + r*0.1, r*0.25, r*0.2, 0.5, 0, Math.PI*2); ctx.fill();
+      break;
+    }
+    case "standup": { // Venus — swirling yellow clouds
+      const g = ctx.createRadialGradient(x - r*0.3, y - r*0.3, 0, x, y, r);
+      g.addColorStop(0, `rgba(255,252,205,${a})`);
+      g.addColorStop(0.5,`rgba(232,212,125,${a})`);
+      g.addColorStop(1, `rgba(180,148,60,${a})`);
+      fill(g);
+      [[-0.2,-0.1,0.4,0.09,-0.3],[0.1,0.22,0.34,0.08,0.4],[-0.1,0.36,0.3,0.07,-0.2]].forEach(([dx,dy,rw,rh,rot]) => {
+        ctx.fillStyle = `rgba(255,255,232,${0.32 * a})`;
+        ctx.beginPath(); ctx.ellipse(x+r*dx, y+r*dy, r*rw, r*rh, rot, 0, Math.PI*2); ctx.fill();
+      });
+      break;
+    }
+    case "strategy": { // Uranus — pale cyan-green
+      const g = ctx.createRadialGradient(x - r*0.3, y - r*0.3, 0, x, y, r);
+      g.addColorStop(0, `rgba(185,245,245,${a})`);
+      g.addColorStop(0.5,`rgba(100,205,205,${a})`);
+      g.addColorStop(1, `rgba(38,130,152,${a})`);
+      fill(g);
+      [[0.38,0.06],[0.6,0.05]].forEach(([f,h]) => {
+        ctx.fillStyle = `rgba(120,225,225,${0.2 * a})`;
+        ctx.fillRect(x - r, y - r + r*2*f - r*h, r*2, r*h*2);
+      });
+      break;
+    }
+    case "scheduler": { // Moon — gray with maria
+      const g = ctx.createRadialGradient(x - r*0.3, y - r*0.3, 0, x, y, r);
+      g.addColorStop(0, `rgba(232,228,218,${a})`);
+      g.addColorStop(0.5,`rgba(168,162,152,${a})`);
+      g.addColorStop(1, `rgba(88,83,78,${a})`);
+      fill(g);
+      [[x-r*0.15,y-r*0.1,r*0.3,r*0.24],[x+r*0.28,y+r*0.22,r*0.2,r*0.15],[x-r*0.32,y+r*0.26,r*0.15,r*0.11]].forEach(([cx2,cy2,rw,rh]) => {
+        ctx.fillStyle = `rgba(65,60,55,${0.4 * a})`;
+        ctx.beginPath(); ctx.ellipse(cx2, cy2, rw, rh, 0, 0, Math.PI*2); ctx.fill();
+      });
+      break;
+    }
+    case "blockkit": { // Io — yellow volcanic with dark spots
+      const g = ctx.createRadialGradient(x - r*0.3, y - r*0.3, 0, x, y, r);
+      g.addColorStop(0, `rgba(255,242,105,${a})`);
+      g.addColorStop(0.5,`rgba(222,182,52,${a})`);
+      g.addColorStop(1, `rgba(158,98,18,${a})`);
+      fill(g);
+      [[x-r*0.2,y-r*0.2,r*0.13],[x+r*0.3,y+r*0.15,r*0.1],[x,y+r*0.32,r*0.09]].forEach(([cx2,cy2,cr]) => {
+        ctx.fillStyle = `rgba(175,55,0,${0.65 * a})`;
+        ctx.beginPath(); ctx.arc(cx2, cy2, cr, 0, Math.PI*2); ctx.fill();
+      });
+      break;
+    }
+    case "onboarding": { // Europa — icy white with cracks
+      const g = ctx.createRadialGradient(x - r*0.3, y - r*0.3, 0, x, y, r);
+      g.addColorStop(0, `rgba(242,250,255,${a})`);
+      g.addColorStop(0.5,`rgba(192,222,242,${a})`);
+      g.addColorStop(1, `rgba(128,172,212,${a})`);
+      fill(g);
+      ctx.strokeStyle = `rgba(115,158,202,${0.62 * a})`;
+      ctx.lineWidth = Math.max(0.5, r * 0.05);
+      [[-0.3,-0.3,0.2,0.4],[0.1,-0.2,-0.2,0.32],[-0.1,0.22,0.35,-0.1]].forEach(([x1,y1,x2,y2]) => {
+        ctx.beginPath(); ctx.moveTo(x+r*x1, y+r*y1); ctx.lineTo(x+r*x2, y+r*y2); ctx.stroke();
+      });
+      break;
+    }
+    case "token": { // Pluto — dark brown, Tombaugh heart
+      const g = ctx.createRadialGradient(x - r*0.3, y - r*0.3, 0, x, y, r);
+      g.addColorStop(0, `rgba(192,152,132,${a})`);
+      g.addColorStop(0.5,`rgba(140,100,80,${a})`);
+      g.addColorStop(1, `rgba(78,48,38,${a})`);
+      fill(g);
+      ctx.fillStyle = `rgba(232,212,192,${0.72 * a})`;
+      ctx.beginPath(); ctx.ellipse(x + r*0.1, y + r*0.05, r*0.3, r*0.25, 0.3, 0, Math.PI*2); ctx.fill();
+      break;
+    }
+    case "render": { // Titan — orange haze
+      const g = ctx.createRadialGradient(x - r*0.3, y - r*0.3, 0, x, y, r);
+      g.addColorStop(0, `rgba(222,162,82,${a})`);
+      g.addColorStop(0.5,`rgba(178,112,42,${a})`);
+      g.addColorStop(1, `rgba(118,58,8,${a})`);
+      fill(g);
+      [[0.2,0.11],[0.42,0.09],[0.68,0.09]].forEach(([f,h]) => {
+        ctx.fillStyle = `rgba(242,182,102,${0.2 * a})`;
+        ctx.fillRect(x - r, y - r + r*2*f - r*h, r*2, r*h*2);
+      });
+      const pg = ctx.createRadialGradient(x, y + r*0.72, 0, x, y + r*0.72, r*0.48);
+      pg.addColorStop(0, `rgba(78,38,0,${0.5 * a})`);
+      pg.addColorStop(1, "transparent");
+      fill(pg);
+      break;
+    }
+    default: break;
+  }
 };
 
 class EdgeParticle {
@@ -84,20 +270,7 @@ export default function SebolGalaxy() {
   const timeRef = useRef(0);
   const hoveredRef = useRef(null);
   const lastParticleSpawn = useRef(0);
-  const imagesRef = useRef({});
-  const imagesLoadedRef = useRef({});
   const [tooltip, setTooltip] = useState(null);
-
-  // Preload planet images
-  useEffect(() => {
-    Object.entries(PLANET_IMAGES).forEach(([id, url]) => {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.onload = () => { imagesLoadedRef.current[id] = true; };
-      img.src = url;
-      imagesRef.current[id] = img;
-    });
-  }, []);
 
   useEffect(() => {
     starsRef.current = Array.from({ length: 350 }, () => ({
@@ -150,10 +323,10 @@ export default function SebolGalaxy() {
       ctx.fillRect(0, 0, W, H);
 
       [
-        [cx,      cy,      W*0.55, "rgba(0,80,180,0.07)"],
-        [cx-W*0.12, cy+H*0.08, W*0.3, "rgba(80,0,180,0.05)"],
-        [cx+W*0.1, cy-H*0.1,  W*0.25, "rgba(0,180,120,0.04)"],
-        [cx-W*0.08, cy-H*0.12,W*0.2,  "rgba(200,60,0,0.03)"],
+        [cx,        cy,        W*0.55, "rgba(0,80,180,0.07)"],
+        [cx-W*0.12, cy+H*0.08, W*0.3,  "rgba(80,0,180,0.05)"],
+        [cx+W*0.1,  cy-H*0.1,  W*0.25, "rgba(0,180,120,0.04)"],
+        [cx-W*0.08, cy-H*0.12, W*0.2,  "rgba(200,60,0,0.03)"],
       ].forEach(([nx,ny,nr,col]) => {
         const g = ctx.createRadialGradient(nx,ny,0,nx,ny,nr);
         g.addColorStop(0, col);
@@ -259,40 +432,23 @@ export default function SebolGalaxy() {
         ctx.arc(node.x, node.y, haloR, 0, Math.PI * 2);
         ctx.fill();
 
-        // Planet body — use real texture if loaded, else gradient fallback
-        const img = imagesRef.current[node.id];
-        const imgLoaded = imagesLoadedRef.current[node.id];
-
-        if (img && imgLoaded) {
-          ctx.save();
-          ctx.beginPath();
-          ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
-          ctx.clip();
-          ctx.globalAlpha = alpha;
-          ctx.drawImage(img, node.x - r, node.y - r, r * 2, r * 2);
-          // Subtle colored atmosphere rim
-          const atmo = ctx.createRadialGradient(node.x, node.y, r * 0.55, node.x, node.y, r);
-          atmo.addColorStop(0, `rgba(${hexToRgb(node.color)},0)`);
-          atmo.addColorStop(1, `rgba(${hexToRgb(node.color)},${0.4 * alpha})`);
-          ctx.fillStyle = atmo;
-          ctx.fillRect(node.x - r, node.y - r, r * 2, r * 2);
-          ctx.restore();
-        } else {
-          const body = ctx.createRadialGradient(
-            node.x - r*0.3, node.y - r*0.3, 0,
-            node.x, node.y, r
-          );
-          body.addColorStop(0, `rgba(255,255,255,${0.95 * alpha})`);
-          body.addColorStop(0.35, `rgba(${hexToRgb(node.color)},${0.85 * alpha})`);
-          body.addColorStop(1, `rgba(${hexToRgb(node.color)},${0.4 * alpha})`);
-          ctx.beginPath();
-          ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
-          ctx.fillStyle = body;
-          ctx.shadowColor = node.color;
-          ctx.shadowBlur = isHov ? 30 : 14;
-          ctx.fill();
-          ctx.shadowBlur = 0;
-        }
+        // Planet surface clipped to circle
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
+        ctx.clip();
+        drawPlanetSurface(ctx, node.id, node.x, node.y, r, alpha, ts);
+        // Sphere shading overlay
+        const shade = ctx.createRadialGradient(
+          node.x - r*0.35, node.y - r*0.35, 0,
+          node.x + r*0.2,  node.y + r*0.2,  r * 1.1
+        );
+        shade.addColorStop(0, `rgba(255,255,255,${0.18 * alpha})`);
+        shade.addColorStop(0.5, "transparent");
+        shade.addColorStop(1, `rgba(0,0,0,${0.45 * alpha})`);
+        ctx.fillStyle = shade;
+        ctx.fillRect(node.x - r, node.y - r, r*2, r*2);
+        ctx.restore();
 
         // Glowing border ring
         ctx.beginPath();
@@ -303,6 +459,23 @@ export default function SebolGalaxy() {
         ctx.shadowBlur = isHov ? 30 : 14;
         ctx.stroke();
         ctx.shadowBlur = 0;
+
+        // Saturn rings (drawn outside clip)
+        if (node.id === "google") {
+          ctx.save();
+          ctx.globalAlpha = 0.55 * alpha;
+          ctx.strokeStyle = `rgba(205,185,125,0.7)`;
+          ctx.lineWidth = Math.max(1.5, r * 0.18);
+          ctx.beginPath();
+          ctx.ellipse(node.x, node.y, r * 1.7, r * 0.38, -0.35, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.lineWidth = Math.max(1, r * 0.1);
+          ctx.strokeStyle = `rgba(185,165,105,0.45)`;
+          ctx.beginPath();
+          ctx.ellipse(node.x, node.y, r * 1.95, r * 0.43, -0.35, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
 
         if (node.importance === 5) {
           ctx.beginPath();
