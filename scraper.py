@@ -4,8 +4,8 @@ from playwright.async_api import async_playwright
 from docx import Document
 from datetime import datetime
 
-EMAIL = "TWOJ_EMAIL"
-PASSWORD = "TWOJE_HASLO"
+EMAIL = os.environ.get("DNA_EMAIL", "TWOJ_EMAIL")
+PASSWORD = os.environ.get("DNA_PASSWORD", "TWOJE_HASLO")
 LOGIN_URL = "https://dnarynkow.pl/wp-login.php"
 CATEGORY_URL = "https://dnarynkow.pl/category/dna-premium/"
 
