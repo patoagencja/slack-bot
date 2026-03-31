@@ -27,6 +27,8 @@ from tools.google_ads import (
     create_google_campaign_draft,
     generate_google_campaign_preview,
     _detect_google_client,
+    update_google_campaign_budget,
+    update_google_campaign_status,
 )
 from tools.google_analytics import google_analytics_tool
 from tools.email_tools import email_tool, get_user_email_config
@@ -570,6 +572,8 @@ GOOGLE ADS: "3wm"/"pato" → Agencja | "dre 2024"/"dre24" → DRE 2024 | "dre 20
 Pytanie o kampanie/metryki/spend/ROAS/CTR → WYWOŁAJ narzędzie:
 - get_meta_ads_data() → Facebook/Instagram
 - get_google_ads_data() → Google Ads (kampanie, kliknięcia, wydatki, ROAS, CTR, CPC, reklamy)
+- update_google_campaign_budget() → zmień budżet dzienny kampanii Google Ads (NATYCHMIAST, nie odkładaj!)
+- update_google_campaign_status() → zapauzuj lub wznów kampanię Google Ads (NATYCHMIAST)
 - get_ga4_data() → Google Analytics 4 / GA4 / analytics (ruch na stronie, sesje, użytkownicy, źródła ruchu, bounce rate) - NIE Google Ads!
 - manage_calendar() → kalendarz iCloud: "co mam jutro", "plan na tydzień", "dodaj spotkanie" → ZAWSZE wywołaj to narzędzie, nie mów że nie masz dostępu!
 - create_presentation() → "zrób prezentację", "zrób prezke", "przygotuj ofertę dla klienta", "deck", "pitch deck", "raport w prezentacji"
@@ -665,6 +669,32 @@ Pytanie → Direct answer → Context → Actionable next step
                 },
                 "required": []
             }
+        },
+        {
+            "name": "update_google_campaign_budget",
+            "description": "Zmienia dzienny budżet istniejącej kampanii Google Ads. Użyj gdy użytkownik mówi 'obniż budżet', 'zmień budżet na X', 'zwiększ budżet kampanii'. Wykonuje zmianę NATYCHMIAST — nie odkładaj na później!",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "client_name":    {"type": "string", "description": "Nazwa klienta, np. 'dre', 'dre 2025', '3wm'. WYMAGANE."},
+                    "campaign_name":  {"type": "string", "description": "Fragment nazwy kampanii do zaktualizowania. WYMAGANE."},
+                    "new_daily_budget": {"type": "string", "description": "Nowy budżet dzienny w PLN, np. '53' lub '53 PLN'. WYMAGANE."},
+                },
+                "required": ["client_name", "campaign_name", "new_daily_budget"],
+            },
+        },
+        {
+            "name": "update_google_campaign_status",
+            "description": "Wstrzymuje (pauzuje) lub wznawia kampanię Google Ads. Użyj gdy użytkownik mówi 'zapauzuj kampanię', 'wyłącz kampanię', 'włącz kampanię', 'wznów kampanię'. Wykonuje zmianę NATYCHMIAST.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "client_name":   {"type": "string", "description": "Nazwa klienta. WYMAGANE."},
+                    "campaign_name": {"type": "string", "description": "Fragment nazwy kampanii. WYMAGANE."},
+                    "status":        {"type": "string", "enum": ["PAUSED", "ENABLED"], "description": "'PAUSED' = wstrzymaj, 'ENABLED' = wznów/włącz. WYMAGANE."},
+                },
+                "required": ["client_name", "campaign_name", "status"],
+            },
         },
         {
             "name": "get_ga4_data",
@@ -898,6 +928,18 @@ Pytanie → Direct answer → Context → Actionable next step
                         metrics=tool_input.get('metrics'),
                         limit=tool_input.get('limit'),
                         client_name=tool_input.get('client_name')
+                    )
+                elif tool_name == "update_google_campaign_budget":
+                    tool_result = update_google_campaign_budget(
+                        client_name=tool_input.get('client_name', ''),
+                        campaign_name=tool_input.get('campaign_name', ''),
+                        new_daily_budget=tool_input.get('new_daily_budget', ''),
+                    )
+                elif tool_name == "update_google_campaign_status":
+                    tool_result = update_google_campaign_status(
+                        client_name=tool_input.get('client_name', ''),
+                        campaign_name=tool_input.get('campaign_name', ''),
+                        status=tool_input.get('status', 'PAUSED'),
                     )
                 elif tool_name == "get_ga4_data":
                     tool_result = google_analytics_tool(
@@ -1537,6 +1579,32 @@ def handle_message_events(body, say, logger):
             },
         },
         {
+            "name": "update_google_campaign_budget",
+            "description": "Zmienia dzienny budżet istniejącej kampanii Google Ads. Użyj gdy mówią 'obniż budżet', 'zmień budżet na X'. Działa NATYCHMIAST.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "client_name":      {"type": "string"},
+                    "campaign_name":    {"type": "string"},
+                    "new_daily_budget": {"type": "string"},
+                },
+                "required": ["client_name", "campaign_name", "new_daily_budget"],
+            },
+        },
+        {
+            "name": "update_google_campaign_status",
+            "description": "Pauzuje lub wznawia kampanię Google Ads. Działa NATYCHMIAST.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "client_name":   {"type": "string"},
+                    "campaign_name": {"type": "string"},
+                    "status":        {"type": "string", "enum": ["PAUSED", "ENABLED"]},
+                },
+                "required": ["client_name", "campaign_name", "status"],
+            },
+        },
+        {
             "name": "manage_email",
             "description": "Zarządza emailami — czyta, wysyła, przeszukuje skrzynkę.",
             "input_schema": {
@@ -1621,6 +1689,18 @@ def handle_message_events(body, say, logger):
                 _tr = meta_ads_tool(**{k: v for k, v in _tb.input.items() if v is not None})
             elif _tb.name == "get_google_ads_data":
                 _tr = google_ads_tool(**{k: v for k, v in _tb.input.items() if v is not None})
+            elif _tb.name == "update_google_campaign_budget":
+                _tr = update_google_campaign_budget(
+                    client_name=_tb.input.get('client_name', ''),
+                    campaign_name=_tb.input.get('campaign_name', ''),
+                    new_daily_budget=_tb.input.get('new_daily_budget', ''),
+                )
+            elif _tb.name == "update_google_campaign_status":
+                _tr = update_google_campaign_status(
+                    client_name=_tb.input.get('client_name', ''),
+                    campaign_name=_tb.input.get('campaign_name', ''),
+                    status=_tb.input.get('status', 'PAUSED'),
+                )
             elif _tb.name == "get_ga4_data":
                 _tr = google_analytics_tool(**{k: v for k, v in _tb.input.items() if v is not None})
             elif _tb.name == "manage_email":

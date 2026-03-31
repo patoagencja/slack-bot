@@ -544,6 +544,179 @@ def create_google_campaign_draft(params: dict, customer_id: str) -> dict:
         return {"error": str(e)}
 
 
+def _resolve_customer_id(client_name: str) -> tuple[str | None, dict]:
+    """Resolve client_name to customer_id using GOOGLE_ADS_CUSTOMER_IDS env var."""
+    accounts_json = os.environ.get("GOOGLE_ADS_CUSTOMER_IDS", "{}")
+    try:
+        accounts_map = json.loads(accounts_json)
+    except json.JSONDecodeError:
+        accounts_map = {}
+    client_lower = client_name.lower()
+    for key, value in accounts_map.items():
+        if key.lower() == client_lower or client_lower in key.lower():
+            return value, accounts_map
+    return None, accounts_map
+
+
+def update_google_campaign_budget(client_name: str, campaign_name: str, new_daily_budget: str) -> dict:
+    """
+    Update the daily budget of an existing Google Ads campaign.
+    new_daily_budget: amount in PLN, e.g. '53' or '53 PLN'.
+    Returns info about updated campaigns or {"error": str}.
+    """
+    if not google_ads_client:
+        return {"error": "Google Ads API nie jest skonfigurowane."}
+
+    customer_id, accounts_map = _resolve_customer_id(client_name)
+    if not customer_id:
+        return {
+            "error": f"Nie znaleziono konta dla klienta '{client_name}'",
+            "available_clients": list(accounts_map.keys()),
+        }
+    customer_id = customer_id.replace("-", "").replace(" ", "")
+
+    try:
+        # 1. Find campaign(s) matching the name
+        ga_service = google_ads_client.get_service("GoogleAdsService")
+        safe_name = campaign_name.replace("'", "\\'")
+        query = (
+            f"SELECT campaign.name, campaign.id, campaign.campaign_budget, campaign.status "
+            f"FROM campaign WHERE campaign.name LIKE '%{safe_name}%' "
+            f"AND campaign.status != 'REMOVED'"
+        )
+        response = ga_service.search(customer_id=customer_id, query=query)
+        campaigns = [
+            {
+                "name": row.campaign.name,
+                "id": str(row.campaign.id),
+                "budget_resource": row.campaign.campaign_budget,
+                "status": row.campaign.status.name,
+            }
+            for row in response
+        ]
+
+        if not campaigns:
+            return {"error": f"Nie znaleziono kampanii pasującej do '{campaign_name}' w koncie '{client_name}'"}
+
+        new_micros = _parse_budget_micros(new_daily_budget)
+        budget_service = google_ads_client.get_service("CampaignBudgetService")
+
+        updated = []
+        for camp in campaigns:
+            budget_op = google_ads_client.get_type("CampaignBudgetOperation")
+            budget = budget_op.update
+            budget.resource_name = camp["budget_resource"]
+            budget.amount_micros = new_micros
+            budget_op.update_mask.paths.append("amount_micros")
+
+            budget_service.mutate_campaign_budgets(
+                customer_id=customer_id, operations=[budget_op]
+            )
+            updated.append({
+                "campaign": camp["name"],
+                "campaign_id": camp["id"],
+                "new_budget_pln": new_micros / 1_000_000,
+            })
+
+        return {
+            "success": True,
+            "updated_campaigns": updated,
+            "new_daily_budget_pln": new_micros / 1_000_000,
+            "customer_id": customer_id,
+        }
+
+    except Exception as e:
+        logger.error("Błąd update_google_campaign_budget: %s", e, exc_info=True)
+        try:
+            msgs = [err.message for err in e.failure.errors if err.message]
+            if msgs:
+                return {"error": " | ".join(msgs)}
+        except AttributeError:
+            pass
+        return {"error": str(e)}
+
+
+def update_google_campaign_status(client_name: str, campaign_name: str, status: str) -> dict:
+    """
+    Pause or enable a Google Ads campaign.
+    status: 'PAUSED' or 'ENABLED'
+    """
+    if not google_ads_client:
+        return {"error": "Google Ads API nie jest skonfigurowane."}
+
+    status = status.upper()
+    if status not in ("PAUSED", "ENABLED"):
+        return {"error": "Status musi być 'PAUSED' lub 'ENABLED'"}
+
+    customer_id, accounts_map = _resolve_customer_id(client_name)
+    if not customer_id:
+        return {
+            "error": f"Nie znaleziono konta dla klienta '{client_name}'",
+            "available_clients": list(accounts_map.keys()),
+        }
+    customer_id = customer_id.replace("-", "").replace(" ", "")
+
+    try:
+        ga_service = google_ads_client.get_service("GoogleAdsService")
+        safe_name = campaign_name.replace("'", "\\'")
+        query = (
+            f"SELECT campaign.name, campaign.id, campaign.resource_name, campaign.status "
+            f"FROM campaign WHERE campaign.name LIKE '%{safe_name}%' "
+            f"AND campaign.status != 'REMOVED'"
+        )
+        response = ga_service.search(customer_id=customer_id, query=query)
+        campaigns = [
+            {
+                "name": row.campaign.name,
+                "id": str(row.campaign.id),
+                "resource_name": row.campaign.resource_name,
+                "current_status": row.campaign.status.name,
+            }
+            for row in response
+        ]
+
+        if not campaigns:
+            return {"error": f"Nie znaleziono kampanii pasującej do '{campaign_name}'"}
+
+        campaign_service = google_ads_client.get_service("CampaignService")
+        status_enum = getattr(google_ads_client.enums.CampaignStatusEnum, status)
+        updated = []
+
+        for camp in campaigns:
+            camp_op = google_ads_client.get_type("CampaignOperation")
+            c = camp_op.update
+            c.resource_name = camp["resource_name"]
+            c.status = status_enum
+            camp_op.update_mask.paths.append("status")
+
+            campaign_service.mutate_campaigns(
+                customer_id=customer_id, operations=[camp_op]
+            )
+            updated.append({
+                "campaign": camp["name"],
+                "campaign_id": camp["id"],
+                "new_status": status,
+                "previous_status": camp["current_status"],
+            })
+
+        return {
+            "success": True,
+            "updated_campaigns": updated,
+            "new_status": status,
+            "customer_id": customer_id,
+        }
+
+    except Exception as e:
+        logger.error("Błąd update_google_campaign_status: %s", e, exc_info=True)
+        try:
+            msgs = [err.message for err in e.failure.errors if err.message]
+            if msgs:
+                return {"error": " | ".join(msgs)}
+        except AttributeError:
+            pass
+        return {"error": str(e)}
+
+
 def generate_google_campaign_preview(params: dict, draft: dict) -> str:
     """Generate Slack-formatted preview of a Google Ads campaign draft."""
     channel_type = draft.get("channel_type") or _map_campaign_type(
