@@ -1143,6 +1143,191 @@ app.command("/onboard")(handle_onboard_slash)
 logger.info("✅ /onboard handler zarejestrowany")
 
 
+# ── calendar invite detection helpers ────────────────────────────────────────
+
+def _detect_calendar_invite(file_id: str) -> dict | None:
+    """
+    Pobiera obraz ze Slacka i wysyła do Claude Vision.
+    Zwraca słownik {title, start, end, location} lub None jeśli to nie zaproszenie.
+    """
+    try:
+        token = os.environ.get("SLACK_BOT_TOKEN", "")
+        info = app.client.files_info(file=file_id)
+        file_obj = info["file"]
+        mime = file_obj.get("mimetype", "")
+        if not mime.startswith("image/"):
+            return None
+        url = file_obj.get("url_private_download") or file_obj.get("url_private")
+        if not url:
+            return None
+        import requests as _req
+        resp = _req.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=20)
+        resp.raise_for_status()
+        import base64 as _b64
+        img_b64 = _b64.b64encode(resp.content).decode()
+        media_type = mime  # e.g. "image/png"
+
+        claude_resp = anthropic.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=400,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": media_type, "data": img_b64},
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            "Czy to zrzut ekranu zaproszenia na spotkanie / wydarzenie kalendarzowe? "
+                            "Jeśli tak, wyciągnij dane i odpowiedz TYLKO w formacie JSON (bez markdown):\n"
+                            '{"is_invite": true, "title": "...", "start": "YYYY-MM-DD HH:MM", '
+                            '"end": "YYYY-MM-DD HH:MM", "location": "..."}\n'
+                            "Jeśli nie wiesz godziny zakończenia, ustaw end = start + 1h.\n"
+                            "Jeśli to NIE jest zaproszenie, odpowiedz: {\"is_invite\": false}"
+                        ),
+                    },
+                ],
+            }],
+        )
+        text = next((b.text for b in claude_resp.content if hasattr(b, "text")), "")
+        import json as _json
+        data = _json.loads(text.strip())
+        if not data.get("is_invite"):
+            return None
+        return {
+            "title":    data.get("title", "Spotkanie"),
+            "start":    data.get("start"),
+            "end":      data.get("end"),
+            "location": data.get("location"),
+        }
+    except Exception as e:
+        logger.warning("_detect_calendar_invite error: %s", e)
+        return None
+
+
+def _post_calendar_confirm(event: dict, cal_data: dict):
+    """
+    Wysyła Block Kit z przyciskami Dodaj / Pomiń dla wykrytego zaproszenia.
+    Zapisuje pending state w _ctx.calendar_pending.
+    """
+    user_id = event.get("user")
+    ts = event.get("ts", str(time.time()))
+    action_id = f"cal_confirm_{user_id}_{ts.replace('.', '')}"
+    thread_ts = event.get("thread_ts") or event.get("ts")
+
+    _ctx.calendar_pending[action_id] = {
+        "user_id":   user_id,
+        "title":     cal_data.get("title"),
+        "start":     cal_data.get("start"),
+        "end":       cal_data.get("end"),
+        "location":  cal_data.get("location"),
+        "channel":   event.get("channel"),
+        "thread_ts": thread_ts,
+    }
+
+    loc_line = f"\n📍 {cal_data['location']}" if cal_data.get("location") else ""
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"📅 Wykryłem zaproszenie na spotkanie:\n"
+                    f"*{cal_data.get('title', 'Spotkanie')}*\n"
+                    f"🕐 {cal_data.get('start', '?')} → {cal_data.get('end', '?')}"
+                    f"{loc_line}\n\nDodać do kalendarza iCloud?"
+                ),
+            },
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "✅ Dodaj do kalendarza"},
+                    "style": "primary",
+                    "action_id": action_id,
+                    "value": "confirm",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "❌ Nie, dzięki"},
+                    "action_id": f"cal_reject_{user_id}_{ts.replace('.', '')}",
+                    "value": "reject",
+                },
+            ],
+        },
+    ]
+    app.client.chat_postMessage(
+        channel=event.get("channel"),
+        thread_ts=thread_ts,
+        text="Wykryłem zaproszenie — dodać do kalendarza?",
+        blocks=blocks,
+    )
+
+
+@app.action(re.compile(r"^cal_confirm_"))
+def handle_calendar_confirm(ack, body, action):
+    ack()
+    try:
+        action_id = action.get("action_id", "")
+        pending = _ctx.calendar_pending.pop(action_id, None)
+        if not pending:
+            return
+        channel_id = body["container"]["channel_id"]
+        message_ts = body["container"]["message_ts"]
+        _cal_owner = os.environ.get("CALENDAR_OWNER_SLACK_ID")
+        user_id = body["user"]["id"]
+        if _cal_owner and user_id != _cal_owner:
+            app.client.chat_postMessage(
+                channel=channel_id,
+                thread_ts=body["container"].get("thread_ts") or message_ts,
+                text="❌ Brak dostępu — kalendarz jest prywatny.",
+            )
+            return
+        result = icloud_calendar_tool(
+            action="create",
+            title=pending["title"],
+            start=pending["start"],
+            end=pending["end"],
+            location=pending.get("location"),
+        )
+        # Replace action buttons with confirmation text
+        orig_blocks = body.get("message", {}).get("blocks", [])
+        new_blocks = [b for b in orig_blocks if b.get("type") != "actions"]
+        if result.get("status") == "created":
+            confirm_text = f"✅ Dodano *{result['title']}* ({result['start']}) do kalendarza!"
+        else:
+            confirm_text = f"❌ Błąd: {result.get('error', 'nieznany błąd')}"
+        new_blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": confirm_text}})
+        try:
+            app.client.chat_update(channel=channel_id, ts=message_ts, text=confirm_text, blocks=new_blocks)
+        except Exception:
+            app.client.chat_postMessage(channel=channel_id, thread_ts=message_ts, text=confirm_text)
+    except Exception as e:
+        logger.error("handle_calendar_confirm error: %s", e, exc_info=True)
+
+
+@app.action(re.compile(r"^cal_reject_"))
+def handle_calendar_reject(ack, body, action):
+    ack()
+    try:
+        # Remove pending state for any matching confirm action on same message
+        message_ts = body["container"]["message_ts"]
+        channel_id = body["container"]["channel_id"]
+        orig_blocks = body.get("message", {}).get("blocks", [])
+        new_blocks = [b for b in orig_blocks if b.get("type") != "actions"]
+        new_blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "👍 Ok, pomijam."}})
+        try:
+            app.client.chat_update(channel=channel_id, ts=message_ts, text="👍 Ok, pomijam.", blocks=new_blocks)
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error("handle_calendar_reject error: %s", e, exc_info=True)
+
+
 # ── message events (DM + channel triggers) ───────────────────────────────────
 
 @app.event("message")
@@ -1440,9 +1625,28 @@ def handle_message_events(body, say, logger):
             return
 
         # Guard: tylko jeśli message zawiera znane employee keywords
-        if any(kw in _dm_text_l for kw in EMPLOYEE_MSG_KEYWORDS):
+        # Pomiń jeśli to prośba o kalendarz — obsłuży ją LLM z manage_calendar
+        _is_calendar_request = re.search(
+            r'kalen|calend|do\s+kal\w+|wrzuć\s+\w+\s+spotkanie|dodaj\s+\w+\s+spotkanie',
+            user_message, re.IGNORECASE,
+        )
+        if not _is_calendar_request and any(kw in _dm_text_l for kw in EMPLOYEE_MSG_KEYWORDS):
             if handle_employee_dm(user_id, user_name, user_message, _say_dm):
                 return
+
+        # === CALENDAR INVITE DETECTION: obraz w DM → zaoferuj dodanie do kalendarza ===
+        _cal_owner = os.environ.get("CALENDAR_OWNER_SLACK_ID")
+        if not _cal_owner or user_id == _cal_owner:
+            _image_files = [f for f in _creative_files if f.get("mimetype", "").startswith("image/")]
+            _cal_kw = re.search(
+                r'\b(wrzuć|dodaj|add|wstaw|zapisz|kalendarz|calendar|spotkanie|meeting|invite|zaproszenie)\b',
+                user_message, re.IGNORECASE,
+            )
+            if _image_files and (_cal_kw or not user_message.strip()):
+                _cal_data = _detect_calendar_invite(_image_files[0]["id"])
+                if _cal_data:
+                    _post_calendar_confirm(event, _cal_data)
+                    return
 
     # Email summary trigger — wyniki zawsze na DM
     if any(t in text_lower for t in ["test email", "email test", "email summary"]):
@@ -1459,6 +1663,11 @@ def handle_message_events(body, say, logger):
             logger.error(f"Błąd test email trigger: {e}")
         return
 
+    # Guard: sam obraz bez tekstu w DM — nie wywołuj LLM z pustą wiadomością
+    if not user_message.strip() and _creative_files and event.get("channel_type") == "im":
+        _say_dm("📎 Dostałem obraz — napisz co z nim zrobić, np. *wrzuć do kalendarza* albo *opisz co widzisz*.")
+        return
+
     # Store incoming user message to long-term memory (before building history)
     remember(user_id, event.get("channel", ""), event.get("ts", ""), "user", user_message)
 
@@ -1473,6 +1682,8 @@ def handle_message_events(body, say, logger):
     # Merge consecutive same-role messages (Anthropic requires alternating roles)
     _merged: list[dict] = []
     for _m in _history_msgs:
+        if not _m.get("content", "").strip():
+            continue  # pomiń puste wiadomości — Anthropic odrzuca non-empty content
         if _merged and _merged[-1]["role"] == _m["role"]:
             _merged[-1]["content"] += "\n" + _m["content"]
         else:
@@ -1480,6 +1691,8 @@ def handle_message_events(body, say, logger):
     while _merged and _merged[0]["role"] != "user":
         _merged.pop(0)
     if not _merged:
+        if not user_message.strip():
+            return  # brak historii i pusta wiadomość — nic do wysłania
         _merged = [{"role": "user", "content": user_message}]
 
     _today_dm = datetime.now()
@@ -1496,6 +1709,11 @@ def handle_message_events(body, say, logger):
         "Jedna prośba = jedna odpowiedź. Nie doklejaj niczego niezwiązanego.\n\n"
         "Mów po polsku. Bądź bezpośredni i konkretny — podawaj liczby, nie ogólniki. "
         "Emoji: 📊 💰 ⚠️ ✅\n\n"
+        "📅 KALENDARZ: Gdy user mówi 'dodaj do kalendarza', 'wrzuć do kalendarza', 'dodaj spotkanie', 'zaplanuj spotkanie', 'umów' — "
+        "ZAWSZE wywołaj manage_calendar(action='create', ...). NIE używaj save_reminder dla wydarzeń kalendarzowych! "
+        "Różnica: reminder = powiadomienie Slack o przyszłej rzeczy; kalendarz = wydarzenie w iCloud.\n"
+        "⛔ KRYTYCZNE: Jeśli manage_calendar zwróci błąd (np. brak autoryzacji) → powiedz użytkownikowi o błędzie i STOP. "
+        "NIE zapisuj jako reminder zamiast tego. NIE rób żadnego fallbacku. Tylko: 'Nie udało się dodać do kalendarza: [błąd]'.\n\n"
         "📌 REMINDERY: Gdy user prosi o przypomnienie ('przypomnij mi', 'zanotuj że', 'remind me') — "
         "ZAWSZE użyj narzędzia save_reminder żeby zapisać. NIE mów tylko 'zanotowałem' bez wywołania narzędzia. "
         "Po zapisaniu potwierdź datę i treść w MAX 2 zdaniach. Nic więcej."
