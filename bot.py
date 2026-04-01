@@ -1625,7 +1625,12 @@ def handle_message_events(body, say, logger):
             return
 
         # Guard: tylko jeśli message zawiera znane employee keywords
-        if any(kw in _dm_text_l for kw in EMPLOYEE_MSG_KEYWORDS):
+        # Pomiń jeśli to prośba o kalendarz — obsłuży ją LLM z manage_calendar
+        _is_calendar_request = re.search(
+            r'kalen|calend|do\s+kal\w+|wrzuć\s+\w+\s+spotkanie|dodaj\s+\w+\s+spotkanie',
+            user_message, re.IGNORECASE,
+        )
+        if not _is_calendar_request and any(kw in _dm_text_l for kw in EMPLOYEE_MSG_KEYWORDS):
             if handle_employee_dm(user_id, user_name, user_message, _say_dm):
                 return
 
