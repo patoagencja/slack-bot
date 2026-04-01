@@ -483,6 +483,7 @@ Zasada: jeśli podmiotem zdania jest inne imię niż {user_name} → wpisz to im
     - tworzenie/budowanie kampanii reklamowych ("stwórz kampanię", "zrób kampanię", "postaw kampanię")
     - analizy danych i raportów ("pokaż wyniki", "jak idą kampanie", "sprawdź")
     - wysyłanie wiadomości, maili ("napisz do", "wyślij")
+    - operacje na kalendarzu ("wrzuć spotkanie", "dodaj spotkanie", "zaplanuj spotkanie", "wrzuć do kalendarza", "dodaj do kalendarza", "umów spotkanie") = ZAWSZE "chat"
     - wszelkie komendy do bota żeby COŚ ZROBIŁ (nie żeby COŚ ZATWIERDZIŁ szef)
 "chat" — wszystko inne, w tym polecenia operacyjne jak wyżej.
 
