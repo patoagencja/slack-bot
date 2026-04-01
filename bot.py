@@ -1074,67 +1074,70 @@ def handle_cleanup_slash(ack, respond, command, client):
     """Usuwa wszystkie wiadomości bota z bieżącego kanału."""
     ack()
     channel_id = command.get("channel_id", "")
-    user_id = command.get("user_id", "")
     text = (command.get("text") or "").strip()
 
-    # Opcjonalny argument: liczba dni (domyślnie 30)
-    try:
-        days = int(text) if text else 30
-    except ValueError:
-        respond("Użycie: `/cleanup [liczba_dni]` (domyślnie 30)")
+    # Wyciągnij liczbę dni z tekstu — akceptuje "120", "120 dni", "120d" itp.
+    _m = re.search(r'\d+', text)
+    days = int(_m.group()) if _m else (30 if not text else None)
+    if days is None:
+        respond("Użycie: `/cleanup [liczba_dni]` (domyślnie 30), np. `/cleanup 120`")
         return
 
     oldest = str(time.time() - days * 86400)
 
-    respond(f"🧹 Szukam wiadomości bota z ostatnich {days} dni... chwilka.")
-
-    deleted = 0
-    errors = 0
-    cursor = None
-
-    # Pobierz bot_id bota
+    # Pobierz bot_id i user_id bota
     try:
         auth_info = client.auth_test()
-        bot_id = auth_info.get("bot_id") or auth_info.get("user_id")
+        bot_id      = auth_info.get("bot_id")
+        bot_user_id = auth_info.get("user_id")
     except Exception as e:
         respond(f"❌ Nie udało się pobrać auth info: {e}")
         return
 
-    while True:
-        kwargs = {"channel": channel_id, "limit": 200, "oldest": oldest}
-        if cursor:
-            kwargs["cursor"] = cursor
-        try:
-            resp = client.conversations_history(**kwargs)
-        except Exception as e:
-            logger.error(f"cleanup: conversations_history error: {e}")
-            break
+    respond(f"🧹 Szukam wiadomości bota z ostatnich {days} dni... chwilka.")
 
-        messages = resp.get("messages", [])
-        for msg in messages:
-            is_bot_msg = (
-                msg.get("bot_id") == bot_id
-                or (msg.get("subtype") in ("bot_message",) and msg.get("bot_id") == bot_id)
-            )
-            if not is_bot_msg:
-                continue
+    def _do_cleanup():
+        deleted = 0
+        errors  = 0
+        cursor  = None
+        while True:
+            kwargs = {"channel": channel_id, "limit": 200, "oldest": oldest}
+            if cursor:
+                kwargs["cursor"] = cursor
             try:
-                client.chat_delete(channel=channel_id, ts=msg["ts"])
-                deleted += 1
-                time.sleep(0.3)  # rate limit
+                resp = client.conversations_history(**kwargs)
             except Exception as e:
-                logger.warning(f"cleanup: nie udało się usunąć {msg['ts']}: {e}")
-                errors += 1
+                logger.error(f"cleanup: conversations_history error: {e}")
+                break
 
-        if resp.get("has_more") and resp.get("response_metadata", {}).get("next_cursor"):
-            cursor = resp["response_metadata"]["next_cursor"]
-        else:
-            break
+            for msg in resp.get("messages", []):
+                is_bot_msg = (
+                    (bot_id      and msg.get("bot_id") == bot_id)
+                    or (bot_user_id and msg.get("user")   == bot_user_id)
+                    or msg.get("subtype") == "bot_message"
+                )
+                if not is_bot_msg:
+                    continue
+                try:
+                    client.chat_delete(channel=channel_id, ts=msg["ts"])
+                    deleted += 1
+                    time.sleep(0.3)
+                except Exception as e:
+                    logger.warning(f"cleanup: nie udało się usunąć {msg['ts']}: {e}")
+                    errors += 1
 
-    status = f"✅ Usunięto *{deleted}* wiadomości bota"
-    if errors:
-        status += f" _(błędy przy {errors} wiadomościach)_"
-    respond(status)
+            if resp.get("has_more") and resp.get("response_metadata", {}).get("next_cursor"):
+                cursor = resp["response_metadata"]["next_cursor"]
+            else:
+                break
+
+        status = f"✅ Usunięto *{deleted}* wiadomości bota (zakres: {days} dni)"
+        if errors:
+            status += f" _(błędy przy {errors} wiadomościach)_"
+        respond(status)
+
+    import threading as _th
+    _th.Thread(target=_do_cleanup, daemon=True).start()
 
 
 # ── /onboard slash command ────────────────────────────────────────────────────
