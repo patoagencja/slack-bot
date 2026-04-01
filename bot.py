@@ -1658,6 +1658,11 @@ def handle_message_events(body, say, logger):
             logger.error(f"Błąd test email trigger: {e}")
         return
 
+    # Guard: sam obraz bez tekstu w DM — nie wywołuj LLM z pustą wiadomością
+    if not user_message.strip() and _creative_files and event.get("channel_type") == "im":
+        _say_dm("📎 Dostałem obraz — napisz co z nim zrobić, np. *wrzuć do kalendarza* albo *opisz co widzisz*.")
+        return
+
     # Store incoming user message to long-term memory (before building history)
     remember(user_id, event.get("channel", ""), event.get("ts", ""), "user", user_message)
 
@@ -1672,6 +1677,8 @@ def handle_message_events(body, say, logger):
     # Merge consecutive same-role messages (Anthropic requires alternating roles)
     _merged: list[dict] = []
     for _m in _history_msgs:
+        if not _m.get("content", "").strip():
+            continue  # pomiń puste wiadomości — Anthropic odrzuca non-empty content
         if _merged and _merged[-1]["role"] == _m["role"]:
             _merged[-1]["content"] += "\n" + _m["content"]
         else:
