@@ -1686,6 +1686,8 @@ def handle_message_events(body, say, logger):
     while _merged and _merged[0]["role"] != "user":
         _merged.pop(0)
     if not _merged:
+        if not user_message.strip():
+            return  # brak historii i pusta wiadomość — nic do wysłania
         _merged = [{"role": "user", "content": user_message}]
 
     _today_dm = datetime.now()
@@ -1702,6 +1704,9 @@ def handle_message_events(body, say, logger):
         "Jedna prośba = jedna odpowiedź. Nie doklejaj niczego niezwiązanego.\n\n"
         "Mów po polsku. Bądź bezpośredni i konkretny — podawaj liczby, nie ogólniki. "
         "Emoji: 📊 💰 ⚠️ ✅\n\n"
+        "📅 KALENDARZ: Gdy user mówi 'dodaj do kalendarza', 'wrzuć do kalendarza', 'dodaj spotkanie', 'zaplanuj spotkanie', 'umów' — "
+        "ZAWSZE wywołaj manage_calendar(action='create', ...). NIE używaj save_reminder dla wydarzeń kalendarzowych! "
+        "Różnica: reminder = powiadomienie Slack o przyszłej rzeczy; kalendarz = wydarzenie w iCloud.\n\n"
         "📌 REMINDERY: Gdy user prosi o przypomnienie ('przypomnij mi', 'zanotuj że', 'remind me') — "
         "ZAWSZE użyj narzędzia save_reminder żeby zapisać. NIE mów tylko 'zanotowałem' bez wywołania narzędzia. "
         "Po zapisaniu potwierdź datę i treść w MAX 2 zdaniach. Nic więcej."
