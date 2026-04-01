@@ -83,7 +83,14 @@ def icloud_calendar_tool(
     """
     try:
         client = _get_client()
-        principal = client.principal()
+        try:
+            principal = client.principal()
+        except Exception as auth_err:
+            err_str = str(auth_err)
+            if "Unauthorized" in err_str or "AuthorizationError" in type(auth_err).__name__ or "401" in err_str:
+                logger.warning(f"iCloud Calendar: błąd autoryzacji — sprawdź ICLOUD_USERNAME i ICLOUD_APP_PASSWORD. ({err_str})")
+                return {"error": "Błąd autoryzacji iCloud — nieprawidłowe dane logowania lub wygasłe hasło aplikacji."}
+            raise
         calendars = principal.calendars()
 
         if not calendars:
