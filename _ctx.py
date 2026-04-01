@@ -41,6 +41,9 @@ voice_cache: dict = {}
 # Muted budget alerts: "{platform}_{client}_{campaign}" → ISO expiry datetime str
 muted_alerts: dict = {}
 
+# Pending calendar invite confirmations: action_id → {user_id, title, start, end, location, channel, thread_ts}
+calendar_pending: dict = {}
+
 
 # ── Wizard state persistence ──────────────────────────────────────────────────
 import json as _json
