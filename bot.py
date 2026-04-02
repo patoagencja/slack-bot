@@ -250,7 +250,7 @@ def _check_missing_campaign_fields(params: dict, files: list) -> list:
     Returns: [] jeśli wszystko OK, inaczej lista stringów z pytaniami."""
     qs = []
     if not params.get("client_name"):
-        qs.append("*Klient* — dla kogo kampania? (`dre` / `instax` / `m2` / `pato`)")
+        qs.append("*Klient* — dla kogo kampania? (`dre` / `instax` / `m2` / `pato` / `tc2023`)")
     if not params.get("daily_budget"):
         qs.append("*Budżet dzienny* — ile PLN/dzień? (np. `50 zł`)")
     if params.get("link_enabled", True) and not params.get("website_url"):
@@ -1911,7 +1911,7 @@ WIZARD_STEPS = [
         "q": (
             "🏢 *Krok 1/9 — Klient*\n"
             "Dla kogo kampania?\n"
-            "`dre` / `instax` / `m2` / `pato`"
+            "`dre` / `instax` / `m2` / `pato` / `tc2023`"
         ),
     },
     {
@@ -2315,7 +2315,8 @@ If something is missing — ASK. Do NOT copy data from previous conversations. E
 PRO Mode Workflow — follow these stages in order. Do NOT skip stages.
 
 Stage 0 — Client Identification:
-- CRITICAL: Always identify the client first. Extract from user message (e.g. "dre", "drzwi dre", "instax", "m2", "pato"). If the landing_page_url is "patoagencja.com" — that is the AGENCY's own website, NOT the client. If unclear — ASK. Fill "client_name" in the JSON.
+- CRITICAL: Always identify the client first. Extract from user message (e.g. "dre", "drzwi dre", "instax", "m2", "pato", "tc2023", "timecatchers"). If the landing_page_url is "patoagencja.com" — that is the AGENCY's own website, NOT the client. If unclear — ASK. Fill "client_name" in the JSON.
+- Dostępni klienci Meta: drzwi dre, instax, m2, pato, tc2023 (TimeCatchers). Jeśli user nie podał klienta — zapytaj: "Dla którego klienta kampania? (dre / instax / m2 / pato / tc2023)"
 
 Stage 1 — Business Basics:
 - What product/service are we advertising?
@@ -2967,7 +2968,7 @@ def _handle_meta_campaign_wizard(user_id: str, user_message: str | None, files: 
                         _reason = f"klient `{_detected_client}` nie ma skonfigurowanego konta Meta" if (_detected_client and not _account_id) else "nie rozpoznałem klienta"
                         say_fn(
                             f"❓ {_reason.capitalize()}.\n"
-                            f"Napisz dla kogo kampania: *dre*, *instax*, *m2* lub *pato*"
+                            f"Napisz dla kogo kampania: *dre*, *instax*, *m2*, *pato* lub *tc2023*"
                         )
                         return True
                     say_fn("📋 Tworzę szkic kampanii w Meta Ads...")
