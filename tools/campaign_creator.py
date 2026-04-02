@@ -187,6 +187,7 @@ Zasady mapowania:
 - "dre"/"drzwi" → client_name="dre"
 - "instax"/"fuji"/"fujifilm" → client_name="instax"
 - "m2"/"nieruchomości" → client_name="m2"
+- "tc2023"/"timecatchers"/"time catchers" → client_name="tc2023"
 - cel "traffic"/"ruch" → OUTCOME_TRAFFIC | "konwersje"/"sprzedaż" → OUTCOME_SALES | "zasięg"/"reach"/"świadomość" → OUTCOME_AWARENESS | "zaangażowanie" → OUTCOME_ENGAGEMENT | "leady" → OUTCOME_LEADS | "app"/"aplikacja" → OUTCOME_APP_PROMOTION
 - "tylko Instagram"/"instagram" → publisher_platforms=["instagram"] | "tylko Facebook"/"facebook" → ["facebook"] | brak = null
 - "Stories"/"story" → placement_positions zawiera "story" | "Reels"/"reels" → "reels" | "Feed" → "feed"
@@ -262,7 +263,9 @@ Zasady mapowania:
         # ── Fallback: jeśli Claude nie wyciągnął client_name, szukaj po słowach kluczowych ──
         if not params.get("client_name"):
             _msg_l = user_message.lower()
-            if any(k in _msg_l for k in ("dre", "drzwi", "dzrwi", "dzwri", "drze")):
+            if any(k in _msg_l for k in ("tc2023", "timecatchers", "time catchers")):
+                params["client_name"] = "tc2023"
+            elif any(k in _msg_l for k in ("dre", "drzwi", "dzrwi", "dzwri", "drze")):
                 params["client_name"] = "dre"
             elif any(k in _msg_l for k in ("instax", "fuji", "fujifilm")):
                 params["client_name"] = "instax"
@@ -769,7 +772,7 @@ def create_campaign_draft(
         return None
 
     def _discover_page_id() -> str:
-        """Jeśli DRE_META_PAGE_ID nie ustawiony — szuka strony przez /me/accounts."""
+        """Jeśli page_id nie ustawiony — szuka strony przez /me/accounts, dopasowuje po kliencie."""
         try:
             resp = requests.get(
                 "https://graph.facebook.com/v19.0/me/accounts",
@@ -777,9 +780,23 @@ def create_campaign_draft(
                 timeout=15,
             )
             pages = resp.json().get("data", [])
-            if pages:
-                logger.info(f"_discover_page_id found {len(pages)} pages: {[p.get('name') for p in pages]}")
-                return pages[0]["id"]
+            logger.info(f"_discover_page_id found {len(pages)} pages: {[p.get('name') for p in pages]}")
+            if not pages:
+                return ""
+            # Szukaj po nazwie klienta żeby nie brać przypadkowo złej strony
+            _client_l = (campaign_params.get("client_name") or "").lower()
+            _keywords = {
+                "tc2023":  ("timecatcher", "tc2023", "tc 2023"),
+                "dre":     ("dre", "doors"),
+                "instax":  ("instax", "fuji"),
+                "m2":      ("m2",),
+                "pato":    ("pato",),
+            }
+            for kws in _keywords.get(_client_l, ()):
+                for p in pages:
+                    if kws in (p.get("name") or "").lower():
+                        return p["id"]
+            return pages[0]["id"]
         except Exception as e:
             logger.warning(f"_discover_page_id error: {e}")
         return ""
