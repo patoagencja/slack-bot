@@ -498,165 +498,159 @@ def _aggregate_campaign_stats(entries):
     return total_spend, total_clicks, avg_ctr
 
 
-def _fetch_weekly_learnings_data():
-    """Pobiera dane Meta + Google dla ostatnich 7 dni i bieżącego miesiąca."""
-    from tools.meta_ads import meta_ads_tool
-    from tools.google_ads import google_ads_tool
+def _fetch_week_data(date_from: str, date_to: str) -> dict:
+    """Pobiera zagregowane dane Meta + Google dla podanego zakresu dat."""
+    meta_raw, google_raw = [], []
+    try:
+        md = meta_ads_tool(
+            client_name="drzwi dre",
+            date_from=date_from, date_to=date_to,
+            level="campaign",
+            metrics=["campaign_name", "spend", "impressions", "clicks", "ctr", "reach", "frequency", "actions"],
+        )
+        meta_raw = md.get("data", [])
+    except Exception as e:
+        logger.warning(f"weekly_learnings meta {date_from}-{date_to}: {e}")
 
-    now = datetime.now()
-    yesterday   = (now - timedelta(days=1)).strftime('%Y-%m-%d')
-    week_ago    = (now - timedelta(days=7)).strftime('%Y-%m-%d')
-    month_start = now.replace(day=1).strftime('%Y-%m-%d')
-
-    results = {}
-
-    for label, date_from, date_to in [
-        ("week",  week_ago,    yesterday),
-        ("month", month_start, yesterday),
-    ]:
-        meta_raw, google_raw = [], []
+    for account in AD_CLIENTS.get("dre", {}).get("google_accounts", ["dre", "dre 2024", "dre 2025"]):
         try:
-            md = meta_ads_tool(
-                client_name="drzwi dre",
+            gd = google_ads_tool(
+                client_name=account,
                 date_from=date_from, date_to=date_to,
                 level="campaign",
-                metrics=["campaign_name", "spend", "impressions", "clicks", "ctr", "conversions"],
+                metrics=["campaign.name", "metrics.impressions", "metrics.clicks",
+                         "metrics.cost_micros", "metrics.conversions", "metrics.ctr"],
             )
-            meta_raw = md.get("data", [])
+            google_raw.extend(gd.get("data", []))
         except Exception as e:
-            logger.warning(f"weekly_learnings meta {label}: {e}")
+            logger.warning(f"weekly_learnings google {account} {date_from}-{date_to}: {e}")
 
-        for account in AD_CLIENTS.get("dre", {}).get("google_accounts", ["dre", "dre 2024", "dre 2025"]):
-            try:
-                gd = google_ads_tool(
-                    client_name=account,
-                    date_from=date_from, date_to=date_to,
-                    level="campaign",
-                    metrics=["campaign.name", "metrics.impressions", "metrics.clicks",
-                             "metrics.cost_micros", "metrics.conversions", "metrics.ctr"],
-                )
-                google_raw.extend(gd.get("data", []))
-            except Exception as e:
-                logger.warning(f"weekly_learnings google {account} {label}: {e}")
+    def _agg(rows, spend_key="spend"):
+        spend = sum(float(r.get(spend_key, r.get("spend", 0)) or 0) for r in rows)
+        clicks = sum(int(r.get("clicks", 0) or 0) for r in rows)
+        impr = sum(int(r.get("impressions", 0) or 0) for r in rows)
+        reach = sum(int(r.get("reach", 0) or 0) for r in rows)
+        # Zaangażowanie: post reactions, comments, shares z actions[]
+        engagement = 0
+        for r in rows:
+            for act in (r.get("actions") or []):
+                if act.get("action_type") in ("post_reaction", "comment", "post", "post_engagement"):
+                    engagement += int(act.get("value", 0) or 0)
+        ctr = (clicks / impr * 100) if impr > 0 else 0.0
+        return {"spend": spend, "clicks": clicks, "impressions": impr, "reach": reach, "engagement": engagement, "ctr": ctr}
 
-        results[label] = {"meta": meta_raw, "google": google_raw}
-
-    return results
+    return {
+        "meta": {"raw": meta_raw, "agg": _agg(meta_raw, "spend")},
+        "google": {"raw": google_raw, "agg": _agg(google_raw, "cost")},
+    }
 
 
 def generate_weekly_learnings(client="dre"):
-    """Weekly summary of predictions accuracy + learned patterns."""
+    """Tygodniowe learnings: ten tydzień vs poprzedni + AI insights."""
     now = datetime.now()
-    week_cutoff  = (now - timedelta(days=7)).strftime('%Y-%m-%d')
+    yesterday     = (now - timedelta(days=1)).strftime('%Y-%m-%d')
+    week_start    = (now - timedelta(days=7)).strftime('%Y-%m-%d')
+    prev_week_end = (now - timedelta(days=8)).strftime('%Y-%m-%d')
+    prev_week_start = (now - timedelta(days=14)).strftime('%Y-%m-%d')
 
-    # Pobierz dane bezpośrednio z API (niezależnie od historii)
-    live = _fetch_weekly_learnings_data()
-    week_meta    = live["week"]["meta"]
-    week_google  = live["week"]["google"]
-    month_meta   = live["month"]["meta"]
-    month_google = live["month"]["google"]
+    this_week = _fetch_week_data(week_start, yesterday)
+    prev_week = _fetch_week_data(prev_week_start, prev_week_end)
 
-    # Predykcje z historii (te nadal mają sens z pliku)
-    data = _load_history_raw()
-    predictions = data.get(client, {}).get("predictions", [])
-    week_preds = [p for p in predictions if p.get("date", "") >= week_cutoff]
+    def _delta(curr, prev, key):
+        c, p = curr.get(key, 0), prev.get(key, 0)
+        if p == 0:
+            return None
+        return (c - p) / p * 100
 
-    patterns = analyze_patterns(client)
-    summary  = patterns.get("summary", {})
-    text = "🧠 *WEEKLY LEARNINGS – Co nauczyłem się w tym tygodniu:*\n\n"
+    def _arrow(pct, higher_is_better=True):
+        if pct is None:
+            return "➡️ brak danych"
+        good = pct > 0 if higher_is_better else pct < 0
+        return f"{'🟢' if good else '🔴'} {'+' if pct > 0 else ''}{pct:.1f}%"
 
-    # ── Platform stats: last 7 days + current month ───────────────────────────
-    has_any_data = False
+    lines = ["🧠 *WEEKLY LEARNINGS – Ten tydzień vs poprzedni:*\n"]
 
-    for platform, icon, w_raw, m_raw, spend_key in [
-        ("meta",   "🔵 META ADS",   week_meta,   month_meta,   "spend"),
-        ("google", "🔴 GOOGLE ADS", week_google, month_google, "cost"),
+    for platform, icon, tw, pw in [
+        ("META",   "🔵 META ADS",   this_week["meta"]["agg"],   prev_week["meta"]["agg"]),
+        ("GOOGLE", "🔴 GOOGLE ADS", this_week["google"]["agg"], prev_week["google"]["agg"]),
     ]:
-        if not w_raw and not m_raw:
+        if tw["spend"] == 0 and pw["spend"] == 0:
             continue
-        has_any_data = True
-
-        def _sum_stat(rows, key, spend_key=spend_key):
-            if key == "spend":
-                return sum(float(r.get(spend_key, r.get("spend", 0)) or 0) for r in rows)
-            if key == "clicks":
-                return sum(int(r.get("clicks", 0) or 0) for r in rows)
-            if key == "impressions":
-                return sum(int(r.get("impressions", 0) or 0) for r in rows)
-            if key == "conversions":
-                return sum(int(r.get("conversions", 0) or 0) for r in rows)
-            return 0
-
-        w_spend = _sum_stat(w_raw, "spend")
-        w_clicks = _sum_stat(w_raw, "clicks")
-        w_impr  = _sum_stat(w_raw, "impressions")
-        w_convs = _sum_stat(w_raw, "conversions")
-        w_ctr   = (w_clicks / w_impr * 100) if w_impr > 0 else 0.0
-
-        m_spend = _sum_stat(m_raw, "spend")
-        m_clicks = _sum_stat(m_raw, "clicks")
-        m_impr  = _sum_stat(m_raw, "impressions")
-        m_convs = _sum_stat(m_raw, "conversions")
-        m_ctr   = (m_clicks / m_impr * 100) if m_impr > 0 else 0.0
-
-        text += (
+        d_spend = _delta(tw, pw, "spend")
+        d_clicks = _delta(tw, pw, "clicks")
+        d_ctr = _delta(tw, pw, "ctr")
+        d_conv = _delta(tw, pw, "conversions")
+        reach_line = (f"   Zasięg:      👥 {tw['reach']:,}  {_arrow(_delta(tw, pw, 'reach'))}\n"
+                      if platform == "META" else "")
+        eng_line = (f"   Zaangażowanie: 💬 {tw['engagement']:,}  {_arrow(_delta(tw, pw, 'engagement'))}\n"
+                    if platform == "META" else "")
+        lines.append(
             f"📊 *{icon}*\n"
-            f"   7 dni:   💰 {w_spend:.0f} PLN | 👆 {w_clicks:,} kliknięć | 📈 CTR {w_ctr:.2f}% | 🎯 {w_convs} konwersji\n"
-            f"   Miesiąc: 💰 {m_spend:.0f} PLN | 👆 {m_clicks:,} kliknięć | 📈 CTR {m_ctr:.2f}% | 🎯 {m_convs} konwersji\n\n"
+            f"   Spend:      💰 {tw['spend']:.0f} PLN  {_arrow(d_spend, False)}\n"
+            f"   Kliknięcia: 👆 {tw['clicks']:,}  {_arrow(d_clicks)}\n"
+            f"   CTR:        📈 {tw['ctr']:.2f}%  {_arrow(d_ctr)}\n"
+            + reach_line + eng_line
         )
 
-    if not has_any_data:
-        text += "ℹ️ Brak danych z API za ostatni tydzień.\n\n"
+    # Top/bottom campaigns this week (Meta)
+    meta_raw = this_week["meta"]["raw"]
+    if meta_raw:
+        sorted_by_ctr = sorted(
+            [c for c in meta_raw if float(c.get("impressions", 0) or 0) > 1000],
+            key=lambda c: float(c.get("ctr", 0) or 0), reverse=True
+        )
+        if sorted_by_ctr:
+            top = sorted_by_ctr[0]
+            bot = sorted_by_ctr[-1]
+            lines.append(
+                f"\n🏆 *Top kampania Meta:* {top.get('campaign_name', '?')[:50]}\n"
+                f"   CTR {float(top.get('ctr', 0)):.2f}% | Spend {float(top.get('spend', 0)):.0f} PLN\n"
+                f"⚠️ *Najsłabsza Meta:* {bot.get('campaign_name', '?')[:50]}\n"
+                f"   CTR {float(bot.get('ctr', 0)):.2f}% | Spend {float(bot.get('spend', 0)):.0f} PLN\n"
+            )
 
-    # ── Prediction verification ────────────────────────────────────────────────
-    if week_preds:
-        verified = []
-        for pred in week_preds:
-            camp_hist  = all_hist_month.get(pred["campaign"], [])
-            after_date = (datetime.strptime(pred["date"], '%Y-%m-%d') + timedelta(days=2)).strftime('%Y-%m-%d')
-            before = [e for e in camp_hist if e.get("date", "") < after_date]
-            after  = [e for e in camp_hist if e.get("date", "") >= after_date]
-            metric = pred.get("predicted_metric", "ctr")
-            if before and after:
-                bv = before[-1].get(metric)
-                av = after[0].get(metric)
-                if bv and av and bv > 0:
-                    actual_chg = (av - bv) / bv * 100
-                    pred_chg   = pred.get("predicted_change_pct", 0)
-                    verified.append({**pred, "actual_change_pct": actual_chg,
-                                     "success": (actual_chg > 0) == (pred_chg > 0)})
+    # AI-generated insights
+    try:
+        tm, pm = this_week["meta"]["agg"], prev_week["meta"]["agg"]
+        tg, pg = this_week["google"]["agg"], prev_week["google"]["agg"]
+        data_summary = (
+            f"Klient: DRE (producent drzwi). KPI: zasięg, kliknięcia, zaangażowanie (NIE konwersje).\n\n"
+            f"Ten tydzień ({week_start} - {yesterday}):\n"
+            f"META: spend={tm['spend']:.0f} PLN, clicks={tm['clicks']}, CTR={tm['ctr']:.2f}%, "
+            f"reach={tm['reach']}, engagement={tm['engagement']}\n"
+            f"GOOGLE: spend={tg['spend']:.0f} PLN, clicks={tg['clicks']}, CTR={tg['ctr']:.2f}%\n\n"
+            f"Poprzedni tydzień ({prev_week_start} - {prev_week_end}):\n"
+            f"META: spend={pm['spend']:.0f} PLN, clicks={pm['clicks']}, CTR={pm['ctr']:.2f}%, "
+            f"reach={pm['reach']}, engagement={pm['engagement']}\n"
+            f"GOOGLE: spend={pg['spend']:.0f} PLN, clicks={pg['clicks']}, CTR={pg['ctr']:.2f}%\n"
+        )
+        if meta_raw:
+            top5 = sorted(meta_raw, key=lambda c: float(c.get("spend", 0) or 0), reverse=True)[:5]
+            data_summary += "\nTop 5 kampanii Meta (spend):\n"
+            for c in top5:
+                data_summary += (f"  - {c.get('campaign_name', '?')[:60]}: "
+                                 f"spend={float(c.get('spend', 0)):.0f} PLN, "
+                                 f"CTR={float(c.get('ctr', 0)):.2f}%, "
+                                 f"reach={c.get('reach', 0)}\n")
 
-        if verified:
-            text += "━━━━━━━━━━━━━━━━━━━━━━\n"
-            for v in verified[:4]:
-                icon = "✅" if v["success"] else "❌"
-                text += f"{icon} **{v['campaign']}** – {v['recommendation']}\n"
-                text += f"   Predicted: {v.get('predicted_change_pct', 0):+.0f}% | Actual: {v.get('actual_change_pct', 0):+.0f}%\n\n"
-            acc = sum(1 for v in verified if v["success"]) / len(verified) * 100
-            text += f"🎯 **Accuracy: {acc:.0f}%** ({len(verified)} predictions verified)\n\n"
+        ai_resp = _ctx.claude.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=500,
+            messages=[{"role": "user", "content": (
+                f"Jesteś analitykiem reklam dla agencji marketingowej. "
+                f"Na podstawie poniższych danych z kampanii DRE (producent drzwi) "
+                f"napisz 3-4 konkretne wnioski (learnings) z tego tygodnia. "
+                f"Co się zmieniło? Co działa? Co nie działa? Jakie 1-2 akcje podjąć w przyszłym tygodniu? "
+                f"Odpowiedź po polsku, konkretnie, max 6 zdań.\n\n{data_summary}"
+            )}]
+        )
+        ai_text = next((b.text for b in ai_resp.content if hasattr(b, "text")), "")
+        if ai_text:
+            lines.append(f"\n💡 *AI Insights:*\n{ai_text}")
+    except Exception as e:
+        logger.warning(f"weekly_learnings AI insights error: {e}")
 
-    # ── Learned patterns ───────────────────────────────────────────────────────
-    freq_p = summary.get("frequency_creative", {})
-    if freq_p and freq_p.get("total", 0) >= 2:
-        text += (f"📌 **Creative refresh pattern** ({freq_p['total']} obserwacji):\n"
-                 f"   {freq_p['successes']}/{freq_p['total']} razy pomogło"
-                 f" | Avg CTR +{freq_p['avg_ctr_improvement_pct']:.0f}%\n\n")
-
-    weekend = summary.get("weekend", {})
-    if weekend:
-        ctr_d  = weekend.get("ctr_diff_pct", 0)
-        roas_d = weekend.get("roas_diff_pct", 0)
-        we_cnt = len(patterns.get("weekend_we", []))
-        text += (f"📌 **Weekend vs Weekday** ({we_cnt} weekend-dni):\n"
-                 f"   CTR: {'🟢 +' if ctr_d > 0 else '🔴 '}{abs(ctr_d):.1f}% w weekendy\n"
-                 f"   ROAS: {'🟢 +' if roas_d > 0 else '🔴 '}{abs(roas_d):.1f}% w weekendy\n\n")
-
-    budget_p = summary.get("budget_increase", {})
-    if budget_p and budget_p.get("total", 0) >= 2:
-        text += (f"📌 **Budget increase pattern** ({budget_p['total']} obserwacji):\n"
-                 f"   {budget_p['successes']}/{budget_p['total']} razy CPC nie wzrósł >10%\n\n")
-
-    return text
+    return "\n".join(lines)
 
 
 def weekly_learnings_dre():
