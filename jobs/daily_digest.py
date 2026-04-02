@@ -252,7 +252,7 @@ def _build_main_message(date_label, total_spend, total_reach, avg_ctr,
             meta_mtd += ")_"
         lines += [
             f"🔵 *META ADS* — {meta_count} kampanii",
-            f"   💰 Spend 7d: *{meta_spend:.0f} PLN*{meta_mtd} | 👥 Reach: *{meta_reach:,}* | 📈 CTR: *{meta_ctr:.2f}%* | 🎯 Konwersje: *{meta_conversions}*",
+            f"   💰 Spend 7d: *{meta_spend:.0f} PLN*{meta_mtd} | 👥 Reach: *{meta_reach:,}* | 📈 CTR: *{meta_ctr:.2f}%* | 💬 Zaangażowanie: *{meta_conversions}*",
             "",
         ]
 
@@ -749,6 +749,12 @@ def generate_daily_digest_dre():
         MIN_SPEND_PLN = 20.0
         meta_campaigns       = [c for c in meta_campaigns_raw
                                  if float(c.get("spend", 0) or 0) >= MIN_SPEND_PLN]
+        # DRE = klient engagement/reach — wymuś objective żeby analiza nie szukała konwersji
+        for c in meta_campaigns:
+            c["_objective"] = _detect_campaign_objective(c.get("campaign_name", ""))
+            if c["_objective"] == "conversion":
+                c["_objective"] = "engagement"
+            c["_engagement"] = _extract_engagement_actions(c.get("actions", []))
         google_data_filtered = [c for c in google_data_combined
                                  if float(c.get("cost", c.get("spend", 0)) or 0) >= MIN_SPEND_PLN]
         all_campaigns = meta_campaigns + google_data_filtered
@@ -820,7 +826,11 @@ def generate_daily_digest_dre():
         # Osobne statystyki per platforma
         meta_spend       = sum(float(c.get("spend", 0) or 0) for c in meta_campaigns)
         meta_reach       = sum(int(c.get("reach", 0) or 0) for c in meta_campaigns)
-        meta_conversions = sum(int(c.get("conversions", 0) or 0) for c in meta_campaigns)
+        meta_conversions = sum(  # dla DRE: zlicz zaangażowanie zamiast konwersji
+            (e.get("reactions", 0) + e.get("comments", 0) + e.get("shares", 0))
+            for c in meta_campaigns
+            for e in [c.get("_engagement") or _extract_engagement_actions(c.get("actions", []))]
+        )
         meta_ctrs        = [float(c.get("ctr", 0) or 0) for c in meta_campaigns if float(c.get("ctr", 0) or 0) > 0]
         meta_ctr         = sum(meta_ctrs) / len(meta_ctrs) if meta_ctrs else 0.0
 
