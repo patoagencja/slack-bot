@@ -94,6 +94,13 @@ AD_CLIENTS = {
         "goal":            "engagement",
         "channel_id":      os.environ.get("DRE_CHANNEL_ID", "C05GPM4E9B8"),
     },
+    "tc2023": {
+        "display_name":    "TimeCatchers TC2023",
+        "meta_name":       "tc2023",
+        "google_accounts": [],
+        "goal":            "conversion",
+        "channel_id":      os.environ.get("TC2023_CHANNEL_ID", ""),
+    },
 }
 
 CHANNEL_CLIENT_MAP = {
@@ -194,15 +201,19 @@ META_ACCOUNT_IDS = {
     "kampanie zbiorcze":_meta_ad_map.get("kampanie zbiorcze") or _meta_ad_map.get("zbiorcze", ""),
     "m2":               _meta_ad_map.get("m2")        or os.environ.get("M2_META_ACCOUNT_ID", ""),
     "pato":             _meta_ad_map.get("pato")       or os.environ.get("PATO_META_ACCOUNT_ID", ""),
+    "tc2023":           _meta_ad_map.get("tc2023")    or os.environ.get("TC2023_META_ACCOUNT_ID", "act_331664575487458"),
+    "timecatchers":     _meta_ad_map.get("tc2023")    or os.environ.get("TC2023_META_ACCOUNT_ID", "act_331664575487458"),
 }
 
 # Meta Page IDs per klient
 META_PAGE_IDS = {
-    "dre":       os.environ.get("DRE_META_PAGE_ID", ""),
-    "drzwi dre": os.environ.get("DRE_META_PAGE_ID", ""),
-    "instax":    os.environ.get("INSTAX_META_PAGE_ID", ""),
-    "m2":        os.environ.get("M2_META_PAGE_ID", ""),
-    "pato":      os.environ.get("PATO_META_PAGE_ID", ""),
+    "dre":          os.environ.get("DRE_META_PAGE_ID", ""),
+    "drzwi dre":    os.environ.get("DRE_META_PAGE_ID", ""),
+    "instax":       os.environ.get("INSTAX_META_PAGE_ID", ""),
+    "m2":           os.environ.get("M2_META_PAGE_ID", ""),
+    "pato":         os.environ.get("PATO_META_PAGE_ID", ""),
+    "tc2023":       os.environ.get("TC2023_META_PAGE_ID", ""),
+    "timecatchers": os.environ.get("TC2023_META_PAGE_ID", ""),
 }
 
 # Polskie miasta → Facebook Location IDs

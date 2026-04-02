@@ -562,7 +562,7 @@ Sebol — asystent agencji marketingowej Pato. Pomagasz w WSZYSTKIM co dotyczy c
 Przedstaw się krótko i naturalnie. Wymień funkcje w formie listy jak powyżej. NIE mów że "jesteś gotowy do analizy kampanii" — jesteś multi-taskerem, nie tylko narzędziem do raportów.
 
 # KLIENCI
-META ADS: "instax"/"fuji" → Instax Fujifilm | "zbiorcze" → Kampanie zbiorcze | "drzwi dre" → DRE (drzwi)
+META ADS: "instax"/"fuji" → Instax Fujifilm | "zbiorcze" → Kampanie zbiorcze | "drzwi dre" → DRE (drzwi) | "tc2023"/"timecatchers" → TimeCatchers TC2023
 GOOGLE ADS: "3wm"/"pato" → Agencja | "dre 2024"/"dre24" → DRE 2024 | "dre 2025"/"dre25"/"dre" → DRE 2025 | "m2" → M2 (nieruchomości) | "zbiorcze" → Zbiorcze
 ⚠️ "dre" = producent drzwi, NIE raper!
 
@@ -616,7 +616,7 @@ Pytanie → Direct answer → Context → Actionable next step
                 "properties": {
                     "client_name": {
                         "type": "string",
-                        "description": "Nazwa klienta/biznesu. WYMAGANE. Dostępne: 'instax', 'fuji', 'instax/fuji', 'zbiorcze', 'kampanie zbiorcze', 'drzwi dre'. Wyciągnij z pytania użytkownika (np. 'jak kampanie dla instax?' → client_name='instax'). Jeśli użytkownik nie poda - zapytaj."
+                        "description": "Nazwa klienta/biznesu. WYMAGANE. Dostępne: 'instax', 'fuji', 'instax/fuji', 'zbiorcze', 'kampanie zbiorcze', 'drzwi dre', 'tc2023', 'timecatchers'. Wyciągnij z pytania użytkownika. Jeśli użytkownik nie poda - zapytaj."
                     },
                     "date_from": {"type": "string", "description": "Data początkowa. Format: YYYY-MM-DD lub względnie ('wczoraj', 'ostatni tydzień', 'ostatni miesiąc', '7 dni temu')."},
                     "date_to":   {"type": "string", "description": "Data końcowa. Format: YYYY-MM-DD lub 'dzisiaj'. Domyślnie dzisiaj."},
@@ -1704,7 +1704,7 @@ def handle_message_events(body, say, logger):
         "Jesteś Sebol — asystent agencji marketingowej Pato. Rozmawiasz z pracownikiem przez DM na Slacku.\n"
         "NIE jesteś Claude od Anthropic — jesteś Seblem, botem stworzonym dla agencji Pato.\n"
         "Pomagasz z kampaniami (Meta Ads / Google Ads), emailami, kalendarzem, teamem, raportami i codzienną pracą agencji.\n\n"
-        "Klienci Meta: 'instax/fuji', 'zbiorcze', 'drzwi dre'. Google: 'dre', 'dre 2024', 'dre 2025', 'm2', 'pato'.\n"
+        "Klienci Meta: 'instax/fuji', 'zbiorcze', 'drzwi dre', 'tc2023'/'timecatchers'. Google: 'dre', 'dre 2024', 'dre 2025', 'm2', 'pato'.\n"
         "Benchmarki Meta: ROAS >3.0, CTR 1.5-2.5%, CPC 3-8 PLN. Google Search: CTR 2-5%, CPC 2-10 PLN.\n\n"
         "⚠️ KONTEKST ROZMOWY: Czytaj historię wiadomości UWAŻNIE. Odpowiadaj WYŁĄCZNIE na to o co user AKTUALNIE pyta. "
         "Jeśli pyta o reminder — tylko zapisz reminder i potwierdź. Jeśli o email — tylko email. "
@@ -2400,7 +2400,7 @@ If the user didn't mention targeting (age, gender, interests, location, placemen
 Do NOT copy data from previous conversations. Each campaign wizard session starts fresh.
 
 Required fields:
-- client name (who is the campaign for: dre/instax/m2/pato — ALWAYS extract from user message or ask if not provided)
+- client name (who is the campaign for: dre/instax/m2/pato/tc2023 — ALWAYS extract from user message or ask if not provided)
 - campaign objective (Leads/Sales/Traffic/Engagement/Video views/Messages/App installs)
 - daily budget
 - country or location
@@ -2610,9 +2610,14 @@ def _meta_wizard_json_to_params(wjson: dict, wizard: dict) -> dict:
     # Check explicit client_name field first
     _explicit = (wjson.get("client_name") or "").lower().strip()
     if _explicit:
-        for _k in ("dre", "drzwi dre", "instax", "m2", "pato"):
+        for _k in ("dre", "drzwi dre", "instax", "m2", "pato", "tc2023", "timecatchers"):
             if _k in _explicit or _explicit in _k:
-                client_name = "drzwi dre" if _k in ("dre", "drzwi dre") else _k
+                if _k in ("dre", "drzwi dre"):
+                    client_name = "drzwi dre"
+                elif _k in ("tc2023", "timecatchers"):
+                    client_name = "tc2023"
+                else:
+                    client_name = _k
                 break
     # Then campaign name, then URL (agency domain excluded)
     if not client_name:
@@ -2854,7 +2859,7 @@ def _handle_meta_campaign_wizard(user_id: str, user_message: str | None, files: 
                     say_fn("❌ Nie mam danych kampanii. Uruchom `/kampaniameta` od nowa.")
             else:
                 say_fn(
-                    "❓ Nie rozpoznałem klienta. Podaj jeden z: *dre*, *instax*, *m2*, *pato*\n"
+                    "❓ Nie rozpoznałem klienta. Podaj jeden z: *dre*, *instax*, *m2*, *pato*, *tc2023*\n"
                     "Np. napisz: `dre` lub `drzwi dre`"
                 )
         return True
