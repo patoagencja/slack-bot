@@ -2409,7 +2409,7 @@ Required fields:
 - creative assets (video/image + primary text + headline + CTA)
 - basic audience (age, gender, interests — if user doesn't specify, use broad targeting and say so)
 
-CRITICAL: Always fill "client_name" in the JSON. Extract from: campaign name, user's messages, context (e.g. "dre", "drzwi dre", "instax", "m2", "pato"). If the landing_page_url is "patoagencja.com" — that is the AGENCY's own website, NOT the client name. If client is unknown — ASK.
+CRITICAL: Always fill "client_name" in the JSON. Extract from: campaign name, user's messages, context (e.g. "dre", "drzwi dre", "instax", "m2", "pato", "tc2023", "timecatchers"). If the landing_page_url is "patoagencja.com" — that is the AGENCY's own website, NOT the client name. If client is unknown — ASK.
 
 Ask all questions in ONE round (max 6-7 questions).
 If user already provided data — do NOT ask again, just confirm and ask for missing items.
@@ -2623,10 +2623,11 @@ def _meta_wizard_json_to_params(wjson: dict, wizard: dict) -> dict:
     # Then campaign name, then URL (agency domain excluded)
     if not client_name:
         for _k, _aliases in (
-            ("dre", ("dre", "drzwi")),
-            ("instax", ("instax",)),
-            ("m2", ("m2",)),
-            ("pato", ("pato",)),
+            ("tc2023",  ("tc2023", "timecatcher")),
+            ("dre",     ("dre", "drzwi")),
+            ("instax",  ("instax",)),
+            ("m2",      ("m2",)),
+            ("pato",    ("pato",)),
         ):
             if any(a in _name_raw for a in _aliases) or any(a in _url_for_client for a in _aliases):
                 client_name = _k
@@ -2801,10 +2802,11 @@ def _handle_meta_campaign_wizard(user_id: str, user_message: str | None, files: 
             _cl_msg = user_message.strip().lower()
             _detected_client = None
             for _k, _aliases in (
-                ("dre", ("dre", "drzwi")),
-                ("instax", ("instax",)),
-                ("m2", ("m2",)),
-                ("pato", ("pato",)),
+                ("tc2023",  ("tc2023", "timecatchers", "time catchers")),
+                ("dre",     ("dre", "drzwi")),
+                ("instax",  ("instax",)),
+                ("m2",      ("m2",)),
+                ("pato",    ("pato",)),
             ):
                 if any(a in _cl_msg for a in _aliases):
                     _detected_client = _k
