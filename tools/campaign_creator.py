@@ -748,12 +748,40 @@ def create_campaign_draft(
         Omija błąd 1885183 (unverified business portfolio przy object_story_spec).
         """
         page_token = _get_page_access_token(pid) or _token
+        if not page_token:
+            logger.warning("_create_page_photo_post: brak page access token")
+            return None
+
+        # Pobierz URL obrazka z AdImage (endpoint /photos wymaga url, nie hash)
+        image_url = None
+        try:
+            img_resp = requests.get(
+                f"https://graph.facebook.com/v19.0/{account_id}/adimages",
+                params={
+                    "access_token": _token,
+                    "hashes":       json.dumps([image_hash]),
+                    "fields":       "url",
+                },
+                timeout=15,
+            )
+            img_data = img_resp.json().get("data", [])
+            image_url = img_data[0].get("url") if img_data else None
+            if image_url:
+                logger.info(f"_create_page_photo_post: got image URL from AdImage")
+            else:
+                logger.warning(f"_create_page_photo_post: brak URL w AdImage response: {img_resp.json()}")
+        except Exception as e:
+            logger.warning(f"_create_page_photo_post: błąd pobierania URL obrazka: {e}")
+
+        if not image_url:
+            return None
+
         try:
             resp = requests.post(
                 f"https://graph.facebook.com/v19.0/{pid}/photos",
                 params={"access_token": page_token},
                 data={
-                    "hash":      image_hash,
+                    "url":       image_url,
                     "message":   message or "",
                     "published": "false",
                 },
