@@ -2526,39 +2526,27 @@ def handle_kampaniameta_slash(ack, command, logger):
     for t in (_META_SIMPLE_TRIGGERS | _META_PRO_TRIGGERS):
         extra_context = re.sub(rf'\b{re.escape(t)}\b', '', extra_context, flags=re.IGNORECASE).strip()
 
+    _client_question = "🏢 *Dla jakiego klienta?*\n_(dre / instax / m2 / pato / tc2023)_\n\n"
+
     if mode == "simple":
         intro = (
             "⚡ *Szybka kampania Meta Ads — tryb SIMPLE*\n"
             "Zbierzemy tylko najważniejsze dane i jedziemy.\n"
             "Napisz `anuluj` żeby przerwać, `pro` żeby przejść w pełny tryb.\n\n"
-            "Potrzebuję kilku rzeczy:\n\n"
-            "1️⃣ Cel kampanii? _(leady / sprzedaż / ruch / zaangażowanie / wyświetlenia video / wiadomości)_\n"
-            "2️⃣ Budżet dzienny?\n"
-            "3️⃣ Kraj / lokalizacja?\n"
-            "4️⃣ Link docelowy?\n"
-            "5️⃣ Kreacja — wyślij plik (obraz/video) lub opisz co masz\n"
-            "6️⃣ Tekst reklamy + nagłówek + CTA"
+            + _client_question
         )
     elif mode == "pro":
         intro = (
             "🟣 *Tworzymy kampanię Meta Ads — tryb PRO*\n"
             "Przeprowadzę Cię przez pełny profesjonalny setup.\n"
             "Napisz `anuluj` żeby przerwać w dowolnym momencie.\n\n"
-            "Zaczynamy od podstaw:\n\n"
-            "1️⃣ Co reklamujemy? _(produkt / usługa / oferta)_\n"
-            "2️⃣ Jaki jest główny cel biznesowy?\n"
-            "3️⃣ Kto jest idealnym klientem?\n"
-            "4️⃣ Na jaki rynek kierujemy? _(kraj / miasta)_\n"
-            "5️⃣ Cel kampanii? _(leady / sprzedaż / ruch / zaangażowanie / wiadomości / instalacje / video views)_\n"
-            "6️⃣ Budżet dzienny lub miesięczny?"
+            + _client_question
         )
     else:  # auto
         intro = (
             "🟣 *Tworzymy kampanię Meta Ads!*\n"
             "Napisz `anuluj` żeby przerwać w dowolnym momencie.\n\n"
-            "Powiedz mi co chcesz zrobić — dopasuję proces do potrzeb.\n"
-            "Możesz podać od razu dane (cel, budżet, link, kreacja),\n"
-            "albo opisać cel i pomogę zaprojektować kampanię."
+            + _client_question
         )
 
     try:

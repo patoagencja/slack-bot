@@ -342,20 +342,29 @@ def search_meta_interests(keyword: str) -> list:
     Szuka interests w Meta Ads API po słowie kluczowym. Cache wyników.
     Returns: lista {id, name}
     """
+    import concurrent.futures
     key = keyword.lower().strip()
     if key in _interests_cache:
         return _interests_cache[key]
 
-    try:
-        result = TargetingSearch.search(params={
+    def _do_search():
+        return TargetingSearch.search(params={
             "q":     keyword,
             "type":  "adinterest",
             "limit": 5,
         })
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            future = ex.submit(_do_search)
+            result = future.result(timeout=8)
         items = [{"id": str(r["id"]), "name": r["name"]} for r in result]
         _interests_cache[key] = items
         logger.info(f"Interest search '{keyword}': {len(items)} results")
         return items
+    except concurrent.futures.TimeoutError:
+        logger.warning(f"search_meta_interests timeout for '{keyword}' — pomijam")
+        return []
     except Exception as e:
         logger.error(f"search_meta_interests error for '{keyword}': {e}")
         return []
