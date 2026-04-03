@@ -212,8 +212,8 @@ META_PAGE_IDS = {
     "instax":       os.environ.get("INSTAX_META_PAGE_ID", ""),
     "m2":           os.environ.get("M2_META_PAGE_ID", ""),
     "pato":         os.environ.get("PATO_META_PAGE_ID", ""),
-    "tc2023":       os.environ.get("TC2023_META_PAGE_ID", "61553871192893"),
-    "timecatchers": os.environ.get("TC2023_META_PAGE_ID", "61553871192893"),
+    "tc2023":       os.environ.get("TC2023_META_PAGE_ID", "187157157809148"),
+    "timecatchers": os.environ.get("TC2023_META_PAGE_ID", "187157157809148"),
 }
 
 # Polskie miasta → Facebook Location IDs
