@@ -525,7 +525,8 @@ def handle_mention(event, say):
             logger.error(f"Błąd pobierania historii kanału: {e}")
 
     today           = datetime.now()
-    today_formatted = today.strftime('%d %B %Y')
+    _dni_pl_ch      = ["poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota", "niedziela"]
+    today_formatted = f"{_dni_pl_ch[today.weekday()]}, {today.strftime('%d %B %Y')}"
     today_iso       = today.strftime('%Y-%m-%d')
 
     _sender_uid  = event.get('user', '')
@@ -1706,8 +1707,9 @@ def handle_message_events(body, say, logger):
         _merged = [{"role": "user", "content": user_message}]
 
     _today_dm = datetime.now()
+    _dni_pl = ["poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota", "niedziela"]
     _dm_system = (
-        f"Dzisiaj: {_today_dm.strftime('%d %B %Y')} ({_today_dm.strftime('%Y-%m-%d')}).\n\n"
+        f"Dzisiaj: {_dni_pl[_today_dm.weekday()]}, {_today_dm.strftime('%d %B %Y')} ({_today_dm.strftime('%Y-%m-%d')}).\n\n"
         "Jesteś Sebol — asystent agencji marketingowej Pato. Rozmawiasz z pracownikiem przez DM na Slacku.\n"
         "NIE jesteś Claude od Anthropic — jesteś Seblem, botem stworzonym dla agencji Pato.\n"
         "Pomagasz z kampaniami (Meta Ads / Google Ads), emailami, kalendarzem, teamem, raportami i codzienną pracą agencji.\n\n"
