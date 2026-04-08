@@ -1650,13 +1650,17 @@ def handle_message_events(body, say, logger):
         if not _cal_owner or user_id == _cal_owner:
             _image_files = [f for f in _creative_files if f.get("mimetype", "").startswith("image/")]
             _cal_kw = re.search(
-                r'\b(wrzuć|dodaj|add|wstaw|zapisz|kalendarz|calendar|spotkanie|meeting|invite|zaproszenie)\b',
+                r'wrzu[cć]|dodaj|add|wstaw|zapisz|kalend\w+|calendar|spotkani\w+|meeting|invite|zaproszeni\w+',
                 user_message, re.IGNORECASE,
             )
             if _image_files and (_cal_kw or not user_message.strip()):
                 _cal_data = _detect_calendar_invite(_image_files[0]["id"])
                 if _cal_data:
                     _post_calendar_confirm(event, _cal_data)
+                    return
+                elif _cal_kw:
+                    # Obrazek jest ale nie udało się wykryć zaproszenia — poproś o dane tekstowo
+                    _say_dm("🤔 Nie udało mi się odczytać szczegółów spotkania z tego obrazka. Podaj tytuł, datę i godzinę — dodam ręcznie.")
                     return
 
     # Email summary trigger — wyniki zawsze na DM
