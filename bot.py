@@ -1178,6 +1178,9 @@ def _detect_calendar_invite(file_id: str) -> dict | None:
         img_b64 = _b64.b64encode(resp.content).decode()
         media_type = mime  # e.g. "image/png"
 
+        from datetime import datetime as _dt
+        _today_ctx = _dt.now().strftime("%Y-%m")  # np. "2026-04"
+
         claude_resp = anthropic.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=400,
@@ -1191,10 +1194,12 @@ def _detect_calendar_invite(file_id: str) -> dict | None:
                     {
                         "type": "text",
                         "text": (
+                            f"Dzisiaj: {_today_ctx}. "
                             "Czy to zrzut ekranu zaproszenia na spotkanie / wydarzenie kalendarzowe? "
-                            "Jeśli tak, wyciągnij dane i odpowiedz TYLKO w formacie JSON (bez markdown):\n"
+                            "Jeśli tak, wyciągnij dane i odpowiedz TYLKO surowym JSON (bez markdown, bez ```): \n"
                             '{"is_invite": true, "title": "...", "start": "YYYY-MM-DD HH:MM", '
                             '"end": "YYYY-MM-DD HH:MM", "location": "..."}\n'
+                            "Jeśli widzisz tylko dzień (np. '15') użyj bieżącego miesiąca i roku.\n"
                             "Jeśli nie wiesz godziny zakończenia, ustaw end = start + 1h.\n"
                             "Jeśli to NIE jest zaproszenie, odpowiedz: {\"is_invite\": false}"
                         ),
@@ -1203,8 +1208,11 @@ def _detect_calendar_invite(file_id: str) -> dict | None:
             }],
         )
         text = next((b.text for b in claude_resp.content if hasattr(b, "text")), "")
+        logger.info(f"_detect_calendar_invite raw response: {text[:200]}")
         import json as _json
-        data = _json.loads(text.strip())
+        # Usuń ewentualne markdown code fences
+        _clean = re.sub(r"```[a-z]*\n?", "", text).strip().strip("`").strip()
+        data = _json.loads(_clean)
         if not data.get("is_invite"):
             return None
         return {
