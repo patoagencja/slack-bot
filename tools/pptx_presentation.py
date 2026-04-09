@@ -441,3 +441,40 @@ def generate_pptx(title, client_name=None, subtitle=None, brief=None,
     prs.save(buf)
     buf.seek(0)
     return buf.read()
+
+
+def share_pptx(pptx_bytes: bytes, filename: str) -> str | None:
+    """
+    Upload PPTX bytes to a temporary file host and return a download URL.
+    Tries transfer.sh, then 0x0.st as fallback.
+    Returns URL string or None on failure.
+    """
+    import requests as _req
+    safe_name = filename.replace(" ", "_")
+
+    # Attempt 1: transfer.sh (14-day links)
+    try:
+        r = _req.put(
+            f"https://transfer.sh/{safe_name}",
+            data=pptx_bytes,
+            headers={"Max-Days": "14"},
+            timeout=30,
+        )
+        if r.ok and r.text.strip().startswith("http"):
+            return r.text.strip()
+    except Exception as _e:
+        logger.warning(f"transfer.sh failed: {_e}")
+
+    # Attempt 2: 0x0.st (permanent until unused)
+    try:
+        r = _req.post(
+            "https://0x0.st",
+            files={"file": (safe_name, pptx_bytes, "application/vnd.openxmlformats-officedocument.presentationml.presentation")},
+            timeout=30,
+        )
+        if r.ok and r.text.strip().startswith("http"):
+            return r.text.strip()
+    except Exception as _e:
+        logger.warning(f"0x0.st failed: {_e}")
+
+    return None

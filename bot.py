@@ -61,7 +61,7 @@ from tools.campaign_creator import (
 )
 from tools.voice_transcription import transcribe_slack_audio, SLACK_AUDIO_MIMES
 from tools.icloud_calendar import icloud_calendar_tool
-from tools.pptx_presentation import generate_pptx
+from tools.pptx_presentation import generate_pptx, share_pptx
 from tools.memory import init_memory, remember, recall_as_context, get_history
 from tools.reminders import init_reminders, schedule_reminder, list_reminders
 from tools.token_log import init_token_log, TrackedAnthropicClient, get_summary, USD_TO_PLN
@@ -941,7 +941,6 @@ Pytanie → Direct answer → Context → Actionable next step
                         _pptx_filename = f"{_pptx_name}.pptx"
                         _upload_ok = False
                         try:
-                            # Nowy Slack SDK — files_upload_v2 z file=BytesIO
                             app.client.files_upload_v2(
                                 channel=channel,
                                 file=_io.BytesIO(_pptx_bytes),
@@ -960,9 +959,21 @@ Pytanie → Direct answer → Context → Actionable next step
                                 )
                                 _upload_ok = True
                             except Exception as _e2:
-                                logger.error(f"files_upload też failed: {_e2}")
-                                tool_result = {"error": f"Upload na Slack nie powiódł się. files_upload_v2: {_e1} | files_upload: {_e2}. Sprawdź czy bot ma scope 'files:write' w konfiguracji Slack App."}
-                        if _upload_ok:
+                                logger.warning(f"files_upload też failed ({_e2}), próbuję transfer.sh...")
+                                _dl_url = share_pptx(_pptx_bytes, _pptx_filename)
+                                if _dl_url:
+                                    _prez_title = tool_input.get("title", "Prezentacja")
+                                    _msg = f"📊 *{_prez_title}*\n\n⬇️ *Pobierz prezentację PPTX:*\n{_dl_url}\n\n_(link ważny ~14 dni — otwórz w PowerPoint, Keynote lub Google Slides)_"
+                                    if is_group_chat:
+                                        say(text=_msg, thread_ts=thread_ts)
+                                    else:
+                                        say(text=_msg, thread_ts=thread_ts)
+                                    _upload_ok = True
+                                    tool_result = {"status": "ok", "message": f"Prezentacja dostępna do pobrania: {_dl_url}"}
+                                else:
+                                    logger.error(f"Wszystkie metody uploadu zawiodły. Ostatni błąd: {_e2}")
+                                    tool_result = {"error": "Nie udało się wysłać pliku. Dodaj scope 'files:write' w konfiguracji Slack App (api.slack.com/apps)."}
+                        if _upload_ok and "status" not in tool_result:
                             tool_result = {"status": "ok", "message": "Prezentacja wygenerowana i wysłana na Slack jako plik PPTX."}
                 elif tool_name == "manage_calendar":
                     _cal_user = event.get('user')
