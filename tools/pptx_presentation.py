@@ -303,7 +303,7 @@ def _generate_slide_structure(title, client_name, subtitle, brief,
                                date_range, meta_ads_data, google_ads_data, extra_slides):
     """Call Claude API to generate structured slide content as JSON."""
     from anthropic import Anthropic
-    ai = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+    ai = Anthropic(api_key=os.environ.get("CLAUDE_API_KEY") or os.environ.get("ANTHROPIC_API_KEY"))
 
     data_ctx = ""
     if meta_ads_data:
