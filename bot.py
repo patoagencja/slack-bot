@@ -932,17 +932,38 @@ Pytanie → Direct answer → Context → Actionable next step
                             google_ads_data=tool_input.get("google_ads_data"),
                             extra_slides=tool_input.get("extra_slides"),
                         )
-                        _pptx_name = re.sub(r'[^\w\-]', '_', tool_input.get("title", "prezentacja"))[:40]
-                        app.client.files_upload_v2(
-                            channel=channel,
-                            content=_pptx_bytes,
-                            filename=f"{_pptx_name}.pptx",
-                            title=tool_input.get("title", "Prezentacja"),
-                        )
-                        tool_result = {"status": "ok", "message": "Prezentacja wygenerowana i wysłana na Slack jako plik PPTX."}
                     except Exception as _pe:
                         logger.error(f"Błąd generowania PPTX: {_pe}")
-                        tool_result = {"error": str(_pe)}
+                        tool_result = {"error": f"Błąd generowania prezentacji: {_pe}"}
+                    else:
+                        import io as _io
+                        _pptx_name = re.sub(r'[^\w\-]', '_', tool_input.get("title", "prezentacja"))[:40]
+                        _pptx_filename = f"{_pptx_name}.pptx"
+                        _upload_ok = False
+                        try:
+                            # Nowy Slack SDK — files_upload_v2 z file=BytesIO
+                            app.client.files_upload_v2(
+                                channel=channel,
+                                file=_io.BytesIO(_pptx_bytes),
+                                filename=_pptx_filename,
+                                title=tool_input.get("title", "Prezentacja"),
+                            )
+                            _upload_ok = True
+                        except Exception as _e1:
+                            logger.warning(f"files_upload_v2 failed ({_e1}), próbuję files_upload...")
+                            try:
+                                app.client.files_upload(
+                                    channels=channel,
+                                    file=_io.BytesIO(_pptx_bytes),
+                                    filename=_pptx_filename,
+                                    title=tool_input.get("title", "Prezentacja"),
+                                )
+                                _upload_ok = True
+                            except Exception as _e2:
+                                logger.error(f"files_upload też failed: {_e2}")
+                                tool_result = {"error": f"Upload na Slack nie powiódł się. files_upload_v2: {_e1} | files_upload: {_e2}. Sprawdź czy bot ma scope 'files:write' w konfiguracji Slack App."}
+                        if _upload_ok:
+                            tool_result = {"status": "ok", "message": "Prezentacja wygenerowana i wysłana na Slack jako plik PPTX."}
                 elif tool_name == "manage_calendar":
                     _cal_user = event.get('user')
                     _owner_id = os.environ.get("CALENDAR_OWNER_SLACK_ID")
