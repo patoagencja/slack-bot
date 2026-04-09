@@ -135,7 +135,9 @@ def meta_ads_tool(date_from=None, date_to=None, level="campaign", campaign_name=
         if time_increment is not None:
             params['time_increment'] = time_increment
         if breakdown:
-            params['breakdowns'] = [breakdown] if isinstance(breakdown, str) else breakdown
+            _breakdown_map = {"placement": "publisher_platform", "platform": "publisher_platform", "device": "device_platform"}
+            _bd = [breakdown] if isinstance(breakdown, str) else breakdown
+            params['breakdowns'] = [_breakdown_map.get(b, b) for b in _bd]
         if limit:
             params['limit'] = limit
 
