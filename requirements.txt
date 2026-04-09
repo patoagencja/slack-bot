@@ -16,3 +16,4 @@ openai
 google-analytics-data
 caldav
 vobject
+python-pptx
