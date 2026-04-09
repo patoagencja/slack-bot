@@ -2753,7 +2753,7 @@ def _meta_wizard_json_to_params(wjson: dict, wizard: dict) -> dict:
         "ad_copy":             ad_copy,
         "call_to_action":      cta,
         "cta_enabled":         bool(ad_copy),
-        "link_enabled":        bool(_url_raw),
+        "link_enabled":        wjson.get("link_enabled", True),  # False tylko gdy Claude explicite ustawi
         "publisher_platforms": publisher_platforms,
         "placement_positions": placement_positions,
         "start_date":          start_date,
