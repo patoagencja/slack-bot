@@ -125,12 +125,10 @@ anthropic = _ctx.claude    # local alias for handle_mention / handle_message_eve
 def get_conversation_history(user_id):
     if user_id not in _ctx.conversation_history:
         _ctx.conversation_history[user_id] = []
-    return [m for m in _ctx.conversation_history[user_id] if m.get("content", "").strip()]
+    return _ctx.conversation_history[user_id]
 
 
 def save_message_to_history(user_id, role, content):
-    if not (content or "").strip():
-        return  # nigdy nie zapisuj pustych wiadomości
     history = get_conversation_history(user_id)
     history.append({"role": role, "content": content})
     if len(history) > 20:
@@ -252,7 +250,7 @@ def _check_missing_campaign_fields(params: dict, files: list) -> list:
     Returns: [] jeśli wszystko OK, inaczej lista stringów z pytaniami."""
     qs = []
     if not params.get("client_name"):
-        qs.append("*Klient* — dla kogo kampania? (`dre` / `instax` / `m2` / `pato` / `tc2023`)")
+        qs.append("*Klient* — dla kogo kampania? (`dre` / `instax` / `m2` / `pato`)")
     if not params.get("daily_budget"):
         qs.append("*Budżet dzienny* — ile PLN/dzień? (np. `50 zł`)")
     if params.get("link_enabled", True) and not params.get("website_url"):
@@ -527,8 +525,7 @@ def handle_mention(event, say):
             logger.error(f"Błąd pobierania historii kanału: {e}")
 
     today           = datetime.now()
-    _dni_pl_ch      = ["poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota", "niedziela"]
-    today_formatted = f"{_dni_pl_ch[today.weekday()]}, {today.strftime('%d %B %Y')}"
+    today_formatted = today.strftime('%d %B %Y')
     today_iso       = today.strftime('%Y-%m-%d')
 
     _sender_uid  = event.get('user', '')
@@ -565,7 +562,7 @@ Sebol — asystent agencji marketingowej Pato. Pomagasz w WSZYSTKIM co dotyczy c
 Przedstaw się krótko i naturalnie. Wymień funkcje w formie listy jak powyżej. NIE mów że "jesteś gotowy do analizy kampanii" — jesteś multi-taskerem, nie tylko narzędziem do raportów.
 
 # KLIENCI
-META ADS: "instax"/"fuji" → Instax Fujifilm | "zbiorcze" → Kampanie zbiorcze | "drzwi dre" → DRE (drzwi) | "tc2023"/"timecatchers" → TimeCatchers TC2023
+META ADS: "instax"/"fuji" → Instax Fujifilm | "zbiorcze" → Kampanie zbiorcze | "drzwi dre" → DRE (drzwi)
 GOOGLE ADS: "3wm"/"pato" → Agencja | "dre 2024"/"dre24" → DRE 2024 | "dre 2025"/"dre25"/"dre" → DRE 2025 | "m2" → M2 (nieruchomości) | "zbiorcze" → Zbiorcze
 ⚠️ "dre" = producent drzwi, NIE raper!
 
@@ -593,20 +590,13 @@ NIGDY nie mów "nie mam dostępu" - zawsze najpierw użyj narzędzi!
 - Krytykujesz kampanie, nie ludzi
 
 # RED FLAGS (kampanie)
-🔴 CRITICAL: ROAS <2.0 | CTR <0.5% (tylko traffic/conversion!) | Budget pace >150% | Zero conversions 3+ dni
-🟡 WARNING: ROAS 2.0-2.5 | CTR <1% (tylko traffic/conversion!) | CPC +30% d/d | Frequency >4 | Pace >120%
+🔴 CRITICAL: ROAS <2.0 | CTR <0.5% | Budget pace >150% | Zero conversions 3+ dni
+🟡 WARNING: ROAS 2.0-2.5 | CTR <1% | CPC +30% d/d | Frequency >4 | Pace >120%
 
-# BENCHMARKI — zależne od CELU kampanii
-Meta e-com/traffic/leads: CTR 1.5-2.5% (>3% excel) | CPC 3-8 PLN | ROAS >3.0 | Freq <3 ok, >5 fatigue
-Meta REACH/awareness: KPI = CPM (koszt za 1000 wyświetleń) i zasięg — CTR 0.05-0.2% jest NORMALNY, NIE flaguj jako problem!
-Meta engagement: KPI = koszt za interakcję, CTR drugorzędny
+# BENCHMARKI
+Meta e-com: CTR 1.5-2.5% (>3% excel) | CPC 3-8 PLN | ROAS >3.0 | Freq <3 ok, >5 fatigue
 Google Search: CTR 2-5% | CPC 2-10 PLN | ROAS >4.0
 Lead gen: CTR 1-2% | CVR landing page >3%
-
-# ZASADA: DOPASUJ METRYKI DO CELU
-- REACH kampania → oceniaj CPM, zasięg, frequency. CTR <0.5% to norma — NIE rekomenduj realokacji tylko przez niski CTR!
-- TRAFFIC/CONVERSION → oceniaj CTR, CPC, ROAS, konwersje
-- ENGAGEMENT → oceniaj koszt za interakcję, nie CTR
 
 # STRUKTURA ODPOWIEDZI
 Alert → 🔴 Problem | Metryki | Impact | Root cause | Akcje (1-3 kroki z timeframe)
@@ -626,7 +616,7 @@ Pytanie → Direct answer → Context → Actionable next step
                 "properties": {
                     "client_name": {
                         "type": "string",
-                        "description": "Nazwa klienta/biznesu. WYMAGANE. Dostępne: 'instax', 'fuji', 'instax/fuji', 'zbiorcze', 'kampanie zbiorcze', 'drzwi dre', 'tc2023', 'timecatchers'. Wyciągnij z pytania użytkownika. Jeśli użytkownik nie poda - zapytaj."
+                        "description": "Nazwa klienta/biznesu. WYMAGANE. Dostępne: 'instax', 'fuji', 'instax/fuji', 'zbiorcze', 'kampanie zbiorcze', 'drzwi dre'. Wyciągnij z pytania użytkownika (np. 'jak kampanie dla instax?' → client_name='instax'). Jeśli użytkownik nie poda - zapytaj."
                     },
                     "date_from": {"type": "string", "description": "Data początkowa. Format: YYYY-MM-DD lub względnie ('wczoraj', 'ostatni tydzień', 'ostatni miesiąc', '7 dni temu')."},
                     "date_to":   {"type": "string", "description": "Data końcowa. Format: YYYY-MM-DD lub 'dzisiaj'. Domyślnie dzisiaj."},
@@ -857,7 +847,7 @@ Pytanie → Direct answer → Context → Actionable next step
         else:
             history = get_conversation_history(user_id)
 
-        messages = [m for m in history if m.get("content", "").strip()] + [{"role": "user", "content": contextual_message}]
+        messages = history + [{"role": "user", "content": contextual_message}]
 
         while True:
             response = anthropic.messages.create(
@@ -1192,9 +1182,6 @@ def _detect_calendar_invite(file_id: str) -> dict | None:
         img_b64 = _b64.b64encode(resp.content).decode()
         media_type = mime  # e.g. "image/png"
 
-        from datetime import datetime as _dt
-        _today_ctx = _dt.now().strftime("%Y-%m")  # np. "2026-04"
-
         claude_resp = anthropic.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=400,
@@ -1208,12 +1195,10 @@ def _detect_calendar_invite(file_id: str) -> dict | None:
                     {
                         "type": "text",
                         "text": (
-                            f"Dzisiaj: {_today_ctx}. "
                             "Czy to zrzut ekranu zaproszenia na spotkanie / wydarzenie kalendarzowe? "
-                            "Jeśli tak, wyciągnij dane i odpowiedz TYLKO surowym JSON (bez markdown, bez ```): \n"
+                            "Jeśli tak, wyciągnij dane i odpowiedz TYLKO w formacie JSON (bez markdown):\n"
                             '{"is_invite": true, "title": "...", "start": "YYYY-MM-DD HH:MM", '
                             '"end": "YYYY-MM-DD HH:MM", "location": "..."}\n'
-                            "Jeśli widzisz tylko dzień (np. '15') użyj bieżącego miesiąca i roku.\n"
                             "Jeśli nie wiesz godziny zakończenia, ustaw end = start + 1h.\n"
                             "Jeśli to NIE jest zaproszenie, odpowiedz: {\"is_invite\": false}"
                         ),
@@ -1222,11 +1207,8 @@ def _detect_calendar_invite(file_id: str) -> dict | None:
             }],
         )
         text = next((b.text for b in claude_resp.content if hasattr(b, "text")), "")
-        logger.info(f"_detect_calendar_invite raw response: {text[:200]}")
         import json as _json
-        # Usuń ewentualne markdown code fences
-        _clean = re.sub(r"```[a-z]*\n?", "", text).strip().strip("`").strip()
-        data = _json.loads(_clean)
+        data = _json.loads(text.strip())
         if not data.get("is_invite"):
             return None
         return {
@@ -1672,17 +1654,13 @@ def handle_message_events(body, say, logger):
         if not _cal_owner or user_id == _cal_owner:
             _image_files = [f for f in _creative_files if f.get("mimetype", "").startswith("image/")]
             _cal_kw = re.search(
-                r'wrzu[cć]|dodaj|add|wstaw|zapisz|kalend\w+|calendar|spotkani\w+|meeting|invite|zaproszeni\w+',
+                r'\b(wrzuć|dodaj|add|wstaw|zapisz|kalendarz|calendar|spotkanie|meeting|invite|zaproszenie)\b',
                 user_message, re.IGNORECASE,
             )
             if _image_files and (_cal_kw or not user_message.strip()):
                 _cal_data = _detect_calendar_invite(_image_files[0]["id"])
                 if _cal_data:
                     _post_calendar_confirm(event, _cal_data)
-                    return
-                elif _cal_kw:
-                    # Obrazek jest ale nie udało się wykryć zaproszenia — poproś o dane tekstowo
-                    _say_dm("🤔 Nie udało mi się odczytać szczegółów spotkania z tego obrazka. Podaj tytuł, datę i godzinę — dodam ręcznie.")
                     return
 
     # Email summary trigger — wyniki zawsze na DM
@@ -1733,18 +1711,13 @@ def handle_message_events(body, say, logger):
         _merged = [{"role": "user", "content": user_message}]
 
     _today_dm = datetime.now()
-    _dni_pl = ["poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota", "niedziela"]
     _dm_system = (
-        f"Dzisiaj: {_dni_pl[_today_dm.weekday()]}, {_today_dm.strftime('%d %B %Y')} ({_today_dm.strftime('%Y-%m-%d')}).\n\n"
+        f"Dzisiaj: {_today_dm.strftime('%d %B %Y')} ({_today_dm.strftime('%Y-%m-%d')}).\n\n"
         "Jesteś Sebol — asystent agencji marketingowej Pato. Rozmawiasz z pracownikiem przez DM na Slacku.\n"
         "NIE jesteś Claude od Anthropic — jesteś Seblem, botem stworzonym dla agencji Pato.\n"
         "Pomagasz z kampaniami (Meta Ads / Google Ads), emailami, kalendarzem, teamem, raportami i codzienną pracą agencji.\n\n"
-        "Klienci Meta: 'instax/fuji', 'zbiorcze', 'drzwi dre', 'tc2023'/'timecatchers'. Google: 'dre', 'dre 2024', 'dre 2025', 'm2', 'pato'.\n"
-        "Benchmarki Meta — zależne od celu: "
-        "traffic/conversion: CTR 1.5-2.5%, CPC 3-8 PLN, ROAS >3.0 | "
-        "REACH/awareness: KPI = CPM i zasięg, CTR 0.05-0.2% to NORMA (nie flaguj!) | "
-        "engagement: KPI = koszt za interakcję. "
-        "Google Search: CTR 2-5%, CPC 2-10 PLN.\n\n"
+        "Klienci Meta: 'instax/fuji', 'zbiorcze', 'drzwi dre'. Google: 'dre', 'dre 2024', 'dre 2025', 'm2', 'pato'.\n"
+        "Benchmarki Meta: ROAS >3.0, CTR 1.5-2.5%, CPC 3-8 PLN. Google Search: CTR 2-5%, CPC 2-10 PLN.\n\n"
         "⚠️ KONTEKST ROZMOWY: Czytaj historię wiadomości UWAŻNIE. Odpowiadaj WYŁĄCZNIE na to o co user AKTUALNIE pyta. "
         "Jeśli pyta o reminder — tylko zapisz reminder i potwierdź. Jeśli o email — tylko email. "
         "ABSOLUTNY ZAKAZ: NIE startuj, NIE proponuj, NIE wspominaj tworzenia kampanii jeśli user NIE poprosił o kampanię w tej wiadomości. "
@@ -1950,7 +1923,7 @@ WIZARD_STEPS = [
         "q": (
             "🏢 *Krok 1/9 — Klient*\n"
             "Dla kogo kampania?\n"
-            "`dre` / `instax` / `m2` / `pato` / `tc2023`"
+            "`dre` / `instax` / `m2` / `pato`"
         ),
     },
     {
@@ -2354,8 +2327,7 @@ If something is missing — ASK. Do NOT copy data from previous conversations. E
 PRO Mode Workflow — follow these stages in order. Do NOT skip stages.
 
 Stage 0 — Client Identification:
-- CRITICAL: Always identify the client first. Extract from user message (e.g. "dre", "drzwi dre", "instax", "m2", "pato", "tc2023", "timecatchers"). If the landing_page_url is "patoagencja.com" — that is the AGENCY's own website, NOT the client. If unclear — ASK. Fill "client_name" in the JSON.
-- Dostępni klienci Meta: drzwi dre, instax, m2, pato, tc2023 (TimeCatchers). Jeśli user nie podał klienta — zapytaj: "Dla którego klienta kampania? (dre / instax / m2 / pato / tc2023)"
+- CRITICAL: Always identify the client first. Extract from user message (e.g. "dre", "drzwi dre", "instax", "m2", "pato"). If the landing_page_url is "patoagencja.com" — that is the AGENCY's own website, NOT the client. If unclear — ASK. Fill "client_name" in the JSON.
 
 Stage 1 — Business Basics:
 - What product/service are we advertising?
@@ -2440,7 +2412,7 @@ If the user didn't mention targeting (age, gender, interests, location, placemen
 Do NOT copy data from previous conversations. Each campaign wizard session starts fresh.
 
 Required fields:
-- client name (who is the campaign for: dre/instax/m2/pato/tc2023 — ALWAYS extract from user message or ask if not provided)
+- client name (who is the campaign for: dre/instax/m2/pato — ALWAYS extract from user message or ask if not provided)
 - campaign objective (Leads/Sales/Traffic/Engagement/Video views/Messages/App installs)
 - daily budget
 - country or location
@@ -2448,7 +2420,7 @@ Required fields:
 - creative assets (video/image + primary text + headline + CTA)
 - basic audience (age, gender, interests — if user doesn't specify, use broad targeting and say so)
 
-CRITICAL: Always fill "client_name" in the JSON. Extract from: campaign name, user's messages, context (e.g. "dre", "drzwi dre", "instax", "m2", "pato", "tc2023", "timecatchers"). If the landing_page_url is "patoagencja.com" — that is the AGENCY's own website, NOT the client name. If client is unknown — ASK.
+CRITICAL: Always fill "client_name" in the JSON. Extract from: campaign name, user's messages, context (e.g. "dre", "drzwi dre", "instax", "m2", "pato"). If the landing_page_url is "patoagencja.com" — that is the AGENCY's own website, NOT the client name. If client is unknown — ASK.
 
 Ask all questions in ONE round (max 6-7 questions).
 If user already provided data — do NOT ask again, just confirm and ask for missing items.
@@ -2565,27 +2537,39 @@ def handle_kampaniameta_slash(ack, command, logger):
     for t in (_META_SIMPLE_TRIGGERS | _META_PRO_TRIGGERS):
         extra_context = re.sub(rf'\b{re.escape(t)}\b', '', extra_context, flags=re.IGNORECASE).strip()
 
-    _client_question = "🏢 *Dla jakiego klienta?*\n_(dre / instax / m2 / pato / tc2023)_\n\n"
-
     if mode == "simple":
         intro = (
             "⚡ *Szybka kampania Meta Ads — tryb SIMPLE*\n"
             "Zbierzemy tylko najważniejsze dane i jedziemy.\n"
             "Napisz `anuluj` żeby przerwać, `pro` żeby przejść w pełny tryb.\n\n"
-            + _client_question
+            "Potrzebuję kilku rzeczy:\n\n"
+            "1️⃣ Cel kampanii? _(leady / sprzedaż / ruch / zaangażowanie / wyświetlenia video / wiadomości)_\n"
+            "2️⃣ Budżet dzienny?\n"
+            "3️⃣ Kraj / lokalizacja?\n"
+            "4️⃣ Link docelowy?\n"
+            "5️⃣ Kreacja — wyślij plik (obraz/video) lub opisz co masz\n"
+            "6️⃣ Tekst reklamy + nagłówek + CTA"
         )
     elif mode == "pro":
         intro = (
             "🟣 *Tworzymy kampanię Meta Ads — tryb PRO*\n"
             "Przeprowadzę Cię przez pełny profesjonalny setup.\n"
             "Napisz `anuluj` żeby przerwać w dowolnym momencie.\n\n"
-            + _client_question
+            "Zaczynamy od podstaw:\n\n"
+            "1️⃣ Co reklamujemy? _(produkt / usługa / oferta)_\n"
+            "2️⃣ Jaki jest główny cel biznesowy?\n"
+            "3️⃣ Kto jest idealnym klientem?\n"
+            "4️⃣ Na jaki rynek kierujemy? _(kraj / miasta)_\n"
+            "5️⃣ Cel kampanii? _(leady / sprzedaż / ruch / zaangażowanie / wiadomości / instalacje / video views)_\n"
+            "6️⃣ Budżet dzienny lub miesięczny?"
         )
     else:  # auto
         intro = (
             "🟣 *Tworzymy kampanię Meta Ads!*\n"
             "Napisz `anuluj` żeby przerwać w dowolnym momencie.\n\n"
-            + _client_question
+            "Powiedz mi co chcesz zrobić — dopasuję proces do potrzeb.\n"
+            "Możesz podać od razu dane (cel, budżet, link, kreacja),\n"
+            "albo opisać cel i pomogę zaprojektować kampanię."
         )
 
     try:
@@ -2638,23 +2622,17 @@ def _meta_wizard_json_to_params(wjson: dict, wizard: dict) -> dict:
     # Check explicit client_name field first
     _explicit = (wjson.get("client_name") or "").lower().strip()
     if _explicit:
-        for _k in ("dre", "drzwi dre", "instax", "m2", "pato", "tc2023", "timecatchers"):
+        for _k in ("dre", "drzwi dre", "instax", "m2", "pato"):
             if _k in _explicit or _explicit in _k:
-                if _k in ("dre", "drzwi dre"):
-                    client_name = "drzwi dre"
-                elif _k in ("tc2023", "timecatchers"):
-                    client_name = "tc2023"
-                else:
-                    client_name = _k
+                client_name = "drzwi dre" if _k in ("dre", "drzwi dre") else _k
                 break
     # Then campaign name, then URL (agency domain excluded)
     if not client_name:
         for _k, _aliases in (
-            ("tc2023",  ("tc2023", "timecatcher")),
-            ("dre",     ("dre", "drzwi")),
-            ("instax",  ("instax",)),
-            ("m2",      ("m2",)),
-            ("pato",    ("pato",)),
+            ("dre", ("dre", "drzwi")),
+            ("instax", ("instax",)),
+            ("m2", ("m2",)),
+            ("pato", ("pato",)),
         ):
             if any(a in _name_raw for a in _aliases) or any(a in _url_for_client for a in _aliases):
                 client_name = _k
@@ -2767,7 +2745,7 @@ def _meta_wizard_json_to_params(wjson: dict, wizard: dict) -> dict:
         "ad_copy":             ad_copy,
         "call_to_action":      cta,
         "cta_enabled":         bool(ad_copy),
-        "link_enabled":        wjson.get("link_enabled", True),  # False tylko gdy Claude explicite ustawi
+        "link_enabled":        bool(_url_raw),
         "publisher_platforms": publisher_platforms,
         "placement_positions": placement_positions,
         "start_date":          start_date,
@@ -2829,11 +2807,10 @@ def _handle_meta_campaign_wizard(user_id: str, user_message: str | None, files: 
             _cl_msg = user_message.strip().lower()
             _detected_client = None
             for _k, _aliases in (
-                ("tc2023",  ("tc2023", "timecatchers", "time catchers")),
-                ("dre",     ("dre", "drzwi")),
-                ("instax",  ("instax",)),
-                ("m2",      ("m2",)),
-                ("pato",    ("pato",)),
+                ("dre", ("dre", "drzwi")),
+                ("instax", ("instax",)),
+                ("m2", ("m2",)),
+                ("pato", ("pato",)),
             ):
                 if any(a in _cl_msg for a in _aliases):
                     _detected_client = _k
@@ -2889,7 +2866,7 @@ def _handle_meta_campaign_wizard(user_id: str, user_message: str | None, files: 
                     say_fn("❌ Nie mam danych kampanii. Uruchom `/kampaniameta` od nowa.")
             else:
                 say_fn(
-                    "❓ Nie rozpoznałem klienta. Podaj jeden z: *dre*, *instax*, *m2*, *pato*, *tc2023*\n"
+                    "❓ Nie rozpoznałem klienta. Podaj jeden z: *dre*, *instax*, *m2*, *pato*\n"
                     "Np. napisz: `dre` lub `drzwi dre`"
                 )
         return True
@@ -2997,7 +2974,7 @@ def _handle_meta_campaign_wizard(user_id: str, user_message: str | None, files: 
                         _reason = f"klient `{_detected_client}` nie ma skonfigurowanego konta Meta" if (_detected_client and not _account_id) else "nie rozpoznałem klienta"
                         say_fn(
                             f"❓ {_reason.capitalize()}.\n"
-                            f"Napisz dla kogo kampania: *dre*, *instax*, *m2*, *pato* lub *tc2023*"
+                            f"Napisz dla kogo kampania: *dre*, *instax*, *m2* lub *pato*"
                         )
                         return True
                     say_fn("📋 Tworzę szkic kampanii w Meta Ads...")
