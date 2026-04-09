@@ -61,7 +61,7 @@ from tools.campaign_creator import (
 )
 from tools.voice_transcription import transcribe_slack_audio, SLACK_AUDIO_MIMES
 from tools.icloud_calendar import icloud_calendar_tool
-from tools.google_slides import create_presentation
+from tools.pptx_presentation import generate_pptx
 from tools.memory import init_memory, remember, recall_as_context, get_history
 from tools.reminders import init_reminders, schedule_reminder, list_reminders
 from tools.token_log import init_token_log, TrackedAnthropicClient, get_summary, USD_TO_PLN
@@ -931,16 +931,28 @@ Pytanie → Direct answer → Context → Actionable next step
                         thread_ts=tool_input.get('thread_ts')
                     )
                 elif tool_name == "create_presentation":
-                    tool_result = create_presentation(
-                        title=tool_input.get("title"),
-                        client_name=tool_input.get("client_name"),
-                        subtitle=tool_input.get("subtitle"),
-                        brief=tool_input.get("brief"),
-                        date_range=tool_input.get("date_range"),
-                        google_ads_data=tool_input.get("google_ads_data"),
-                        meta_ads_data=tool_input.get("meta_ads_data"),
-                        extra_slides=tool_input.get("extra_slides"),
-                    )
+                    try:
+                        _pptx_bytes = generate_pptx(
+                            title=tool_input.get("title"),
+                            client_name=tool_input.get("client_name"),
+                            subtitle=tool_input.get("subtitle"),
+                            brief=tool_input.get("brief"),
+                            date_range=tool_input.get("date_range"),
+                            meta_ads_data=tool_input.get("meta_ads_data"),
+                            google_ads_data=tool_input.get("google_ads_data"),
+                            extra_slides=tool_input.get("extra_slides"),
+                        )
+                        _pptx_name = re.sub(r'[^\w\-]', '_', tool_input.get("title", "prezentacja"))[:40]
+                        app.client.files_upload_v2(
+                            channel=channel,
+                            content=_pptx_bytes,
+                            filename=f"{_pptx_name}.pptx",
+                            title=tool_input.get("title", "Prezentacja"),
+                        )
+                        tool_result = {"status": "ok", "message": "Prezentacja wygenerowana i wysłana na Slack jako plik PPTX."}
+                    except Exception as _pe:
+                        logger.error(f"Błąd generowania PPTX: {_pe}")
+                        tool_result = {"error": str(_pe)}
                 elif tool_name == "manage_calendar":
                     _cal_user = event.get('user')
                     _owner_id = os.environ.get("CALENDAR_OWNER_SLACK_ID")
