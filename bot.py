@@ -125,10 +125,12 @@ anthropic = _ctx.claude    # local alias for handle_mention / handle_message_eve
 def get_conversation_history(user_id):
     if user_id not in _ctx.conversation_history:
         _ctx.conversation_history[user_id] = []
-    return _ctx.conversation_history[user_id]
+    return [m for m in _ctx.conversation_history[user_id] if m.get("content", "").strip()]
 
 
 def save_message_to_history(user_id, role, content):
+    if not (content or "").strip():
+        return  # nigdy nie zapisuj pustych wiadomości
     history = get_conversation_history(user_id)
     history.append({"role": role, "content": content})
     if len(history) > 20:
@@ -855,7 +857,7 @@ Pytanie → Direct answer → Context → Actionable next step
         else:
             history = get_conversation_history(user_id)
 
-        messages = history + [{"role": "user", "content": contextual_message}]
+        messages = [m for m in history if m.get("content", "").strip()] + [{"role": "user", "content": contextual_message}]
 
         while True:
             response = anthropic.messages.create(
