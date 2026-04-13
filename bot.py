@@ -1005,13 +1005,17 @@ Pytanie → Direct answer → Context → Actionable next step
                             tool_result = {"status": "ok", "message": "Prezentacja wygenerowana i wysłana na Slack jako plik PPTX."}
                 elif tool_name == "write_linkedin_post":
                     from jobs.linkedin import generate_linkedin_post, LINKEDIN_SYSTEM_PROMPT
-                    _li_topic = tool_input.get("topic", "")
-                    _li_format = tool_input.get("format", "hooki")
-                    if _li_format == "pelny":
-                        _li_prompt = f"Napisz od razu pełny post (nie tylko hooki).\n\nTemat: {_li_topic}"
+                    _li_owner = os.environ.get("LINKEDIN_OWNER_SLACK_ID", "UTE1RN6SJ")
+                    if event.get("user") != _li_owner:
+                        tool_result = {"error": "Brak dostępu — ghostwriter LinkedIn jest prywatny."}
                     else:
-                        _li_prompt = _li_topic
-                    tool_result = {"post": generate_linkedin_post(_li_prompt)}
+                        _li_topic = tool_input.get("topic", "")
+                        _li_format = tool_input.get("format", "hooki")
+                        if _li_format == "pelny":
+                            _li_prompt = f"Napisz od razu pełny post (nie tylko hooki).\n\nTemat: {_li_topic}"
+                        else:
+                            _li_prompt = _li_topic
+                        tool_result = {"post": generate_linkedin_post(_li_prompt)}
                 elif tool_name == "manage_calendar":
                     _cal_user = event.get('user')
                     _owner_id = os.environ.get("CALENDAR_OWNER_SLACK_ID")
@@ -1137,6 +1141,10 @@ def handle_linkedin_slash(ack, respond, command):
     """Ghostwriter LinkedIn dla Daniela — generuje hooki i posty."""
     import threading
     ack()
+    _li_owner = os.environ.get("LINKEDIN_OWNER_SLACK_ID", "UTE1RN6SJ")
+    if command.get("user_id") != _li_owner:
+        respond("🔒 Ta funkcja jest dostępna tylko dla właściciela konta.")
+        return
     topic = (command.get("text") or "").strip()
     channel_id = command.get("channel_id", "")
     if not topic:
