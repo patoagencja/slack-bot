@@ -162,46 +162,48 @@ def generate_linkedin_post(topic: str) -> str:
 
 # ── Grafika do posta — DALL-E 3 z rotującymi stylami ─────────────────────────
 
+# WAŻNE: DALL-E nie umie renderować tekstu — ŻADEN styl nie może polegać na literach/napisach w obrazku.
+# Wszystkie style są czysto wizualne — metafory, sceny, abstrakcje.
 _IMAGE_STYLES = [
     {
-        "name": "bold_typography",
-        "desc": "Tylko tekst. Jedno zdanie z posta jako ogromny napis na ciemnym tle. Brutalistyczna typografia, kontrast, zero ozdób. Styl: NY Times Magazine cover meets tech poster.",
-        "template": "Bold typographic poster, dark background, one short punchy quote from the post in huge white sans-serif letters filling the frame, brutalist design, high contrast, no people, 1080x1080",
+        "name": "cinematic_human",
+        "desc": "Dramatyczna, filmowa scena z człowiekiem przy pracy. Pasuje do postów 'behind the scenes' i storytellingu.",
+        "template": "Cinematic photorealistic photo, one person working late at night in a dark modern office, multiple screens glowing with dashboards and charts, dramatic blue and purple light, moody atmosphere, shot from behind or side angle, NO TEXT, NO LETTERS anywhere, 1024x1024",
     },
     {
-        "name": "cinematic_scene",
-        "desc": "Dramatyczna, filmowa scena nawiązująca do tematu posta. Photorealistic. Jedno mocne ujęcie.",
-        "template": "Cinematic photorealistic scene, dramatic lighting, moody atmosphere, relates to: {topic}. Film still quality, shallow depth of field, 1080x1080",
+        "name": "sebol_robot",
+        "desc": "Sebol-robot w akcji. Pasuje do postów o funkcjach Sebola i demo.",
+        "template": "3D cartoon robot character in grey Adidas hoodie with white stripes, grey sweatpants, white sneakers, glowing rectangular blue eyes, dark metallic navy body, {action}, flat cel-shaded illustration, dark navy background (#0A1520), bold blue accent lighting, NO TEXT NO LETTERS, square 1024x1024",
     },
     {
-        "name": "sebol_mascot",
-        "desc": "Sebol (robot w szarej bluzie Adidas) w akcji nawiązującej do tematu posta.",
-        "template": "Cartoon robot mascot wearing grey Adidas hoodie with white stripes, grey Adidas sweatpants, white sneakers, glowing blue rectangular eyes, dark navy metallic body. The robot is: {action}. Flat illustration style, dark background #0A1520, blue accent #4A90D9, 1080x1080",
+        "name": "abstract_flow",
+        "desc": "Abstrakcyjna wizualizacja przepływu danych / automatyzacji. Energetyczna, kolorowa.",
+        "template": "Abstract digital art, glowing data streams flowing through dark space, interconnected nodes and geometric shapes, electric purple and blue and cyan gradient, sense of speed and automation, zero text, zero letters, purely visual, 1024x1024",
     },
     {
-        "name": "abstract_data",
-        "desc": "Abstrakcyjna wizualizacja danych, sieci neuronowe, przepływy. Kolorowe, energetyczne.",
-        "template": "Abstract digital art, flowing data streams, neural network visualization, neon colors (purple, blue, pink) on black background, dynamic energy, relates to AI and marketing analytics, no text, 1080x1080",
+        "name": "split_contrast",
+        "desc": "Dwie połówki — chaos vs porządek, ręczne vs AI, stare vs nowe. Silny kontrast bez tekstu.",
+        "template": "Split composition square image, LEFT half: chaotic messy desk with papers everywhere, stressed person, warm desaturated tones, RIGHT half: clean minimalist workspace with glowing screens, calm organized, cool blue tones, sharp diagonal dividing line, NO TEXT NO WORDS, purely visual metaphor, 1024x1024",
     },
     {
-        "name": "neon_cyberpunk",
-        "desc": "Neon, cyberpunk, miasto nocą. Klimat tech + agencja. Mocny mood.",
-        "template": "Cyberpunk aesthetic, neon lights, night city reflections, purple and blue neon signs, rain on glass, futuristic atmosphere, relates to: {topic}, no people visible, 1080x1080",
+        "name": "neon_tech",
+        "desc": "Neonowy, cyberpunkowy klimat tech. Miasto nocą, refleksy, fiolet/niebieski. Mocny mood.",
+        "template": "Cyberpunk aesthetic square photo, rainy night city street reflection in puddles, purple and blue neon store signs (generic geometric shapes, NOT readable words), wet asphalt, bokeh lights, cinematic mood, NO READABLE TEXT anywhere, 1024x1024",
     },
     {
-        "name": "meme_format",
-        "desc": "Rozpoznawalny format memowy zaadaptowany do B2B / AI / marketingu. Humor branżowy.",
-        "template": "Clean meme format, white background with bold Impact or Arial Black text, top and bottom captions, business/marketing/AI humor theme about: {topic}, professional but funny, 1080x1080",
+        "name": "flat_isometric",
+        "desc": "Izometryczna ilustracja flat design — biuro, dashboard, przepływ pracy. Profesjonalne, czyste.",
+        "template": "Isometric flat design illustration, small office scene with computer screens showing colorful charts and graphs (no readable numbers), tiny human figures working, clean lines, vibrant colors (blue purple orange), white background, modern tech company vibe, NO TEXT NO LETTERS, 1024x1024",
     },
     {
-        "name": "split_before_after",
-        "desc": "Dwie połówki — przed/po, stare/nowe, manual/AI. Silny kontrast wizualny.",
-        "template": "Split screen composition, left side shows old/manual/chaos (desaturated, messy), right side shows new/automated/clean (vibrant, organized), divided by sharp diagonal line, theme: {topic}, no text needed, 1080x1080",
+        "name": "dramatic_light",
+        "desc": "Jeden obiekt w dramatycznym świetle studyjnym. Minimalistyczne, premium, przyciąga wzrok.",
+        "template": "Dramatic studio lighting, single object centered: a sleek laptop or smartphone with glowing screen showing colorful abstract graphs (not readable), dark background, rim light in electric blue, luxury product photography style, NO TEXT, minimalist, 1024x1024",
     },
     {
-        "name": "minimal_stat",
-        "desc": "Jedna duża liczba lub fakt na czystym tle. Minimalizm. Mocny przekaz jedną liczbą.",
-        "template": "Minimalist design, one huge statistic or number centered on clean dark background, small label below, premium feel, relates to: {topic}, geometric accents in electric blue, 1080x1080",
+        "name": "robot_human_collab",
+        "desc": "Robot i człowiek pracują razem — metafora AI + człowiek. Pozytywny, nowoczesny.",
+        "template": "Photorealistic illustration, human hand and robotic hand pointing at the same glowing holographic dashboard with colorful abstract data visualizations, warm and cool lighting contrast, sense of collaboration, NO TEXT NO LETTERS on any surface, cinematic, 1024x1024",
     },
 ]
 
@@ -235,31 +237,34 @@ def _pick_image_style(post_text: str, topic: str) -> dict:
 
 def _build_dalle_prompt(style: dict, post_text: str, topic: str) -> str:
     """Buduje finalny prompt do DALL-E na podstawie stylu i treści posta."""
-    # Wyciągnij pierwsze zdanie posta jako potencjalny cytat
-    first_line = post_text.split("\n")[0][:120] if post_text else topic
-
-    # Ustal action dla Sebola
+    # Ustal action dla Sebola (czysto wizualne opisy bez tekstu)
     action_map = {
-        "prezentacja": "pointing at a floating PPTX presentation in the air",
-        "raport": "holding a glowing report document",
-        "kampania": "clicking a big launch button",
-        "ai": "thinking with circuit patterns in its head",
-        "linkedin": "typing on a keyboard with LinkedIn logo floating above",
-        "analiza": "looking at colorful charts and graphs",
+        "prezentacja": "holding a large glowing slide deck floating in the air",
+        "raport": "carrying a glowing document with colorful bar charts on it",
+        "kampania": "pressing a large glowing launch button with both hands",
+        "ai": "surrounded by glowing neural network nodes connecting to its head",
+        "linkedin": "sitting at a desk typing on a glowing keyboard",
+        "analiza": "pointing at floating colorful pie charts and bar graphs",
+        "pptx": "holding a large glowing slide deck floating in the air",
+        "automatyz": "pulling levers on a control panel with colorful status lights",
+        "budżet": "looking at a large glowing coin stack with an upward arrow",
     }
-    action = "working on a laptop with code on the screen"
+    action = "working on a glowing laptop in a dark room"
+    combined = (post_text + " " + topic).lower()
     for keyword, act in action_map.items():
-        if keyword in (post_text + topic).lower():
+        if keyword in combined:
             action = act
             break
 
     template = style["template"]
     prompt = (
         template
-        .replace("{topic}", topic[:100])
+        .replace("{topic}", topic[:80])
         .replace("{action}", action)
-        .replace("{quote}", first_line)
     )
+    # Upewnij się że zawsze jest zakaz tekstu na końcu
+    if "NO TEXT" not in prompt.upper():
+        prompt += ", absolutely NO TEXT, NO LETTERS, NO WORDS anywhere in the image"
     return prompt
 
 
