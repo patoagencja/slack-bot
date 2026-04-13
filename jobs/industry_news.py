@@ -45,7 +45,18 @@ Zwróć odpowiedź jako JSON (bez żadnego tekstu przed ani po):
 # ── Published-news store ────────────────────────────────────────────────────────
 
 def _load_published() -> list[dict]:
-    """Zwraca listę {headline, platform, date} z ostatnich 30 dni."""
+    """Zwraca listę {headline, platform, date} z ostatnich 30 dni.
+    Źródło prawdy: kanał #media na Slacku (odporne na restarty Rendera).
+    Fallback: lokalny plik JSON.
+    """
+    # Próba 1: odczyt z kanału #media (nie ginie po deploy)
+    slack_entries = _load_published_from_slack()
+    if slack_entries:
+        # Odśwież lokalny cache żeby następne wywołanie było szybsze
+        _save_published(slack_entries)
+        return slack_entries
+
+    # Fallback: lokalny plik
     if not os.path.exists(PUBLISHED_NEWS_FILE):
         return []
     try:
@@ -54,6 +65,39 @@ def _load_published() -> list[dict]:
         cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
         return [e for e in entries if e.get("date", "") >= cutoff]
     except Exception:
+        return []
+
+
+def _load_published_from_slack() -> list[dict]:
+    """Czyta ostatnie 300 wiadomości z #media i wyciąga opublikowane nagłówki."""
+    try:
+        result = _ctx.app.client.conversations_history(
+            channel=MEDIA_CHANNEL_ID,
+            limit=300,
+        )
+        entries = []
+        cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+        for msg in result.get("messages", []):
+            text = msg.get("text", "")
+            # Nagłówki digestu mają format: "1. 🔵 *Meta Ads* — Treść nagłówka"
+            matches = re.findall(
+                r'\d+\.\s+[🔵🟡⚫🤖📌]\s+\*([^*]+)\*\s+—\s+(.+)',
+                text,
+            )
+            if matches:
+                # Wyznacz datę z timestamp wiadomości
+                ts = float(msg.get("ts", 0))
+                msg_date = datetime.fromtimestamp(ts).strftime('%Y-%m-%d') if ts else ""
+                if msg_date >= cutoff:
+                    for platform, headline in matches:
+                        entries.append({
+                            "headline": headline.strip(),
+                            "platform": platform.strip(),
+                            "date": msg_date,
+                        })
+        return entries
+    except Exception as e:
+        logger.warning(f"Nie udało się wczytać historii newsów ze Slack: {e}")
         return []
 
 
