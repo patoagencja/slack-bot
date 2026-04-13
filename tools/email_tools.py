@@ -12,6 +12,12 @@ from email.mime.text import MIMEText
 
 from imapclient import IMAPClient
 
+try:
+    import vobject as _vobject
+    _VOBJECT_AVAILABLE = True
+except ImportError:
+    _VOBJECT_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,7 +32,7 @@ def get_user_email_config(user_id):
 
 
 def email_tool(user_id, action, **kwargs):
-    """Zarządza emailami użytkownika. action: 'read' | 'send' | 'search'"""
+    """Zarządza emailami użytkownika. action: 'read' | 'send' | 'search' | 'find_invites'"""
     email_config = get_user_email_config(user_id)
     if not email_config:
         return {"error": "Nie masz skonfigurowanego konta email. Skontaktuj się z administratorem."}
@@ -37,6 +43,8 @@ def email_tool(user_id, action, **kwargs):
             return send_email(email_config, kwargs.get('to'), kwargs.get('subject'), kwargs.get('body'))
         elif action == "search":
             return search_emails(email_config, kwargs.get('query'), kwargs.get('limit', 10))
+        elif action == "find_invites":
+            return find_calendar_invites(email_config, kwargs.get('days_back', 14))
         else:
             return {"error": f"Nieznana akcja: {action}"}
     except Exception as e:
@@ -230,3 +238,132 @@ def search_emails(config, query, limit=10):
             return {"query": query, "count": len(emails_data), "emails": emails_data}
     except Exception as e:
         return {"error": f"Błąd wyszukiwania: {str(e)}"}
+
+
+def find_calendar_invites(config, days_back=14):
+    """Szuka zaproszeń kalendarzowych (.ics) w skrzynce email i zwraca szczegóły wydarzeń."""
+    if not _VOBJECT_AVAILABLE:
+        return {"error": "Biblioteka vobject niedostępna — nie można parsować plików ICS."}
+
+    try:
+        with IMAPClient(config['imap_server'], ssl=True, port=993) as client:
+            client.login(config['email'], config['password'])
+            client.select_folder('INBOX')
+
+            since_date = (datetime.now() - timedelta(days=days_back)).strftime('%d-%b-%Y')
+            all_uids = client.search(['SINCE', since_date])
+
+            # Process newest first, limit to 100 to avoid timeout
+            uids_to_check = list(reversed(all_uids))[:100]
+
+            invites = []
+            seen_uids = set()
+
+            for uid in uids_to_check:
+                if uid in seen_uids:
+                    continue
+                seen_uids.add(uid)
+
+                try:
+                    raw = client.fetch([uid], ['RFC822'])[uid][b'RFC822']
+                    msg = email.message_from_bytes(raw)
+                except Exception:
+                    continue
+
+                # Search for ICS attachment or text/calendar part
+                ics_data = None
+                for part in msg.walk():
+                    ct = part.get_content_type()
+                    fn = (part.get_filename() or "").lower()
+                    if ct in ('text/calendar', 'application/ics') or fn.endswith('.ics'):
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            for enc in ('utf-8', 'latin-1', 'cp1250'):
+                                try:
+                                    ics_data = payload.decode(enc)
+                                    break
+                                except (UnicodeDecodeError, LookupError):
+                                    continue
+                        if ics_data:
+                            break
+
+                if not ics_data:
+                    continue
+
+                # Parse ICS with vobject — may contain multiple VEVENTs
+                try:
+                    cal = _vobject.readOne(ics_data)
+                except Exception as e:
+                    logger.warning(f"Błąd parsowania ICS (uid={uid}): {e}")
+                    continue
+
+                # Collect all VEVENTs
+                vevents = []
+                if hasattr(cal, 'vevent'):
+                    vevents.append(cal.vevent)
+                for comp in cal.components():
+                    if comp.name == 'VEVENT' and comp not in vevents:
+                        vevents.append(comp)
+
+                def _fmt_dt(dt):
+                    if isinstance(dt, datetime):
+                        return dt.strftime("%Y-%m-%d %H:%M")
+                    elif dt:
+                        return str(dt)
+                    return None
+
+                # Decode email subject for context
+                def _decode_hdr(val):
+                    parts = []
+                    for p, ch in decode_header(val or ''):
+                        if isinstance(p, bytes):
+                            parts.append(p.decode(ch or 'utf-8', errors='replace'))
+                        else:
+                            parts.append(p or '')
+                    return ''.join(parts)
+
+                email_subject = _decode_hdr(msg.get('Subject', ''))
+                email_from = _decode_hdr(msg.get('From', ''))
+
+                for vevent in vevents:
+                    try:
+                        title = str(vevent.summary.value) if hasattr(vevent, 'summary') else email_subject or "(brak tytułu)"
+                        dtstart = vevent.dtstart.value if hasattr(vevent, 'dtstart') else None
+                        dtend   = vevent.dtend.value   if hasattr(vevent, 'dtend')   else None
+                        location    = str(vevent.location.value)    if hasattr(vevent, 'location')    else None
+                        description = str(vevent.description.value) if hasattr(vevent, 'description') else None
+                        organizer   = str(vevent.organizer.value)   if hasattr(vevent, 'organizer')   else None
+
+                        # Skip events in the past (more than 1 day ago)
+                        if dtstart:
+                            dt_val = dtstart if isinstance(dtstart, datetime) else datetime.combine(dtstart, datetime.min.time())
+                            if dt_val.replace(tzinfo=None) < datetime.now() - timedelta(days=1):
+                                continue
+
+                        invite = {
+                            "title": title,
+                            "start": _fmt_dt(dtstart),
+                            "end":   _fmt_dt(dtend),
+                            "email_from": email_from,
+                        }
+                        if location:
+                            invite["location"] = location
+                        if description:
+                            invite["description"] = description[:300]
+                        if organizer:
+                            invite["organizer"] = organizer.replace('mailto:', '').replace('MAILTO:', '')
+
+                        invites.append(invite)
+                    except Exception as e:
+                        logger.warning(f"Błąd przetwarzania VEVENT: {e}")
+                        continue
+
+            return {
+                "days_back": days_back,
+                "count": len(invites),
+                "invites": invites,
+            }
+
+    except Exception as e:
+        logger.error(f"Błąd find_calendar_invites: {e}", exc_info=True)
+        return {"error": f"Błąd szukania zaproszeń: {e}"}

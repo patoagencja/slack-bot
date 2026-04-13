@@ -572,6 +572,7 @@ Pytanie o kampanie/metryki/spend/ROAS/CTR → WYWOŁAJ narzędzie:
 - get_google_ads_data() → Google Ads (kampanie, kliknięcia, wydatki, ROAS, CTR, CPC, reklamy)
 - get_ga4_data() → Google Analytics 4 / GA4 / analytics (ruch na stronie, sesje, użytkownicy, źródła ruchu, bounce rate) - NIE Google Ads!
 - manage_calendar() → kalendarz iCloud: "co mam jutro", "plan na tydzień", "dodaj spotkanie" → ZAWSZE wywołaj to narzędzie, nie mów że nie masz dostępu!
+- manage_email(action='find_invites') + manage_calendar(action='create') → "zaciągnij z maila", "dodaj z maila do kalendarza", "co mam w mailach do kalendarza" → wywołaj find_invites, pokaż listę znalezionych wydarzeń i zapytaj co dodać
 - create_presentation() → "zrób prezentację", "zrób prezke", "przygotuj ofertę dla klienta", "deck", "pitch deck", "raport w prezentacji"
   ⚠️ PRZED wywołaniem create_presentation ZAWSZE zbierz pełny kontekst — jeśli czegoś brakuje, zapytaj:
   1. Dla kogo jest prezentacja i jaki jest cel? (oferta sprzedażowa, raport wyników, onboarding, pitch?)
@@ -633,16 +634,17 @@ Pytanie → Direct answer → Context → Actionable next step
         },
         {
             "name": "manage_email",
-            "description": "Zarządza emailami użytkownika - czyta, wysyła i wyszukuje wiadomości. Użyj gdy użytkownik pyta o emaile, chce wysłać wiadomość lub szuka czegoś w skrzynce.",
+            "description": "Zarządza emailami użytkownika - czyta, wysyła, wyszukuje wiadomości i szuka zaproszeń kalendarzowych. Użyj gdy użytkownik pyta o emaile, chce wysłać wiadomość, szuka czegoś w skrzynce, lub prosi o zaciągnięcie zaproszeń z maila do kalendarza.",
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "action":  {"type": "string", "enum": ["read", "send", "search"], "description": "Akcja: 'read' = odczytaj najnowsze emaile, 'send' = wyślij email, 'search' = szukaj emaili po frazie"},
-                    "limit":   {"type": "integer", "description": "Ile emaili pobrać/przeszukać (domyślnie 10)"},
-                    "to":      {"type": "string", "description": "Adres odbiorcy (tylko dla action='send')"},
-                    "subject": {"type": "string", "description": "Temat emaila (tylko dla action='send')"},
-                    "body":    {"type": "string", "description": "Treść emaila (tylko dla action='send')"},
-                    "query":   {"type": "string", "description": "Fraza do wyszukania (tylko dla action='search')"}
+                    "action":    {"type": "string", "enum": ["read", "send", "search", "find_invites"], "description": "Akcja: 'read' = odczytaj najnowsze emaile, 'send' = wyślij email, 'search' = szukaj emaili po frazie, 'find_invites' = znajdź zaproszenia kalendarzowe (.ics) w skrzynce"},
+                    "limit":     {"type": "integer", "description": "Ile emaili pobrać/przeszukać (domyślnie 10)"},
+                    "to":        {"type": "string", "description": "Adres odbiorcy (tylko dla action='send')"},
+                    "subject":   {"type": "string", "description": "Temat emaila (tylko dla action='send')"},
+                    "body":      {"type": "string", "description": "Treść emaila (tylko dla action='send')"},
+                    "query":     {"type": "string", "description": "Fraza do wyszukania (tylko dla action='search')"},
+                    "days_back": {"type": "integer", "description": "Ile dni wstecz szukać zaproszeń (tylko dla action='find_invites', domyślnie 14)"}
                 },
                 "required": ["action"]
             }
@@ -723,6 +725,7 @@ Pytanie → Direct answer → Context → Actionable next step
                     "location":      {"type": "string", "description": "Miejsce spotkania (opcjonalne)."},
                     "description":   {"type": "string", "description": "Opis/notatka do wydarzenia (opcjonalne)."},
                     "calendar_name": {"type": "string", "description": "Nazwa kalendarza iCloud (opcjonalne — jeśli nie podano, używa pierwszego dostępnego)."},
+                    "recurrence":    {"type": "string", "description": "Cykliczność: 'daily', 'weekly', 'biweekly', 'monthly', 'weekdays' lub własna reguła RRULE:FREQ=..."},
                 },
                 "required": ["action"]
             }
@@ -959,6 +962,7 @@ Pytanie → Direct answer → Context → Actionable next step
                             location=tool_input.get('location'),
                             description=tool_input.get('description'),
                             calendar_name=tool_input.get('calendar_name'),
+                            recurrence=tool_input.get('recurrence'),
                         )
                 elif tool_name == "mute_budget_alert":
                     from jobs.budget_alerts import mute_campaign_alert
@@ -1726,7 +1730,11 @@ def handle_message_events(body, say, logger):
         "Emoji: 📊 💰 ⚠️ ✅\n\n"
         "📅 KALENDARZ: Gdy user mówi 'dodaj do kalendarza', 'wrzuć do kalendarza', 'dodaj spotkanie', 'zaplanuj spotkanie', 'umów' — "
         "ZAWSZE wywołaj manage_calendar(action='create', ...). NIE używaj save_reminder dla wydarzeń kalendarzowych! "
+        "Dla cyklicznych wydarzeń użyj recurrence: 'daily', 'weekly', 'biweekly', 'monthly', 'weekdays'. "
         "Różnica: reminder = powiadomienie Slack o przyszłej rzeczy; kalendarz = wydarzenie w iCloud.\n"
+        "📧→📅 EMAIL→KALENDARZ: Gdy user mówi 'zaciągnij z maila', 'dodaj zaproszenia z maila do kalendarza', 'co mam w mailach' — "
+        "wywołaj manage_email(action='find_invites'), pokaż listę znalezionych wydarzeń i zapytaj które dodać (lub dodaj wszystkie jeśli user prosił o wszystkie), "
+        "następnie wywołaj manage_calendar(action='create', ...) dla każdego wybranego.\n"
         "⛔ KRYTYCZNE: Jeśli manage_calendar zwróci błąd (np. brak autoryzacji) → powiedz użytkownikowi o błędzie i STOP. "
         "NIE zapisuj jako reminder zamiast tego. NIE rób żadnego fallbacku. Tylko: 'Nie udało się dodać do kalendarza: [błąd]'.\n\n"
         "📌 REMINDERY: Gdy user prosi o przypomnienie ('przypomnij mi', 'zanotuj że', 'remind me') — "
@@ -1771,16 +1779,17 @@ def handle_message_events(body, say, logger):
         },
         {
             "name": "manage_email",
-            "description": "Zarządza emailami — czyta, wysyła, przeszukuje skrzynkę.",
+            "description": "Zarządza emailami — czyta, wysyła, przeszukuje skrzynkę, szuka zaproszeń kalendarzowych.",
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "action":  {"type": "string", "enum": ["read", "send", "search"]},
-                    "limit":   {"type": "integer"},
-                    "to":      {"type": "string"},
-                    "subject": {"type": "string"},
-                    "body":    {"type": "string"},
-                    "query":   {"type": "string"},
+                    "action":    {"type": "string", "enum": ["read", "send", "search", "find_invites"]},
+                    "limit":     {"type": "integer"},
+                    "to":        {"type": "string"},
+                    "subject":   {"type": "string"},
+                    "body":      {"type": "string"},
+                    "query":     {"type": "string"},
+                    "days_back": {"type": "integer"},
                 },
                 "required": ["action"],
             },
@@ -1816,6 +1825,7 @@ def handle_message_events(body, say, logger):
                     "location":      {"type": "string"},
                     "description":   {"type": "string"},
                     "calendar_name": {"type": "string"},
+                    "recurrence":    {"type": "string", "description": "'daily', 'weekly', 'biweekly', 'monthly', 'weekdays' lub RRULE:FREQ=..."},
                 },
                 "required": ["action"],
             },
