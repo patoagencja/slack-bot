@@ -1859,47 +1859,55 @@ def handle_message_events(body, say, logger):
             messages=_merged,
         )
         while _resp.stop_reason == "tool_use":
-            _tb = next(b for b in _resp.content if b.type == "tool_use")
-            if _tb.name == "get_meta_ads_data":
-                _tr = meta_ads_tool(**{k: v for k, v in _tb.input.items() if v is not None})
-            elif _tb.name == "get_google_ads_data":
-                _tr = google_ads_tool(**{k: v for k, v in _tb.input.items() if v is not None})
-            elif _tb.name == "get_ga4_data":
-                _tr = google_analytics_tool(**{k: v for k, v in _tb.input.items() if v is not None})
-            elif _tb.name == "manage_email":
-                _inp = {k: v for k, v in _tb.input.items() if v is not None and k != "user_id"}
-                _tr  = email_tool(user_id=user_id, **_inp)
-            elif _tb.name == "manage_calendar":
-                _owner_id = os.environ.get("CALENDAR_OWNER_SLACK_ID")
-                if _owner_id and user_id != _owner_id:
-                    _tr = {"error": "Brak dostępu — kalendarz jest prywatny."}
-                else:
-                    _tr = icloud_calendar_tool(**{k: v for k, v in _tb.input.items() if v is not None})
-            elif _tb.name == "save_reminder":
-                _action = _tb.input.get("action", "save")
-                _r_chan = _tb.input.get("channel_id") or event.get("channel", "")
-                if _action == "list":
-                    _pending = list_reminders(app.client, _r_chan)
-                    if _pending:
-                        _tr = {"reminders": _pending, "count": len(_pending)}
+            # Handle ALL tool_use blocks in one response (Claude may call multiple tools at once)
+            _tool_blocks = [b for b in _resp.content if b.type == "tool_use"]
+            _tool_results = []
+            for _tb in _tool_blocks:
+                if _tb.name == "get_meta_ads_data":
+                    _tr = meta_ads_tool(**{k: v for k, v in _tb.input.items() if v is not None})
+                elif _tb.name == "get_google_ads_data":
+                    _tr = google_ads_tool(**{k: v for k, v in _tb.input.items() if v is not None})
+                elif _tb.name == "get_ga4_data":
+                    _tr = google_analytics_tool(**{k: v for k, v in _tb.input.items() if v is not None})
+                elif _tb.name == "manage_email":
+                    _inp = {k: v for k, v in _tb.input.items() if v is not None and k != "user_id"}
+                    _tr  = email_tool(user_id=user_id, **_inp)
+                elif _tb.name == "manage_calendar":
+                    _owner_id = os.environ.get("CALENDAR_OWNER_SLACK_ID")
+                    if _owner_id and user_id != _owner_id:
+                        _tr = {"error": "Brak dostępu — kalendarz jest prywatny."}
                     else:
-                        _tr = {"reminders": [], "message": "Brak zaplanowanych przypomnień."}
-                else:
-                    _r_date = _tb.input.get("remind_date")
-                    _r_msg  = _tb.input.get("message", "")
-                    if not _r_date or not _r_msg:
-                        _tr = {"error": "Wymagane pola: remind_date (YYYY-MM-DD) i message."}
+                        _tr = icloud_calendar_tool(**{k: v for k, v in _tb.input.items() if v is not None})
+                elif _tb.name == "save_reminder":
+                    _action = _tb.input.get("action", "save")
+                    _r_chan = _tb.input.get("channel_id") or event.get("channel", "")
+                    if _action == "list":
+                        _pending = list_reminders(app.client, _r_chan)
+                        if _pending:
+                            _tr = {"reminders": _pending, "count": len(_pending)}
+                        else:
+                            _tr = {"reminders": [], "message": "Brak zaplanowanych przypomnień."}
                     else:
-                        try:
-                            _rid = schedule_reminder(app.client, _r_chan, _r_date, _r_msg)
-                            _tr = {"ok": True, "id": _rid, "remind_date": _r_date, "message": "Reminder zapisany — Slack wyśle o 9:00 tego dnia."}
-                        except Exception as _re:
-                            logger.error("schedule_reminder error: %s", _re)
-                            _tr = {"error": str(_re)}
-            else:
-                _tr = {"error": "Nieznane narzędzie"}
+                        _r_date = _tb.input.get("remind_date")
+                        _r_msg  = _tb.input.get("message", "")
+                        if not _r_date or not _r_msg:
+                            _tr = {"error": "Wymagane pola: remind_date (YYYY-MM-DD) i message."}
+                        else:
+                            try:
+                                _rid = schedule_reminder(app.client, _r_chan, _r_date, _r_msg)
+                                _tr = {"ok": True, "id": _rid, "remind_date": _r_date, "message": "Reminder zapisany — Slack wyśle o 9:00 tego dnia."}
+                            except Exception as _re:
+                                logger.error("schedule_reminder error: %s", _re)
+                                _tr = {"error": str(_re)}
+                else:
+                    _tr = {"error": "Nieznane narzędzie"}
+                _tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": _tb.id,
+                    "content": str(_tr),
+                })
             _merged.append({"role": "assistant", "content": _resp.content})
-            _merged.append({"role": "user", "content": [{"type": "tool_result", "tool_use_id": _tb.id, "content": str(_tr)}]})
+            _merged.append({"role": "user", "content": _tool_results})
             _resp = anthropic.messages.create(
                 model="claude-sonnet-4-20250514",
                 max_tokens=2000,
@@ -3727,6 +3735,98 @@ def _handle_google_campaign_wizard(user_id: str, user_message: str | None, files
     return True
 
 
+# ── email → iCloud calendar auto-sync ────────────────────────────────────────
+
+def _get_synced_invite_ids() -> set:
+    """Load set of already-synced invite IDs (title+start) from disk."""
+    path = os.path.join(os.path.dirname(__file__), "data", "synced_invites.json")
+    try:
+        if os.path.exists(path):
+            with open(path) as f:
+                return set(json.load(f))
+    except Exception:
+        pass
+    return set()
+
+
+def _save_synced_invite_ids(ids: set):
+    """Persist synced invite IDs to disk."""
+    path = os.path.join(os.path.dirname(__file__), "data", "synced_invites.json")
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(list(ids), f)
+    except Exception as e:
+        logger.warning("_save_synced_invite_ids failed: %s", e)
+
+
+def sync_calendar_from_email():
+    """
+    Co godzinę: skanuje skrzynkę email w poszukiwaniu zaproszeń kalendarzowych (.ics),
+    dodaje nowe do iCloud i wysyła powiadomienie na Slack.
+    """
+    cal_owner = os.environ.get("CALENDAR_OWNER_SLACK_ID")
+    if not cal_owner:
+        return
+
+    email_config = get_user_email_config(cal_owner)
+    if not email_config:
+        return
+
+    try:
+        from tools.email_tools import find_calendar_invites
+        result = find_calendar_invites(email_config, days_back=2)
+    except Exception as e:
+        logger.warning("sync_calendar_from_email: błąd odczytu emaila: %s", e)
+        return
+
+    invites = result.get("invites", [])
+    if not invites:
+        return
+
+    synced_ids = _get_synced_invite_ids()
+    newly_added = []
+
+    for invite in invites:
+        inv_id = f"{invite.get('title','')}|{invite.get('start','')}"
+        if inv_id in synced_ids:
+            continue
+
+        try:
+            cal_result = icloud_calendar_tool(
+                action="create",
+                title=invite.get("title"),
+                start=invite.get("start"),
+                end=invite.get("end"),
+                location=invite.get("location"),
+                description=invite.get("description"),
+            )
+            if "error" not in cal_result:
+                synced_ids.add(inv_id)
+                newly_added.append(invite)
+                logger.info("sync_calendar_from_email: dodano '%s' (%s)", invite.get("title"), invite.get("start"))
+            else:
+                logger.warning("sync_calendar_from_email: błąd tworzenia '%s': %s", invite.get("title"), cal_result.get("error"))
+        except Exception as e:
+            logger.warning("sync_calendar_from_email: wyjątek dla '%s': %s", invite.get("title"), e)
+
+    if not newly_added:
+        return
+
+    _save_synced_invite_ids(synced_ids)
+
+    # Notify owner on Slack
+    lines = ["📅 *Nowe zaproszenia z maila → iCloud:*"]
+    for inv in newly_added:
+        loc = f" | 📍 {inv['location']}" if inv.get("location") else ""
+        org = f" _(od: {inv['organizer']})_" if inv.get("organizer") else ""
+        lines.append(f"• *{inv['title']}* — {inv.get('start','?')}{loc}{org}")
+    try:
+        app.client.chat_postMessage(channel=cal_owner, text="\n".join(lines))
+    except Exception as e:
+        logger.warning("sync_calendar_from_email: nie udało się wysłać powiadomienia Slack: %s", e)
+
+
 # ── scheduler ─────────────────────────────────────────────────────────────────
 
 scheduler = BackgroundScheduler(timezone=pytz.timezone('Europe/Warsaw'))
@@ -3745,6 +3845,7 @@ scheduler.add_job(check_stale_onboardings,   'cron', hour=9, minute=30, id='stal
 # scheduler.add_job(send_standup_questions,    'cron', day_of_week='mon-fri', hour=9, minute=0,  id='standup_send')
 # scheduler.add_job(post_standup_summary,      'cron', day_of_week='mon-fri', hour=9, minute=30, id='standup_summary')
 scheduler.add_job(weekly_industry_news,      'cron', day_of_week='mon',     hour=9, minute=0,  id='industry_news')
+scheduler.add_job(sync_calendar_from_email,  'cron', minute=0,                                id='email_calendar_sync')
 # reminders job removed — Slack chat.scheduleMessage handles delivery natively
 scheduler.start()
 
