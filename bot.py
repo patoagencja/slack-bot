@@ -574,6 +574,7 @@ Pytanie o kampanie/metryki/spend/ROAS/CTR → WYWOŁAJ narzędzie:
 - manage_calendar() → kalendarz iCloud: "co mam jutro", "plan na tydzień", "dodaj spotkanie" → ZAWSZE wywołaj to narzędzie, nie mów że nie masz dostępu!
 - create_presentation() → "zrób prezentację", "zrób prezke", "przygotuj ofertę dla klienta", "deck", "pitch deck", "raport w prezentacji"
 - write_linkedin_post() → "napisz post linkedin", "zrób posta", "napisz coś na linkedin", "hook na linkedin" → WYWOŁAJ to narzędzie, nie pisz samemu
+- linkedin_research() → "zrób research linkedin", "co się niesie na linkedin", "znajdź trendy", "co piszą o X", "inspiracje do posta", "co jest hot na linkedin" → WYWOŁAJ to narzędzie
   ⚠️ PRZED wywołaniem create_presentation ZAWSZE zbierz pełny kontekst — jeśli czegoś brakuje, zapytaj:
   1. Dla kogo jest prezentacja i jaki jest cel? (oferta sprzedażowa, raport wyników, onboarding, pitch?)
   2. Co ma zawierać? (jakie slajdy, tematy, dane?)
@@ -828,6 +829,24 @@ Pytanie → Direct answer → Context → Actionable next step
                 "required": ["topic"]
             }
         },
+        {
+            "name": "linkedin_research",
+            "description": (
+                "Przeszukuje LinkedIn i internet w poszukiwaniu trendów, wiralowych postów i inspiracji contentowych. "
+                "Użyj gdy ktoś prosi o 'research linkedin', 'co się niesie na linkedin', 'znajdź trendy', "
+                "'co piszą o X na linkedin', 'inspiracje do posta', 'co jest teraz hot'."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "topic": {
+                        "type": "string",
+                        "description": "Temat do zbadania, np. 'AI w marketingu', 'agencje performance', 'automatyzacja reklam'."
+                    }
+                },
+                "required": ["topic"]
+            }
+        },
     ]
 
     try:
@@ -1049,6 +1068,14 @@ Pytanie → Direct answer → Context → Actionable next step
                             ),
                         )
                         tool_result = {"status": "ok", "message": "Post wysłany. Czekam na decyzję o grafice."}
+                elif tool_name == "linkedin_research":
+                    from jobs.linkedin import research_linkedin
+                    _lr_owner = os.environ.get("LINKEDIN_OWNER_SLACK_ID", "UTE1RN6SJ")
+                    if event.get("user") != _lr_owner:
+                        tool_result = {"error": "Brak dostępu — research LinkedIn jest prywatny."}
+                    else:
+                        _lr_topic = tool_input.get("topic", "")
+                        tool_result = {"research": research_linkedin(_lr_topic)}
                 elif tool_name == "manage_calendar":
                     _cal_user = event.get('user')
                     _owner_id = os.environ.get("CALENDAR_OWNER_SLACK_ID")

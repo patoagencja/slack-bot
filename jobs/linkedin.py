@@ -284,3 +284,62 @@ def generate_linkedin_image_from_prompt(img_prompt: str) -> bytes | None:
     except Exception as e:
         logger.error(f"Błąd generate_linkedin_image_from_prompt: {e}")
         return None
+
+
+# ── LinkedIn Research ─────────────────────────────────────────────────────────
+
+_RESEARCH_SYSTEM = """Jesteś LinkedIn research assistantem dla Daniela Koszuka — CEO agencji performance marketingowej Pato Agencja, która buduje własne narzędzia AI.
+
+Twoje zadanie: przeszukać internet (LinkedIn i poza nim) i znaleźć wartościowe materiały do inspiracji contentowej.
+
+Szukaj:
+- Wiralowych postów LinkedIn na zadany temat (co rezonuje, jakie formaty, ile reakcji)
+- Kontrariańskich opinii i hot take'ów od twórców w niszy
+- Trendów i newsów które można przerobić na post
+- Ciekawych kątów które jeszcze nie były popularne
+
+Format odpowiedzi — zawsze tak:
+## 🔍 Research: [temat]
+
+**Co się teraz niesie na LinkedIn:**
+[3-5 obserwacji z konkretami — co piszą ludzie, jakie formaty działają, jakie kąty]
+
+**Top posty / wątki do inspiracji:**
+[3-5 konkretnych przykładów z tytułem/kątem + co w nich zadziałało]
+
+**Gorące kąty do wykorzystania:**
+[3-5 propozycji kątów posta dla Daniela, konkretne, actionable]
+
+**Hot take którego jeszcze nie ma:**
+[1 kontrariańska opinia którą Daniel mógłby napisać]
+
+Pisz konkretnie. Zero ogólników. Jeśli znajdziesz liczby (ile reakcji, ile komentarzy) — podaj je."""
+
+
+def research_linkedin(topic: str) -> str:
+    """
+    Przeszukuje LinkedIn i internet w poszukiwaniu trendów i inspiracji contentowych.
+    Używa web_search — wymaga modelu z narzędziem web_search.
+    """
+    query = (
+        f"Znajdź i przeanalizuj trendy na LinkedIn dotyczące: {topic}. "
+        f"Szukaj wiralowych postów, hot take'ów, ciekawych kątów i trendów "
+        f"szczególnie w kontekście: performance marketing, AI w reklamie, agencje marketingowe, "
+        f"automatyzacja, narzędzia AI dla marketerów. "
+        f"Poszukaj też na LinkedIn (site:linkedin.com) aktualnych postów na ten temat. "
+        f"Podaj konkretne przykłady, liczby reakcji jeśli dostępne, i 3-5 kątów postów które mogę wykorzystać."
+    )
+
+    response = _ctx.claude.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=3000,
+        system=_RESEARCH_SYSTEM,
+        tools=[{
+            "type": "web_search_20250305",
+            "name": "web_search",
+            "max_uses": 8,
+        }],
+        messages=[{"role": "user", "content": query}],
+    )
+    parts = [block.text for block in response.content if hasattr(block, "text")]
+    return "\n".join(parts).strip()
