@@ -162,132 +162,60 @@ def generate_linkedin_post(topic: str) -> str:
 
 # ── Grafika do posta — DALL-E 3 z rotującymi stylami ─────────────────────────
 
-# WAŻNE: DALL-E nie umie renderować tekstu — ŻADEN styl nie może polegać na literach/napisach w obrazku.
-# Wszystkie style są czysto wizualne — metafory, sceny, abstrakcje.
-_IMAGE_STYLES = [
-    {
-        "name": "cinematic_human",
-        "desc": "Dramatyczna, filmowa scena z człowiekiem przy pracy. Pasuje do postów 'behind the scenes' i storytellingu.",
-        "template": "Cinematic photorealistic photo, one person working late at night in a dark modern office, multiple screens glowing with dashboards and charts, dramatic blue and purple light, moody atmosphere, shot from behind or side angle, NO TEXT, NO LETTERS anywhere, 1024x1024",
-    },
-    {
-        "name": "sebol_robot",
-        "desc": "Sebol-robot w akcji. Pasuje do postów o funkcjach Sebola i demo.",
-        "template": "3D cartoon robot character in grey Adidas hoodie with white stripes, grey sweatpants, white sneakers, glowing rectangular blue eyes, dark metallic navy body, {action}, flat cel-shaded illustration, dark navy background (#0A1520), bold blue accent lighting, NO TEXT NO LETTERS, square 1024x1024",
-    },
-    {
-        "name": "abstract_flow",
-        "desc": "Abstrakcyjna wizualizacja przepływu danych / automatyzacji. Energetyczna, kolorowa.",
-        "template": "Abstract digital art, glowing data streams flowing through dark space, interconnected nodes and geometric shapes, electric purple and blue and cyan gradient, sense of speed and automation, zero text, zero letters, purely visual, 1024x1024",
-    },
-    {
-        "name": "split_contrast",
-        "desc": "Dwie połówki — chaos vs porządek, ręczne vs AI, stare vs nowe. Silny kontrast bez tekstu.",
-        "template": "Split composition square image, LEFT half: chaotic messy desk with papers everywhere, stressed person, warm desaturated tones, RIGHT half: clean minimalist workspace with glowing screens, calm organized, cool blue tones, sharp diagonal dividing line, NO TEXT NO WORDS, purely visual metaphor, 1024x1024",
-    },
-    {
-        "name": "neon_tech",
-        "desc": "Neonowy, cyberpunkowy klimat tech. Miasto nocą, refleksy, fiolet/niebieski. Mocny mood.",
-        "template": "Cyberpunk aesthetic square photo, rainy night city street reflection in puddles, purple and blue neon store signs (generic geometric shapes, NOT readable words), wet asphalt, bokeh lights, cinematic mood, NO READABLE TEXT anywhere, 1024x1024",
-    },
-    {
-        "name": "flat_isometric",
-        "desc": "Izometryczna ilustracja flat design — biuro, dashboard, przepływ pracy. Profesjonalne, czyste.",
-        "template": "Isometric flat design illustration, small office scene with computer screens showing colorful charts and graphs (no readable numbers), tiny human figures working, clean lines, vibrant colors (blue purple orange), white background, modern tech company vibe, NO TEXT NO LETTERS, 1024x1024",
-    },
-    {
-        "name": "dramatic_light",
-        "desc": "Jeden obiekt w dramatycznym świetle studyjnym. Minimalistyczne, premium, przyciąga wzrok.",
-        "template": "Dramatic studio lighting, single object centered: a sleek laptop or smartphone with glowing screen showing colorful abstract graphs (not readable), dark background, rim light in electric blue, luxury product photography style, NO TEXT, minimalist, 1024x1024",
-    },
-    {
-        "name": "robot_human_collab",
-        "desc": "Robot i człowiek pracują razem — metafora AI + człowiek. Pozytywny, nowoczesny.",
-        "template": "Photorealistic illustration, human hand and robotic hand pointing at the same glowing holographic dashboard with colorful abstract data visualizations, warm and cool lighting contrast, sense of collaboration, NO TEXT NO LETTERS on any surface, cinematic, 1024x1024",
-    },
-]
+# ── Grafika do posta — gpt-image-1, Claude pisze prompt ──────────────────────
+
+_IMAGE_PROMPT_SYSTEM = """Jesteś ekspertem od visual content dla LinkedIn. Twoim zadaniem jest napisanie prompta do generatora obrazów (gpt-image-1) który stworzy IDEALNĄ grafikę do danego posta LinkedIn.
+
+ZASADY:
+- Grafika musi być 1:1, professional, catchy, social media-ready
+- ABSOLUTNIE ZERO tekstu, liter, napisów, słów w obrazku — generator ich i tak nie umie
+- Opisz konkretną, wizualną scenę lub metaforę — nie abstrakcję
+- Myśl jak creative director: co zostanie w głowie po 1 sekundzie patrzenia?
+- Rotuj style: fotorealistyczne, ilustracja, izometryczne, low-poly, cinematic, flat design
+- Prompt pisz po angielsku, max 200 słów
+- Odpowiedz TYLKO promptem, bez żadnego komentarza
+
+DOBRE PRZYKŁADY STYLU:
+- "Photorealistic top-down shot of a cluttered desk transforming mid-frame into a clean minimalist workspace, warm chaos on left, cool order on right, no text, cinematic lighting"
+- "Isometric illustration of a tiny robot in grey hoodie sitting at a glowing computer inside a Slack message bubble, flat design, dark navy background, electric blue accents, square format"
+- "Dramatic low-angle shot of a human hand and robotic hand shaking over a glowing holographic interface showing colorful charts, dark background, rim light, photorealistic"
+- "Split-screen: left side vintage chaotic spreadsheet printed on paper with coffee stains, right side sleek modern dashboard glowing in dark room, diagonal cut, no words visible"
+"""
 
 
-def _pick_image_style(post_text: str, topic: str) -> dict:
-    """Claude dobiera najlepszy styl grafiki do treści posta."""
-    styles_desc = "\n".join(
-        f"{i+1}. [{s['name']}] {s['desc']}"
-        for i, s in enumerate(_IMAGE_STYLES)
-    )
+def _generate_image_prompt(post_text: str, topic: str) -> str:
+    """Claude pisze dedykowany prompt do obrazka na podstawie treści posta."""
     resp = _ctx.claude.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=100,
+        model="claude-opus-4-5",
+        max_tokens=300,
+        system=_IMAGE_PROMPT_SYSTEM,
         messages=[{
             "role": "user",
             "content": (
-                f"Post LinkedIn:\n{post_text}\n\nTemat: {topic}\n\n"
-                f"Dostępne style grafiki:\n{styles_desc}\n\n"
-                "Wybierz JEDEN numer stylu który będzie najbardziej catchy dla tego konkretnego posta. "
-                "Odpowiedz TYLKO cyfrą (1-8)."
+                f"Napisz prompt do obrazka dla tego posta LinkedIn.\n\n"
+                f"TEMAT: {topic}\n\n"
+                f"POST:\n{post_text[:800]}"
             )
         }]
     )
-    try:
-        idx = int(resp.content[0].text.strip()) - 1
-        return _IMAGE_STYLES[max(0, min(idx, len(_IMAGE_STYLES) - 1))]
-    except Exception:
-        import random
-        return random.choice(_IMAGE_STYLES)
-
-
-def _build_dalle_prompt(style: dict, post_text: str, topic: str) -> str:
-    """Buduje finalny prompt do DALL-E na podstawie stylu i treści posta."""
-    # Ustal action dla Sebola (czysto wizualne opisy bez tekstu)
-    action_map = {
-        "prezentacja": "holding a large glowing slide deck floating in the air",
-        "raport": "carrying a glowing document with colorful bar charts on it",
-        "kampania": "pressing a large glowing launch button with both hands",
-        "ai": "surrounded by glowing neural network nodes connecting to its head",
-        "linkedin": "sitting at a desk typing on a glowing keyboard",
-        "analiza": "pointing at floating colorful pie charts and bar graphs",
-        "pptx": "holding a large glowing slide deck floating in the air",
-        "automatyz": "pulling levers on a control panel with colorful status lights",
-        "budżet": "looking at a large glowing coin stack with an upward arrow",
-    }
-    action = "working on a glowing laptop in a dark room"
-    combined = (post_text + " " + topic).lower()
-    for keyword, act in action_map.items():
-        if keyword in combined:
-            action = act
-            break
-
-    template = style["template"]
-    prompt = (
-        template
-        .replace("{topic}", topic[:80])
-        .replace("{action}", action)
-    )
-    # Upewnij się że zawsze jest zakaz tekstu na końcu
-    if "NO TEXT" not in prompt.upper():
-        prompt += ", absolutely NO TEXT, NO LETTERS, NO WORDS anywhere in the image"
-    return prompt
+    return resp.content[0].text.strip()
 
 
 def generate_linkedin_image(post_text: str, topic: str) -> bytes | None:
-    """
-    Generuje grafikę LinkedIn przez DALL-E 3.
-    Zwraca bajty PNG lub None jeśli błąd.
-    """
+    """Generuje grafikę LinkedIn: Claude pisze prompt → gpt-image-1 renderuje."""
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         logger.warning("Brak OPENAI_API_KEY — pomijam generowanie grafiki")
         return None
 
     try:
-        style = _pick_image_style(post_text, topic)
-        prompt = _build_dalle_prompt(style, post_text, topic)
-        logger.info(f"Generuję grafikę LinkedIn, styl: {style['name']}")
+        prompt = _generate_image_prompt(post_text, topic)
+        logger.info(f"Generuję grafikę LinkedIn, prompt: {prompt[:100]}...")
 
         from openai import OpenAI
         import base64
         client = OpenAI(api_key=api_key)
 
-        # gpt-image-1 = model używany przez ChatGPT — znacznie lepszy od dall-e-3
         try:
             resp = client.images.generate(
                 model="gpt-image-1",
@@ -296,7 +224,6 @@ def generate_linkedin_image(post_text: str, topic: str) -> bytes | None:
                 quality="high",
                 n=1,
             )
-            # gpt-image-1 zwraca base64, nie URL
             b64 = resp.data[0].b64_json
             if b64:
                 return base64.b64decode(b64)
@@ -306,7 +233,7 @@ def generate_linkedin_image(post_text: str, topic: str) -> bytes | None:
                 model="dall-e-3",
                 prompt=prompt,
                 size="1024x1024",
-                quality="standard",
+                quality="hd",
                 n=1,
             )
             img_url = resp.data[0].url
