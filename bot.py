@@ -1004,18 +1004,43 @@ Pytanie → Direct answer → Context → Actionable next step
                         if _upload_ok and "status" not in tool_result:
                             tool_result = {"status": "ok", "message": "Prezentacja wygenerowana i wysłana na Slack jako plik PPTX."}
                 elif tool_name == "write_linkedin_post":
-                    from jobs.linkedin import generate_linkedin_post, LINKEDIN_SYSTEM_PROMPT
+                    from jobs.linkedin import generate_linkedin_post, generate_linkedin_image
+                    import io as _io
                     _li_owner = os.environ.get("LINKEDIN_OWNER_SLACK_ID", "UTE1RN6SJ")
                     if event.get("user") != _li_owner:
                         tool_result = {"error": "Brak dostępu — ghostwriter LinkedIn jest prywatny."}
                     else:
                         _li_topic = tool_input.get("topic", "")
                         _li_format = tool_input.get("format", "hooki")
-                        if _li_format == "pelny":
-                            _li_prompt = f"Napisz od razu pełny post (nie tylko hooki).\n\nTemat: {_li_topic}"
-                        else:
-                            _li_prompt = _li_topic
-                        tool_result = {"post": generate_linkedin_post(_li_prompt)}
+                        _li_prompt = (
+                            f"Napisz od razu pełny post (nie tylko hooki).\n\nTemat: {_li_topic}"
+                            if _li_format == "pelny" else _li_topic
+                        )
+                        _li_post = generate_linkedin_post(_li_prompt)
+                        # Wyślij post od razu na kanał (nie czekaj na Claude'a)
+                        try:
+                            app.client.chat_postMessage(
+                                channel=channel,
+                                text=_li_post,
+                                thread_ts=thread_ts,
+                                unfurl_links=False,
+                            )
+                        except Exception as _le:
+                            logger.warning(f"LinkedIn post message failed: {_le}")
+                        # Generuj i wyślij grafikę DALL-E
+                        _li_img = generate_linkedin_image(_li_post, _li_topic)
+                        if _li_img:
+                            try:
+                                app.client.files_upload_v2(
+                                    channel=channel,
+                                    file=_io.BytesIO(_li_img),
+                                    filename="linkedin_grafika.png",
+                                    title=f"Grafika: {_li_topic[:60]}",
+                                    thread_ts=thread_ts,
+                                )
+                            except Exception as _lie:
+                                logger.warning(f"LinkedIn image upload failed: {_lie}")
+                        tool_result = {"status": "ok", "message": "Post i grafika wysłane na kanał."}
                 elif tool_name == "manage_calendar":
                     _cal_user = event.get('user')
                     _owner_id = os.environ.get("CALENDAR_OWNER_SLACK_ID")
