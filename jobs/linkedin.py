@@ -3,6 +3,8 @@ LinkedIn ghostwriter dla Daniela Koszuka — CEO Pato Agencja.
 Slash command: /linkedin <temat lub opis sytuacji>
 """
 import logging
+import os
+import requests
 import _ctx
 
 logger = logging.getLogger(__name__)
@@ -156,3 +158,140 @@ def generate_linkedin_post(topic: str) -> str:
         messages=[{"role": "user", "content": topic}],
     )
     return response.content[0].text
+
+
+# ── Grafika do posta — DALL-E 3 z rotującymi stylami ─────────────────────────
+
+_IMAGE_STYLES = [
+    {
+        "name": "bold_typography",
+        "desc": "Tylko tekst. Jedno zdanie z posta jako ogromny napis na ciemnym tle. Brutalistyczna typografia, kontrast, zero ozdób. Styl: NY Times Magazine cover meets tech poster.",
+        "template": "Bold typographic poster, dark background, one short punchy quote from the post in huge white sans-serif letters filling the frame, brutalist design, high contrast, no people, 1080x1080",
+    },
+    {
+        "name": "cinematic_scene",
+        "desc": "Dramatyczna, filmowa scena nawiązująca do tematu posta. Photorealistic. Jedno mocne ujęcie.",
+        "template": "Cinematic photorealistic scene, dramatic lighting, moody atmosphere, relates to: {topic}. Film still quality, shallow depth of field, 1080x1080",
+    },
+    {
+        "name": "sebol_mascot",
+        "desc": "Sebol (robot w szarej bluzie Adidas) w akcji nawiązującej do tematu posta.",
+        "template": "Cartoon robot mascot wearing grey Adidas hoodie with white stripes, grey Adidas sweatpants, white sneakers, glowing blue rectangular eyes, dark navy metallic body. The robot is: {action}. Flat illustration style, dark background #0A1520, blue accent #4A90D9, 1080x1080",
+    },
+    {
+        "name": "abstract_data",
+        "desc": "Abstrakcyjna wizualizacja danych, sieci neuronowe, przepływy. Kolorowe, energetyczne.",
+        "template": "Abstract digital art, flowing data streams, neural network visualization, neon colors (purple, blue, pink) on black background, dynamic energy, relates to AI and marketing analytics, no text, 1080x1080",
+    },
+    {
+        "name": "neon_cyberpunk",
+        "desc": "Neon, cyberpunk, miasto nocą. Klimat tech + agencja. Mocny mood.",
+        "template": "Cyberpunk aesthetic, neon lights, night city reflections, purple and blue neon signs, rain on glass, futuristic atmosphere, relates to: {topic}, no people visible, 1080x1080",
+    },
+    {
+        "name": "meme_format",
+        "desc": "Rozpoznawalny format memowy zaadaptowany do B2B / AI / marketingu. Humor branżowy.",
+        "template": "Clean meme format, white background with bold Impact or Arial Black text, top and bottom captions, business/marketing/AI humor theme about: {topic}, professional but funny, 1080x1080",
+    },
+    {
+        "name": "split_before_after",
+        "desc": "Dwie połówki — przed/po, stare/nowe, manual/AI. Silny kontrast wizualny.",
+        "template": "Split screen composition, left side shows old/manual/chaos (desaturated, messy), right side shows new/automated/clean (vibrant, organized), divided by sharp diagonal line, theme: {topic}, no text needed, 1080x1080",
+    },
+    {
+        "name": "minimal_stat",
+        "desc": "Jedna duża liczba lub fakt na czystym tle. Minimalizm. Mocny przekaz jedną liczbą.",
+        "template": "Minimalist design, one huge statistic or number centered on clean dark background, small label below, premium feel, relates to: {topic}, geometric accents in electric blue, 1080x1080",
+    },
+]
+
+
+def _pick_image_style(post_text: str, topic: str) -> dict:
+    """Claude dobiera najlepszy styl grafiki do treści posta."""
+    styles_desc = "\n".join(
+        f"{i+1}. [{s['name']}] {s['desc']}"
+        for i, s in enumerate(_IMAGE_STYLES)
+    )
+    resp = _ctx.claude.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=100,
+        messages=[{
+            "role": "user",
+            "content": (
+                f"Post LinkedIn:\n{post_text}\n\nTemat: {topic}\n\n"
+                f"Dostępne style grafiki:\n{styles_desc}\n\n"
+                "Wybierz JEDEN numer stylu który będzie najbardziej catchy dla tego konkretnego posta. "
+                "Odpowiedz TYLKO cyfrą (1-8)."
+            )
+        }]
+    )
+    try:
+        idx = int(resp.content[0].text.strip()) - 1
+        return _IMAGE_STYLES[max(0, min(idx, len(_IMAGE_STYLES) - 1))]
+    except Exception:
+        import random
+        return random.choice(_IMAGE_STYLES)
+
+
+def _build_dalle_prompt(style: dict, post_text: str, topic: str) -> str:
+    """Buduje finalny prompt do DALL-E na podstawie stylu i treści posta."""
+    # Wyciągnij pierwsze zdanie posta jako potencjalny cytat
+    first_line = post_text.split("\n")[0][:120] if post_text else topic
+
+    # Ustal action dla Sebola
+    action_map = {
+        "prezentacja": "pointing at a floating PPTX presentation in the air",
+        "raport": "holding a glowing report document",
+        "kampania": "clicking a big launch button",
+        "ai": "thinking with circuit patterns in its head",
+        "linkedin": "typing on a keyboard with LinkedIn logo floating above",
+        "analiza": "looking at colorful charts and graphs",
+    }
+    action = "working on a laptop with code on the screen"
+    for keyword, act in action_map.items():
+        if keyword in (post_text + topic).lower():
+            action = act
+            break
+
+    template = style["template"]
+    prompt = (
+        template
+        .replace("{topic}", topic[:100])
+        .replace("{action}", action)
+        .replace("{quote}", first_line)
+    )
+    return prompt
+
+
+def generate_linkedin_image(post_text: str, topic: str) -> bytes | None:
+    """
+    Generuje grafikę LinkedIn przez DALL-E 3.
+    Zwraca bajty PNG lub None jeśli błąd.
+    """
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        logger.warning("Brak OPENAI_API_KEY — pomijam generowanie grafiki")
+        return None
+
+    try:
+        style = _pick_image_style(post_text, topic)
+        prompt = _build_dalle_prompt(style, post_text, topic)
+        logger.info(f"Generuję grafikę LinkedIn, styl: {style['name']}")
+
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+        resp = client.images.generate(
+            model="dall-e-3",
+            prompt=prompt,
+            size="1024x1024",
+            quality="standard",
+            n=1,
+        )
+        img_url = resp.data[0].url
+        img_resp = requests.get(img_url, timeout=30)
+        if img_resp.ok:
+            return img_resp.content
+        return None
+    except Exception as e:
+        logger.error(f"Błąd generowania grafiki LinkedIn: {e}")
+        return None

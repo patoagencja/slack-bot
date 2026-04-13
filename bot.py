@@ -1119,19 +1119,36 @@ def handle_news_slash(ack, respond, command):
 # ── /linkedin slash command ────────────────────────────────────────────────────
 
 def _linkedin_worker(topic: str, respond, channel_id: str, thread_ts=None):
-    from jobs.linkedin import generate_linkedin_post
+    from jobs.linkedin import generate_linkedin_post, generate_linkedin_image
+    import io as _io
     try:
         result = generate_linkedin_post(topic)
-        # Wyślij na kanał jako odpowiedź w wątku jeśli możliwe
+        # Wyślij tekst posta
         try:
-            app.client.chat_postMessage(
+            msg_resp = app.client.chat_postMessage(
                 channel=channel_id,
                 text=result,
                 thread_ts=thread_ts,
                 unfurl_links=False,
             )
+            _post_ts = msg_resp.get("ts")
         except Exception:
             respond(result)
+            _post_ts = None
+
+        # Generuj grafikę DALL-E w tle
+        img_bytes = generate_linkedin_image(result, topic)
+        if img_bytes:
+            try:
+                app.client.files_upload_v2(
+                    channel=channel_id,
+                    file=_io.BytesIO(img_bytes),
+                    filename="linkedin_grafika.png",
+                    title=f"Grafika: {topic[:60]}",
+                    thread_ts=_post_ts or thread_ts,
+                )
+            except Exception as _ue:
+                logger.warning(f"Upload grafiki LinkedIn failed: {_ue}")
     except Exception as e:
         respond(f"❌ Błąd generowania posta: {e}")
 
