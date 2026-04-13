@@ -284,18 +284,36 @@ def generate_linkedin_image(post_text: str, topic: str) -> bytes | None:
         logger.info(f"Generuję grafikę LinkedIn, styl: {style['name']}")
 
         from openai import OpenAI
+        import base64
         client = OpenAI(api_key=api_key)
-        resp = client.images.generate(
-            model="dall-e-3",
-            prompt=prompt,
-            size="1024x1024",
-            quality="standard",
-            n=1,
-        )
-        img_url = resp.data[0].url
-        img_resp = requests.get(img_url, timeout=30)
-        if img_resp.ok:
-            return img_resp.content
+
+        # gpt-image-1 = model używany przez ChatGPT — znacznie lepszy od dall-e-3
+        try:
+            resp = client.images.generate(
+                model="gpt-image-1",
+                prompt=prompt,
+                size="1024x1024",
+                quality="high",
+                n=1,
+            )
+            # gpt-image-1 zwraca base64, nie URL
+            b64 = resp.data[0].b64_json
+            if b64:
+                return base64.b64decode(b64)
+        except Exception as _e1:
+            logger.warning(f"gpt-image-1 failed ({_e1}), fallback do dall-e-3...")
+            resp = client.images.generate(
+                model="dall-e-3",
+                prompt=prompt,
+                size="1024x1024",
+                quality="standard",
+                n=1,
+            )
+            img_url = resp.data[0].url
+            img_resp = requests.get(img_url, timeout=30)
+            if img_resp.ok:
+                return img_resp.content
+
         return None
     except Exception as e:
         logger.error(f"Błąd generowania grafiki LinkedIn: {e}")
