@@ -1004,8 +1004,7 @@ Pytanie → Direct answer → Context → Actionable next step
                         if _upload_ok and "status" not in tool_result:
                             tool_result = {"status": "ok", "message": "Prezentacja wygenerowana i wysłana na Slack jako plik PPTX."}
                 elif tool_name == "write_linkedin_post":
-                    from jobs.linkedin import generate_linkedin_post, generate_linkedin_image
-                    import io as _io
+                    from jobs.linkedin import generate_linkedin_post, generate_linkedin_image, generate_image_prompt
                     _li_owner = os.environ.get("LINKEDIN_OWNER_SLACK_ID", "UTE1RN6SJ")
                     if event.get("user") != _li_owner:
                         tool_result = {"error": "Brak dostępu — ghostwriter LinkedIn jest prywatny."}
@@ -1017,30 +1016,39 @@ Pytanie → Direct answer → Context → Actionable next step
                             if _li_format == "pelny" else _li_topic
                         )
                         _li_post = generate_linkedin_post(_li_prompt)
-                        # Wyślij post od razu na kanał (nie czekaj na Claude'a)
+                        # Wyślij post
                         try:
-                            app.client.chat_postMessage(
+                            _li_msg = app.client.chat_postMessage(
                                 channel=channel,
                                 text=_li_post,
                                 thread_ts=thread_ts,
                                 unfurl_links=False,
                             )
+                            _li_thread = _li_msg.get("ts") or thread_ts
                         except Exception as _le:
                             logger.warning(f"LinkedIn post message failed: {_le}")
-                        # Generuj i wyślij grafikę DALL-E
-                        _li_img = generate_linkedin_image(_li_post, _li_topic)
-                        if _li_img:
-                            try:
-                                app.client.files_upload_v2(
-                                    channel=channel,
-                                    file=_io.BytesIO(_li_img),
-                                    filename="linkedin_grafika.png",
-                                    title=f"Grafika: {_li_topic[:60]}",
-                                    thread_ts=thread_ts,
-                                )
-                            except Exception as _lie:
-                                logger.warning(f"LinkedIn image upload failed: {_lie}")
-                        tool_result = {"status": "ok", "message": "Post i grafika wysłane na kanał."}
+                            _li_thread = thread_ts
+                        # Wygeneruj prompt do grafiki i zapytaj o zatwierdzenie
+                        _img_prompt = generate_image_prompt(_li_post, _li_topic)
+                        _ctx.linkedin_image_pending[user_id] = {
+                            "img_prompt": _img_prompt,
+                            "post_text":  _li_post,
+                            "topic":      _li_topic,
+                            "channel":    channel,
+                            "thread_ts":  _li_thread,
+                        }
+                        app.client.chat_postMessage(
+                            channel=channel,
+                            thread_ts=_li_thread,
+                            text=(
+                                f"🎨 *Mam pomysł na grafikę:*\n```{_img_prompt}```\n\n"
+                                "Napisz:\n"
+                                "• `tak` — generuj\n"
+                                "• `zmień na [opis]` — popraw pomysł\n"
+                                "• `nie` — pomijam grafikę"
+                            ),
+                        )
+                        tool_result = {"status": "ok", "message": "Post wysłany. Czekam na decyzję o grafice."}
                 elif tool_name == "manage_calendar":
                     _cal_user = event.get('user')
                     _owner_id = os.environ.get("CALENDAR_OWNER_SLACK_ID")
@@ -1673,6 +1681,51 @@ def handle_message_events(body, say, logger):
             def _mwiz_say(text):
                 _meta_wizard_post(user_id, text)
             if _handle_meta_campaign_wizard(user_id, user_message, _creative_files, _mwiz_say):
+                return
+
+    # === LINKEDIN grafika pending — obsłuż tak/zmień/nie w wątku ===
+    if user_id in _ctx.linkedin_image_pending:
+        _lip = _ctx.linkedin_image_pending[user_id]
+        _lip_ch  = _lip.get("channel")
+        _lip_tts = _lip.get("thread_ts")
+        if _ch_id == _lip_ch and event.get("thread_ts") == _lip_tts:
+            _lip_msg = user_message.strip().lower()
+            if _lip_msg in ("tak", "yes", "ok", "oke", "git", "generuj", "daj", "✅"):
+                del _ctx.linkedin_image_pending[user_id]
+                app.client.chat_postMessage(channel=_lip_ch, thread_ts=_lip_tts, text="⏳ Generuję grafikę...")
+                def _gen_img_bg(lip=_lip):
+                    from jobs.linkedin import generate_linkedin_image_from_prompt
+                    import io as _io2
+                    img = generate_linkedin_image_from_prompt(lip["img_prompt"])
+                    if img:
+                        try:
+                            app.client.files_upload_v2(channel=lip["channel"], file=_io2.BytesIO(img), filename="linkedin_grafika.png", title="Grafika LinkedIn", thread_ts=lip["thread_ts"])
+                        except Exception:
+                            app.client.files_upload(channels=lip["channel"], file=_io2.BytesIO(img), filename="linkedin_grafika.png", thread_ts=lip["thread_ts"])
+                    else:
+                        app.client.chat_postMessage(channel=lip["channel"], thread_ts=lip["thread_ts"], text="❌ Nie udało się wygenerować grafiki.")
+                import threading as _thr
+                _thr.Thread(target=_gen_img_bg, daemon=True).start()
+                return
+            elif _lip_msg.startswith("zmień") or _lip_msg.startswith("zmien") or _lip_msg.startswith("popraw") or _lip_msg.startswith("inny") or _lip_msg.startswith("zrób"):
+                # Popraw prompt zgodnie z sugestią użytkownika
+                _new_idea = re.sub(r'^(zmień na|zmien na|zmień|zmien|popraw|inny|zrób)\s*', '', user_message.strip(), flags=re.IGNORECASE).strip()
+                if _new_idea:
+                    from jobs.linkedin import generate_image_prompt
+                    _new_prompt = generate_image_prompt(
+                        _lip["post_text"],
+                        _lip["topic"] + f". Wskazówka wizualna: {_new_idea}"
+                    )
+                    _lip["img_prompt"] = _new_prompt
+                    _ctx.linkedin_image_pending[user_id] = _lip
+                    app.client.chat_postMessage(
+                        channel=_lip_ch, thread_ts=_lip_tts,
+                        text=f"🎨 *Nowy pomysł na grafikę:*\n```{_new_prompt}```\n\nNapisz `tak` żeby generować albo `zmień na [opis]` żeby jeszcze raz poprawić."
+                    )
+                return
+            elif _lip_msg in ("nie", "no", "pomiń", "skip", "cancel"):
+                del _ctx.linkedin_image_pending[user_id]
+                app.client.chat_postMessage(channel=_lip_ch, thread_ts=_lip_tts, text="👌 Pomijam grafikę.")
                 return
 
     # === STANDUP: przechwytuj odpowiedzi z DM ===

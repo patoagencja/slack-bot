@@ -183,7 +183,7 @@ DOBRE PRZYKŁADY STYLU:
 """
 
 
-def _generate_image_prompt(post_text: str, topic: str) -> str:
+def generate_image_prompt(post_text: str, topic: str) -> str:
     """Claude pisze dedykowany prompt do obrazka na podstawie treści posta."""
     resp = _ctx.claude.messages.create(
         model="claude-opus-4-5",
@@ -209,7 +209,7 @@ def generate_linkedin_image(post_text: str, topic: str) -> bytes | None:
         return None
 
     try:
-        prompt = _generate_image_prompt(post_text, topic)
+        prompt = generate_image_prompt(post_text, topic)
         logger.info(f"Generuję grafikę LinkedIn, prompt: {prompt[:100]}...")
 
         from openai import OpenAI
@@ -244,4 +244,43 @@ def generate_linkedin_image(post_text: str, topic: str) -> bytes | None:
         return None
     except Exception as e:
         logger.error(f"Błąd generowania grafiki LinkedIn: {e}")
+        return None
+
+
+def generate_linkedin_image_from_prompt(img_prompt: str) -> bytes | None:
+    """Generuje grafikę z gotowego (zatwierdzonego) promptu."""
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return None
+    try:
+        from openai import OpenAI
+        import base64
+        client = OpenAI(api_key=api_key)
+        try:
+            resp = client.images.generate(
+                model="gpt-image-1",
+                prompt=img_prompt,
+                size="1024x1024",
+                quality="high",
+                n=1,
+            )
+            b64 = resp.data[0].b64_json
+            if b64:
+                return base64.b64decode(b64)
+        except Exception as _e1:
+            logger.warning(f"gpt-image-1 failed ({_e1}), fallback do dall-e-3...")
+            resp = client.images.generate(
+                model="dall-e-3",
+                prompt=img_prompt[:1000],
+                size="1024x1024",
+                quality="hd",
+                n=1,
+            )
+            img_url = resp.data[0].url
+            r = requests.get(img_url, timeout=30)
+            if r.ok:
+                return r.content
+        return None
+    except Exception as e:
+        logger.error(f"Błąd generate_linkedin_image_from_prompt: {e}")
         return None

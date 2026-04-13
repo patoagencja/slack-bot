@@ -37,6 +37,9 @@ meta_campaign_wizard: dict = {}
 # /linkedin wizard state: user_id → {step, hooks, chosen_hook, post, source_channel, thread_ts}
 linkedin_wizard: dict = {}
 
+# LinkedIn grafika pending approval: user_id → {img_prompt, post_text, topic, channel, thread_ts}
+linkedin_image_pending: dict = {}
+
 # Voice transcription cache: (channel, msg_ts) → transcribed text
 # Allows thread handlers to recover voice message content from history
 voice_cache: dict = {}
