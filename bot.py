@@ -573,6 +573,7 @@ Pytanie o kampanie/metryki/spend/ROAS/CTR → WYWOŁAJ narzędzie:
 - get_ga4_data() → Google Analytics 4 / GA4 / analytics (ruch na stronie, sesje, użytkownicy, źródła ruchu, bounce rate) - NIE Google Ads!
 - manage_calendar() → kalendarz iCloud: "co mam jutro", "plan na tydzień", "dodaj spotkanie" → ZAWSZE wywołaj to narzędzie, nie mów że nie masz dostępu!
 - create_presentation() → "zrób prezentację", "zrób prezke", "przygotuj ofertę dla klienta", "deck", "pitch deck", "raport w prezentacji"
+- write_linkedin_post() → "napisz post linkedin", "zrób posta", "napisz coś na linkedin", "hook na linkedin" → WYWOŁAJ to narzędzie, nie pisz samemu
   ⚠️ PRZED wywołaniem create_presentation ZAWSZE zbierz pełny kontekst — jeśli czegoś brakuje, zapytaj:
   1. Dla kogo jest prezentacja i jaki jest cel? (oferta sprzedażowa, raport wyników, onboarding, pitch?)
   2. Co ma zawierać? (jakie slajdy, tematy, dane?)
@@ -800,6 +801,33 @@ Pytanie → Direct answer → Context → Actionable next step
                 "required": ["platform", "client_name", "campaign_name"]
             }
         },
+        {
+            "name": "write_linkedin_post",
+            "description": (
+                "Ghostwriter LinkedIn dla Daniela Koszuka. Generuje 3 warianty hooka (i na żądanie pełne posty) "
+                "zgodnie z briefem personal brand Daniela. "
+                "Użyj gdy ktoś prosi o post na LinkedIn, hooka, content na LinkedIn, posta o Sebolu, hot take'a."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "topic": {
+                        "type": "string",
+                        "description": (
+                            "Temat, sytuacja lub konkretne zdarzenie do opisania. "
+                            "Jak najwięcej konkretów: co się stało, jakie liczby, jaki wynik. "
+                            "Przykład: 'Sebol właśnie wygenerował PPTX raportu post-buy przez AI i wysłał na Slack — pokazujemy jak to działa Demo #5'"
+                        )
+                    },
+                    "format": {
+                        "type": "string",
+                        "description": "Opcjonalnie: 'hooki' (domyślnie, 3 warianty) albo 'pelny' (od razu pełny post).",
+                        "enum": ["hooki", "pelny"]
+                    }
+                },
+                "required": ["topic"]
+            }
+        },
     ]
 
     try:
@@ -975,6 +1003,15 @@ Pytanie → Direct answer → Context → Actionable next step
                                     tool_result = {"error": "Nie udało się wysłać pliku. Dodaj scope 'files:write' w konfiguracji Slack App (api.slack.com/apps)."}
                         if _upload_ok and "status" not in tool_result:
                             tool_result = {"status": "ok", "message": "Prezentacja wygenerowana i wysłana na Slack jako plik PPTX."}
+                elif tool_name == "write_linkedin_post":
+                    from jobs.linkedin import generate_linkedin_post, LINKEDIN_SYSTEM_PROMPT
+                    _li_topic = tool_input.get("topic", "")
+                    _li_format = tool_input.get("format", "hooki")
+                    if _li_format == "pelny":
+                        _li_prompt = f"Napisz od razu pełny post (nie tylko hooki).\n\nTemat: {_li_topic}"
+                    else:
+                        _li_prompt = _li_topic
+                    tool_result = {"post": generate_linkedin_post(_li_prompt)}
                 elif tool_name == "manage_calendar":
                     _cal_user = event.get('user')
                     _owner_id = os.environ.get("CALENDAR_OWNER_SLACK_ID")
@@ -1073,6 +1110,48 @@ def handle_news_slash(ack, respond, command):
     ack()
     respond("⏳ Szukam nowości... To może zająć chwilę.")
     threading.Thread(target=_news_worker, args=(respond,), daemon=True).start()
+
+
+# ── /linkedin slash command ────────────────────────────────────────────────────
+
+def _linkedin_worker(topic: str, respond, channel_id: str, thread_ts=None):
+    from jobs.linkedin import generate_linkedin_post
+    try:
+        result = generate_linkedin_post(topic)
+        # Wyślij na kanał jako odpowiedź w wątku jeśli możliwe
+        try:
+            app.client.chat_postMessage(
+                channel=channel_id,
+                text=result,
+                thread_ts=thread_ts,
+                unfurl_links=False,
+            )
+        except Exception:
+            respond(result)
+    except Exception as e:
+        respond(f"❌ Błąd generowania posta: {e}")
+
+
+@app.command("/linkedin")
+def handle_linkedin_slash(ack, respond, command):
+    """Ghostwriter LinkedIn dla Daniela — generuje hooki i posty."""
+    import threading
+    ack()
+    topic = (command.get("text") or "").strip()
+    channel_id = command.get("channel_id", "")
+    if not topic:
+        respond(
+            "📝 Podaj temat posta, np.:\n"
+            "`/linkedin Sebol generuje teraz raporty PPTX przez AI — demo jak to działa`\n"
+            "`/linkedin hot take: większość agencji nie ma pojęcia co to znaczy 'wdrożyć AI'`"
+        )
+        return
+    respond("✍️ Piszę hooki...")
+    threading.Thread(
+        target=_linkedin_worker,
+        args=(topic, respond, channel_id),
+        daemon=True,
+    ).start()
 
 
 # ── /koszty slash command ─────────────────────────────────────────────────────
