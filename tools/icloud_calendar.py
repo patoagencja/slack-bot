@@ -73,13 +73,22 @@ def icloud_calendar_tool(
     location: str = None,
     description: str = None,
     calendar_name: str = None,
+    recurrence: str = None,
 ):
     """
     Zarządza kalendarzem iCloud przez CalDAV.
 
     action:
       - "list"   — lista wydarzeń w podanym zakresie dat
-      - "create" — tworzy nowe wydarzenie
+      - "create" — tworzy nowe wydarzenie (obsługuje cykliczne przez recurrence)
+
+    recurrence (opcjonalne przy create):
+      - "daily"            — codziennie
+      - "weekly"           — co tydzień (w ten sam dzień tygodnia co start)
+      - "biweekly"         — co 2 tygodnie
+      - "monthly"          — co miesiąc
+      - "weekdays"         — każdy dzień roboczy (pon-pt)
+      - "RRULE:FREQ=..."   — własna reguła iCal (zaawansowane)
     """
     try:
         client = _get_client()
@@ -188,6 +197,26 @@ def icloud_calendar_tool(
 
             uid = start_dt.strftime("%Y%m%dT%H%M%S") + "-sebol@pato"
             dtstamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+            # Buduj RRULE dla cyklicznych wydarzeń
+            rrule_line = None
+            recurrence_label = None
+            if recurrence:
+                _days_map = {0: "MO", 1: "TU", 2: "WE", 3: "TH", 4: "FR", 5: "SA", 6: "SU"}
+                _weekday = _days_map.get(start_dt.weekday(), "MO")
+                _rrule_presets = {
+                    "daily":     "RRULE:FREQ=DAILY",
+                    "weekly":    f"RRULE:FREQ=WEEKLY;BYDAY={_weekday}",
+                    "biweekly":  f"RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY={_weekday}",
+                    "monthly":   "RRULE:FREQ=MONTHLY",
+                    "weekdays":  "RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR",
+                }
+                if recurrence.upper().startswith("RRULE:"):
+                    rrule_line = recurrence.upper()
+                else:
+                    rrule_line = _rrule_presets.get(recurrence.lower())
+                recurrence_label = recurrence
+
             ical_lines = [
                 "BEGIN:VCALENDAR",
                 "VERSION:2.0",
@@ -199,6 +228,8 @@ def icloud_calendar_tool(
                 f"DTSTART:{start_dt.strftime('%Y%m%dT%H%M%S')}",
                 f"DTEND:{end_dt.strftime('%Y%m%dT%H%M%S')}",
             ]
+            if rrule_line:
+                ical_lines.append(rrule_line)
             if location:
                 ical_lines.append(f"LOCATION:{location}")
             if description:
@@ -208,7 +239,7 @@ def icloud_calendar_tool(
 
             calendar.save_event(ical_data)
 
-            return {
+            result = {
                 "status": "created",
                 "calendar": cal_display_name,
                 "title": title,
@@ -216,6 +247,9 @@ def icloud_calendar_tool(
                 "end": end_dt.strftime("%Y-%m-%d %H:%M"),
                 "location": location,
             }
+            if recurrence_label:
+                result["recurrence"] = recurrence_label
+            return result
 
         else:
             return {"error": f"Nieznana akcja: '{action}'. Dostępne: 'list', 'create'."}
