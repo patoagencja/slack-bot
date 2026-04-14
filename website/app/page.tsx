@@ -51,14 +51,16 @@ const code = (s: string) => `<code style="font-family:monospace;font-size:11px;b
 const INFRA: CardData[] = [
   { status:"done", name:"Slack Bolt + Socket Mode", sub:"Real-time eventy, slash commands, Block Kit",
     detail:`Bot nasłuchuje eventów Slack przez Socket Mode — brak publicznego URL, działa za firewallem. Obsługuje slash commands, shortcuty, interactive components (przyciski, modals, select menus).<br/>${code("bot.py")} ${code("tools/slack_tools.py")}` },
-  { status:"done", name:"APScheduler (cron jobs)", sub:"Daily digest, budget alerts, standup, news",
-    detail:`Harmonogram zadań cyklicznych oparty na APScheduler. Strefa czasowa Europe/Warsaw. Każdy job ma własny plik w ${code("/jobs/")}.<br/>Aktywne joby: digest dzienny, alerty budżetowe (co godz. 7–22), standup, wiadomości branżowe, weekly report, check-in zespołu.` },
+  { status:"done", name:"APScheduler (cron jobs)", sub:"Daily digest, budget alerts, standup, news, email sync",
+    detail:`Harmonogram zadań cyklicznych oparty na APScheduler. Strefa czasowa Europe/Warsaw. Każdy job ma własny plik w ${code("/jobs/")}.<br/>Aktywne joby: digest dzienny, alerty budżetowe (co godz.), standup, wiadomości branżowe, weekly report, check-in zespołu, email→iCloud sync (co godz.).` },
   { status:"done", name:"Render.com deploy + CI/CD", sub:"GitHub Actions, auto-deploy na push",
     detail:`Deploy automatyczny przez GitHub Actions przy każdym pushu na ${code("main")}. Env vars w Render dashboard. Procfile uruchamia bota jako web process.` },
   { status:"done", name:"Conversation memory (SQLite)", sub:"FTS5 search + pełna historia per user",
     detail:`Każda wiadomość DM (user + bot) zapisywana do SQLite z FTS5. Dwa tryby: ${code("recall()")} — semantic search, ${code("get_history()")} — pełna historia do Claude messages[]. Memory backfill z historii Slack.` },
   { status:"done", name:"Token cost tracking", sub:"SQLite · koszty w PLN · /koszty w Slacku",
     detail:`Każde wywołanie Anthropic API logowane do ${code("data/token_usage.db")} — model, tokeny in/out/cache, koszt USD i PLN. Komenda ${code("/koszty [dni]")} wyświetla raport w Slacku.` },
+  { status:"done", name:"Parallel tool use", sub:"Claude może wywoływać wiele narzędzi naraz",
+    detail:`Pętla tool-use w DM handlerze obsługuje wszystkie ${code("tool_use")} bloki z jednej odpowiedzi Claude — naprawiony błąd 400 gdy model wywoływał 4 narzędzia jednocześnie.` },
   { status:"gap", name:"Observability / Error logs", sub:"Brak centralnego trackingu błędów API",
     detail:"Błędy lądują w logach Render ale nikt ich nie monitoruje. Brak alertu gdy bot się wywali lub API przestanie odpowiadać." },
 ];
@@ -70,10 +72,10 @@ const INTEGRATIONS: CardData[] = [
     detail:"Integracja przez google-ads-python-client. Raporty przez GAQL. Campaign creation wizard (Block Kit). Czytelne komunikaty błędów z GoogleAdsException." },
   { status:"wip", name:"GA4 / Google Analytics", sub:"Plik istnieje, były problemy z estymacją",
     detail:`Plik ${code("tools/google_analytics.py")} istnieje i integruje GA4 Data API. Ostatni fix: zakaz estymacji z Meta gdy GA4 nie działa + lepsze logowanie błędów.` },
-  { status:"done", name:"Google Slides API", sub:"Tworzenie prezentacji przez Sebol",
-    detail:`Sebol może tworzyć prezentacje Google Slides bezpośrednio z Slacka. Env vars: ${code("GOOGLE_SLIDES_CLIENT_ID")} / ${code("SECRET")}.` },
-  { status:"done", name:"iCloud Calendar", sub:"Odczyt kalendarza, generowanie iCal",
-    detail:"Integracja przez CalDAV. Generowanie poprawnych plików iCal (z DTSTAMP). Używane do sprawdzania dostępności i planowania spotkań." },
+  { status:"done", name:"PPTX Generator (python-pptx)", sub:"Prezentacje jako plik .pptx uploadowane na Slack",
+    detail:`Sebol generuje prezentacje .pptx bez zewnętrznych OAuth. Claude Opus pisze strukturę JSON → python-pptx renderuje slajdy z brandingiem. Upload do Slacka przez ${code("files_upload_v2")}, fallback na transfer.sh. Zastąpił Google Slides (zepsute OAuth).` },
+  { status:"done", name:"iCloud Calendar (CalDAV)", sub:"Odczyt i tworzenie wydarzeń, RRULE, auto-sync z emaila",
+    detail:`Integracja przez CalDAV + vobject. Tworzenie wydarzeń cyklicznych przez RRULE (daily, weekly, biweekly, monthly, weekdays). Auto-sync: Sebol co godzinę skanuje skrzynkę email, wyciąga załączniki .ics i dodaje nowe zaproszenia do iCloud — bez żadnej akcji użytkownika.` },
   { status:"nice", name:"TikTok Ads API", sub:"Agencja prowadzi też TikTok Ads",
     detail:"Pato prowadzi kampanie TikTok Ads ale Sebol jeszcze ich nie monitoruje. TikTok Business API wymaga osobnej aplikacji w TikTok for Business portal. Priorytet: niski." },
 ];
@@ -103,6 +105,10 @@ const MODULES: CardData[] = [
     detail:`Automatyczne streszczenia emaili dostarczone przez DM. Integracja przez ${code("conversations_open")}.` },
   { status:"done", name:"Client onboarding", sub:"Checklisty dla nowych klientów",
     detail:"Checklisty onboardingowe dla nowych klientów agencji. Automatycznie wysyłane przy dodaniu nowego konta." },
+  { status:"done", name:"LinkedIn Ghostwriter", sub:"/linkedin · 3 hooki · pełny post · grafika DALL-E",
+    detail:`Slash command ${code("/linkedin <temat>")}. Claude Opus pisze 3 warianty hooka → user wybiera → pełny post → podgląd promptu do grafiki → zatwierdzenie → gpt-image-1 generuje obraz. Research przez web_search (trendy, wiralne posty). Dostęp tylko dla właściciela.` },
+  { status:"done", name:"Email → iCloud auto-sync", sub:"Co godzinę · .ics z maila · powiadomienie Slack",
+    detail:`APScheduler job co godzinę: skanuje INBOX (ostatnie 2 doby), wyciąga załączniki .ics, parsuje przez vobject, pomija już zsynchronizowane (${code("data/synced_invites.json")}), tworzy przez CalDAV i wysyła powiadomienie DM z listą dodanych wydarzeń.` },
   { status:"wip", name:"Strategy recommendations", sub:"Weekly learnings, sugestie strategii",
     detail:"Weekly learnings działają (podział na Meta/Google per kampania). Sebol sugeruje eksperymenty w daily digest. Brakuje zamknięcia pętli — wynik eksperymentu nie wraca automatycznie do bazy wiedzy." },
   { status:"gap", name:"A/B test tracker", sub:"Sebol nie mierzy wyników swoich sugestii",
@@ -113,8 +119,8 @@ const MODULES: CardData[] = [
     detail:"Analiza performance kreacji reklamowych. Claude Vision do analizy co jest na kreacji + korelacja z wynikami. Pozwoli Sebolowi rekomendować styl kreacji per klient." },
   { status:"nice", name:"Audience insights", sub:"Segmentacja, lookalike, rekomendacje",
     detail:"Analiza audience'ów Meta: które grupy konwertują, sugestie lookalike, wykrywanie audience overlap. Wymaga minimum 3 miesięcy historii." },
-  { status:"nice", name:"Proactive client reports", sub:"PDF/Slides raport na żądanie lub auto",
-    detail:`Google Slides API już jest (${code("tools/google_slides.py")}). Brakuje szablonu raportu klientowego + komendy ${code("/raport klient_nazwa")} która generuje i wysyła link do Slides.` },
+  { status:"nice", name:"Proactive client reports", sub:".pptx raport na żądanie lub auto",
+    detail:`Prezentacje .pptx już działają (${code("tools/pptx_presentation.py")}). Brakuje szablonu raportu klientowego + cyklu automatycznego (tygodniowy raport jako .pptx wysyłany do klienta).` },
 ];
 
 function AnimatedNum({ target, duration = 1200 }: { target: number; duration?: number }) {
@@ -252,10 +258,10 @@ export default function Page() {
           {/* Stats */}
           <div style={{ display:"flex", gap:24, flexWrap:"wrap", background:"var(--bg2)", border:"1px solid var(--border)", borderRadius:10, padding:"18px 24px", marginBottom:36 }}>
             {([
-              [14, "Wdrożone",        "var(--green)"],
+              [18, "Wdrożone",        "var(--green)"],
               [3,  "W trakcie / WIP", "var(--amber)"],
-              [4,  "Brakuje",         "var(--red)"],
-              [19, "Planowane",       "var(--blue)"],
+              [3,  "Brakuje",         "var(--red)"],
+              [4,  "Planowane",       "var(--blue)"],
             ] as [number, string, string][]).map(([n, label, color]) => (
               <div key={label} style={{ display:"flex", flexDirection:"column", gap:3 }}>
                 <div style={{ fontFamily:"var(--mono)", fontSize:22, fontWeight:500, lineHeight:1, color }}><AnimatedNum target={n} /></div>
@@ -263,7 +269,7 @@ export default function Page() {
               </div>
             ))}
             <div style={{ display:"flex", flexDirection:"column", gap:3, marginLeft:"auto" }}>
-              <div style={{ fontFamily:"var(--mono)", fontSize:22, fontWeight:500, lineHeight:1, color:"var(--text)" }}><AnimatedNum target={369} duration={2000} /></div>
+              <div style={{ fontFamily:"var(--mono)", fontSize:22, fontWeight:500, lineHeight:1, color:"var(--text)" }}><AnimatedNum target={165} duration={2000} /></div>
               <div style={{ fontSize:11, color:"var(--muted)" }}>commitów</div>
             </div>
           </div>
@@ -272,9 +278,9 @@ export default function Page() {
           <div style={{ marginBottom:36 }}>
             <div style={{ display:"flex", justifyContent:"space-between", fontSize:12, color:"var(--muted)", marginBottom:6 }}>
               <span>Ogólny postęp</span>
-              <span style={{ color:"var(--green)", fontFamily:"var(--mono)" }}>35%</span>
+              <span style={{ color:"var(--green)", fontFamily:"var(--mono)" }}>64%</span>
             </div>
-            <AnimatedBar pct={35} />
+            <AnimatedBar pct={64} />
           </div>
 
           {/* Legend */}
