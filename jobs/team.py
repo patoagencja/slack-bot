@@ -208,10 +208,11 @@ Jeśli brak konkretnych dat: {{"absent_person": null, "absence_entries": []}}"""
 
 def sync_availability_from_slack():
     """
-    Odczytuje historię DM z ostatnich 14 dni dla każdego członka teamu
+    Odczytuje historię DM z ostatnich 30 dni dla każdego członka teamu
     i rekonstruuje dane nieobecności. Wywoływane przy starcie i przed raportem.
     Poprawnie obsługuje wiadomości o nieobecności innej osoby (np. Danio pisze
     'Piotrka nie będzie' → zapisuje pod Piotrkiem, nie Danio).
+    Paginuje przez całą historię (nie limituje do 100 wiadomości).
     """
     cutoff_ts = str((datetime.now() - timedelta(days=30)).timestamp())
     synced_total = 0
@@ -219,10 +220,22 @@ def sync_availability_from_slack():
         try:
             dm = _ctx.app.client.conversations_open(users=member["slack_id"])
             channel_id = dm["channel"]["id"]
-            history = _ctx.app.client.conversations_history(
-                channel=channel_id, oldest=cutoff_ts, limit=100
-            )
-            for msg in history.get("messages", []):
+
+            # Paginate through ALL messages since cutoff (not just last 100)
+            all_msgs = []
+            cursor = None
+            while True:
+                kwargs = dict(channel=channel_id, oldest=cutoff_ts, limit=200)
+                if cursor:
+                    kwargs["cursor"] = cursor
+                page = _ctx.app.client.conversations_history(**kwargs)
+                all_msgs.extend(page.get("messages", []))
+                meta = page.get("response_metadata", {})
+                cursor = meta.get("next_cursor")
+                if not cursor:
+                    break
+
+            for msg in all_msgs:
                 if msg.get("bot_id") or msg.get("subtype"):
                     continue
                 text = msg.get("text", "").strip()
