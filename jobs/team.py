@@ -1,6 +1,7 @@
 """Team availability + employee request system + unified DM handler."""
 import os
 import json
+import sqlite3
 import logging
 import re as _re
 from datetime import datetime, timedelta
@@ -37,27 +38,55 @@ def get_team_context_str():
     return "\n".join(f"  - {m['name']} ({m['role']})" for m in TEAM_MEMBERS)
 
 
-# ── AVAILABILITY FILE HELPERS ─────────────────────────────────────────────────
+# ── AVAILABILITY — SQLite storage (persistent across deploys) ─────────────────
+
+_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "memory.db")
+
+
+def _db():
+    return sqlite3.connect(_DB_PATH)
+
+
+def _init_availability_table():
+    try:
+        os.makedirs(os.path.dirname(_DB_PATH), exist_ok=True)
+        with _db() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS team_availability (
+                    user_id     TEXT NOT NULL,
+                    user_name   TEXT NOT NULL,
+                    date        TEXT NOT NULL,
+                    type        TEXT NOT NULL DEFAULT 'absent',
+                    details     TEXT NOT NULL DEFAULT '',
+                    recorded_at TEXT NOT NULL,
+                    PRIMARY KEY (user_id, date)
+                )
+            """)
+    except Exception as e:
+        logger.error("_init_availability_table: %s", e)
+
+
+_init_availability_table()
+
 
 def _load_availability():
     try:
-        if os.path.exists(AVAILABILITY_FILE):
-            with open(AVAILABILITY_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return []
+        cutoff = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')
+        with _db() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM team_availability WHERE date >= ? ORDER BY date",
+                (cutoff,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error("_load_availability: %s", e)
+        return []
 
 
 def _save_availability(entries):
-    try:
-        os.makedirs(os.path.dirname(AVAILABILITY_FILE), exist_ok=True)
-        cutoff  = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')
-        entries = [e for e in entries if e.get("date", "2000-01-01") >= cutoff]
-        with open(AVAILABILITY_FILE, "w", encoding="utf-8") as f:
-            json.dump(entries, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        logger.error(f"❌ Błąd zapisu availability: {e}")
+    """Unused — kept for compatibility. SQLite is updated in-place via save_availability_entry."""
+    pass
 
 
 def _parse_availability_with_claude(user_message, user_name):
@@ -116,44 +145,63 @@ Jeśli brak konkretnych dat (tylko ogólna info bez terminu): {{"is_availability
 
 
 def save_availability_entry(user_id, user_name, entries):
-    """Zapisuje wpisy nieobecności (nadpisuje jeśli już był wpis na ten dzień)."""
-    all_entries = _load_availability()
+    """Zapisuje wpisy nieobecności (UPSERT — nadpisuje jeśli już był wpis na ten dzień)."""
     saved_dates = []
-    for entry in entries:
-        all_entries = [e for e in all_entries
-                       if not (e["user_id"] == user_id and e["date"] == entry["date"])]
-        all_entries.append({
-            "user_id":     user_id,
-            "user_name":   user_name,
-            "date":        entry["date"],
-            "type":        entry["type"],
-            "details":     entry.get("details", ""),
-            "recorded_at": datetime.now().isoformat(),
-        })
-        saved_dates.append(entry["date"])
-    _save_availability(all_entries)
+    now = datetime.now().isoformat()
+    try:
+        with _db() as conn:
+            for entry in entries:
+                conn.execute(
+                    """INSERT INTO team_availability
+                       (user_id, user_name, date, type, details, recorded_at)
+                       VALUES (?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(user_id, date) DO UPDATE SET
+                           user_name=excluded.user_name,
+                           type=excluded.type,
+                           details=excluded.details,
+                           recorded_at=excluded.recorded_at""",
+                    (user_id, user_name, entry["date"],
+                     entry.get("type", "absent"), entry.get("details", ""), now)
+                )
+                saved_dates.append(entry["date"])
+    except Exception as e:
+        logger.error("save_availability_entry: %s", e)
     return saved_dates
 
 
 def get_availability_for_date(target_date):
     """Zwraca listę nieobecności na dany dzień."""
-    return [e for e in _load_availability() if e.get("date") == target_date]
+    try:
+        with _db() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM team_availability WHERE date = ?", (target_date,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error("get_availability_for_date: %s", e)
+        return []
 
 
 def remove_availability_entries(user_id: str, date_from: str = None, date_to: str = None):
     """Usuwa wpisy nieobecności dla użytkownika. Jeśli brak dat → usuwa wszystkie przyszłe."""
-    all_entries = _load_availability()
     today = datetime.now().strftime('%Y-%m-%d')
-    before = len(all_entries)
-    if date_from and date_to:
-        all_entries = [e for e in all_entries
-                       if not (e["user_id"] == user_id and date_from <= e["date"] <= date_to)]
-    else:
-        all_entries = [e for e in all_entries
-                       if not (e["user_id"] == user_id and e["date"] >= today)]
-    removed = before - len(all_entries)
-    _save_availability(all_entries)
-    return removed
+    try:
+        with _db() as conn:
+            if date_from and date_to:
+                cur = conn.execute(
+                    "DELETE FROM team_availability WHERE user_id=? AND date BETWEEN ? AND ?",
+                    (user_id, date_from, date_to)
+                )
+            else:
+                cur = conn.execute(
+                    "DELETE FROM team_availability WHERE user_id=? AND date >= ?",
+                    (user_id, today)
+                )
+        return cur.rowcount
+    except Exception as e:
+        logger.error("remove_availability_entries: %s", e)
+        return 0
 
 
 def _classify_absence_message(text: str, reporter_name: str, msg_date: str = None):
@@ -206,81 +254,105 @@ Jeśli brak konkretnych dat: {{"absent_person": null, "absence_entries": []}}"""
     return None
 
 
+def _get_sync_cursor() -> str | None:
+    """Zwraca timestamp ostatniego synca (jako slack oldest param)."""
+    try:
+        with _db() as conn:
+            row = conn.execute(
+                "SELECT value FROM kv_store WHERE key='availability_sync_ts'"
+            ).fetchone()
+            return row[0] if row else None
+    except Exception:
+        return None
+
+
+def _set_sync_cursor(ts: str):
+    try:
+        with _db() as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO kv_store (key, value) VALUES ('availability_sync_ts', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (ts,)
+            )
+    except Exception as e:
+        logger.warning("_set_sync_cursor: %s", e)
+
+
 def sync_availability_from_slack():
     """
-    Odczytuje historię DM z ostatnich 30 dni dla każdego członka teamu
-    i rekonstruuje dane nieobecności. Wywoływane przy starcie i przed raportem.
-    Poprawnie obsługuje wiadomości o nieobecności innej osoby (np. Danio pisze
-    'Piotrka nie będzie' → zapisuje pod Piotrkiem, nie Danio).
-    Paginuje przez całą historię (nie limituje do 100 wiadomości).
+    Inkrementalny sync: pobiera tylko wiadomości nowsze niż ostatni sync.
+    Przy pierwszym uruchomieniu (pusta DB) cofa się o 60 dni.
+    Dane zapisywane w SQLite — przeżywają restarty i deploje.
     """
-    cutoff_ts = str((datetime.now() - timedelta(days=30)).timestamp())
+    last_ts = _get_sync_cursor()
+    if last_ts:
+        oldest_ts = last_ts
+        logger.info("sync_availability: incremental from ts=%s", last_ts)
+    else:
+        oldest_ts = str((datetime.now() - timedelta(days=60)).timestamp())
+        logger.info("sync_availability: first run, backfill 60 days")
+
+    newest_ts_seen = oldest_ts
     synced_total = 0
+
     for member in TEAM_MEMBERS:
         try:
             dm = _ctx.app.client.conversations_open(users=member["slack_id"])
             channel_id = dm["channel"]["id"]
 
-            # Paginate through ALL messages since cutoff (not just last 100)
-            all_msgs = []
             cursor = None
             while True:
-                kwargs = dict(channel=channel_id, oldest=cutoff_ts, limit=200)
+                kwargs = dict(channel=channel_id, oldest=oldest_ts, limit=200)
                 if cursor:
                     kwargs["cursor"] = cursor
                 page = _ctx.app.client.conversations_history(**kwargs)
-                all_msgs.extend(page.get("messages", []))
+                msgs = page.get("messages", [])
+
+                for msg in msgs:
+                    if msg.get("bot_id") or msg.get("subtype"):
+                        continue
+                    text = msg.get("text", "").strip()
+                    if len(text) < 8:
+                        continue
+                    if not any(kw in text.lower() for kw in ABSENCE_KEYWORDS):
+                        continue
+
+                    msg_ts   = msg.get("ts", "0")
+                    msg_date = datetime.fromtimestamp(float(msg_ts)).strftime('%Y-%m-%d')
+                    if msg_ts > newest_ts_seen:
+                        newest_ts_seen = msg_ts
+
+                    classified = _classify_absence_message(text, member["name"], msg_date=msg_date)
+                    if not classified:
+                        continue
+                    entries = classified.get("absence_entries", [])
+                    if not entries:
+                        continue
+
+                    absent_person = (classified.get("absent_person") or "").strip() or None
+                    if absent_person:
+                        target = find_team_member(absent_person)
+                        if target:
+                            save_availability_entry(target["slack_id"], target["name"], entries)
+                            synced_total += len(entries)
+                    else:
+                        save_availability_entry(member["slack_id"], member["name"], entries)
+                        synced_total += len(entries)
+
                 meta = page.get("response_metadata", {})
                 cursor = meta.get("next_cursor")
                 if not cursor:
                     break
 
-            for msg in all_msgs:
-                if msg.get("bot_id") or msg.get("subtype"):
-                    continue
-                text = msg.get("text", "").strip()
-                if len(text) < 8:
-                    continue
-                if not any(kw in text.lower() for kw in ABSENCE_KEYWORDS):
-                    continue
-
-                # Użyj daty wiadomości jako kontekstu, żeby relative daty ("jutro") były poprawne
-                msg_ts   = msg.get("ts")
-                msg_date = datetime.fromtimestamp(float(msg_ts)).strftime('%Y-%m-%d') if msg_ts else None
-                classified = _classify_absence_message(text, member["name"], msg_date=msg_date)
-                if not classified:
-                    continue
-                entries = classified.get("absence_entries", [])
-                if not entries:
-                    continue
-
-                absent_person = (classified.get("absent_person") or "").strip() or None
-                if absent_person:
-                    # Nieobecność dotyczy kogoś innego — znajdź właściwą osobę
-                    target = find_team_member(absent_person)
-                    if target:
-                        save_availability_entry(target["slack_id"], target["name"], entries)
-                        synced_total += len(entries)
-                        logger.info(
-                            f"sync: saved {len(entries)} entries for {target['name']}"
-                            f" (reported by {member['name']}): {text[:80]!r}"
-                        )
-                    else:
-                        logger.info(
-                            f"sync: unknown absent_person={absent_person!r}"
-                            f" in msg from {member['name']}: {text[:80]!r}"
-                        )
-                else:
-                    save_availability_entry(member["slack_id"], member["name"], entries)
-                    synced_total += len(entries)
-                    logger.info(
-                        f"sync: saved {len(entries)} entries for {member['name']}"
-                        f" from msg: {text[:80]!r}"
-                    )
         except Exception as e:
             logger.warning(f"sync_availability_from_slack [{member['name']}]: {e}")
+
+    _set_sync_cursor(newest_ts_seen)
     if synced_total:
-        logger.info(f"🔄 Synced {synced_total} absence entries from Slack history")
+        logger.info(f"🔄 sync_availability: saved {synced_total} entries")
 
 
 def _next_workday(from_date=None):
