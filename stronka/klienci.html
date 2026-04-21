@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8" />
+<title>Klienci — Patoagencja</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&family=Inter+Tight:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; padding: 0; background: #FAFAF7; }
+  body { font-family: 'Inter Tight', -apple-system, BlinkMacSystemFont, system-ui, sans-serif; -webkit-font-smoothing: antialiased; color: #0A0A0A; }
+  #root { font-feature-settings: "ss01", "cv11"; }
+  h1, h2, h3 { font-weight: 700; }
+  em, i, [style*="italic"] { font-family: 'Instrument Serif', Georgia, serif !important; font-style: italic; font-weight: 400 !important; }
+  ::-webkit-scrollbar { width: 10px; } ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 5px; }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const A_COLORS = {
+  bg: '#FAFAF7', ink: '#0A0A0A', ink70: '#3A3A3A', ink40: '#8A8A86',
+  hair: '#E6E3DA', accent: '#2626E0', accentSoft: '#F0B8C4', accentInk: '#FFFFFF', paper: '#FFFFFF',
+};
+
+const A_Section = ({ children, style, id, tight }) => (
+  <section id={id} style={{ padding: tight ? '72px 56px' : '120px 56px', borderTop: `1px solid ${A_COLORS.hair}`, ...style }}>
+    {children}
+  </section>
+);
+
+function A_Nav({ scrolled }) {
+  return (
+    <header style={{
+      position: 'sticky', top: 0, zIndex: 50,
+      padding: scrolled ? '14px 56px' : '22px 56px',
+      background: 'rgba(250,250,247,0.95)', backdropFilter: 'blur(16px)',
+      borderBottom: `1px solid ${A_COLORS.hair}`,
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      transition: 'all .25s ease',
+    }}>
+      <a href="index.html" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }}>
+        <img src="assets/patoagencja-wordmark-ink.png" alt="patoagencja" style={{ height: 22, display: 'block' }} />
+      </a>
+      <nav style={{ display: 'flex', gap: 40, fontSize: 14, fontWeight: 500 }}>
+        {[['O nas','o-nas.html'],['Usługi','uslugi.html'],['Klienci','klienci.html'],['Kursy','kursy.html'],['Kontakt','kontakt.html']].map(([l,href]) => (
+          <a key={l} href={href} style={{ color: l === 'Klienci' ? A_COLORS.accent : A_COLORS.ink, textDecoration: 'none', position: 'relative' }}
+             onMouseEnter={e => e.currentTarget.querySelector('span').style.width = '100%'}
+             onMouseLeave={e => e.currentTarget.querySelector('span').style.width = l === 'Klienci' ? '100%' : '0%'}>
+            {l}
+            <span style={{ position: 'absolute', left: 0, bottom: -4, height: 1, width: l === 'Klienci' ? '100%' : '0%', background: A_COLORS.accent, transition: 'width .2s' }} />
+          </a>
+        ))}
+      </nav>
+      <a href="kontakt.html" style={{ background: A_COLORS.ink, color: '#fff', padding: '10px 18px', fontSize: 13, fontWeight: 600, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 8, borderRadius: 2, transition: 'background .15s' }}
+        onMouseEnter={e => e.currentTarget.style.background = A_COLORS.accent}
+        onMouseLeave={e => e.currentTarget.style.background = A_COLORS.ink}>
+        Umów rozmowę
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 6h6M7 3l3 3-3 3"/></svg>
+      </a>
+    </header>
+  );
+}
+
+function A_CTA() {
+  const [form, setForm] = React.useState({ name: '', email: '', budget: '', msg: '' });
+  const [errors, setErrors] = React.useState({});
+  const [sent, setSent] = React.useState(false);
+  const validate = () => {
+    const e = {};
+    if (!form.name.trim()) e.name = 'Podaj imię.';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) e.email = 'Nieprawidłowy email.';
+    if (!form.msg.trim() || form.msg.length < 10) e.msg = 'Napisz przynajmniej zdanie.';
+    setErrors(e); return Object.keys(e).length === 0;
+  };
+  const submit = (ev) => { ev.preventDefault(); if (validate()) setSent(true); };
+  const update = (k, v) => { setForm({ ...form, [k]: v }); if (errors[k]) setErrors({ ...errors, [k]: null }); };
+  return (
+    <A_Section id="kontakt" style={{ background: A_COLORS.accent, color: '#fff', borderTop: 'none' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, fontFamily: '"JetBrains Mono", monospace', fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.7)', marginBottom: 40 }}>
+        <span>§</span><span>Umów rozmowę</span>
+        <span style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.25)', transform: 'translateY(-3px)' }} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: 80, alignItems: 'start' }}>
+        <div>
+          <h2 style={{ fontSize: 'clamp(52px, 6.4vw, 104px)', fontWeight: 700, letterSpacing: '-0.04em', lineHeight: 0.94, margin: '0 0 40px' }}>
+            Gadamy 30 minut.<br /><span style={{ fontStyle: 'italic', fontWeight: 500 }}>Bez zobowiązań,</span><br />bez prezentacji.
+          </h2>
+          <p style={{ fontSize: 19, lineHeight: 1.5, color: 'rgba(255,255,255,0.9)', maxWidth: 480, margin: '0 0 48px', textWrap: 'pretty' }}>
+            Powiedz co próbujesz osiągnąć i z czym masz problem. Jeśli umiemy pomóc — powiemy jak. Jeśli nie — też powiemy.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, borderTop: '1px solid rgba(255,255,255,0.3)', paddingTop: 32 }}>
+            <div>
+              <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.1em', opacity: 0.7, marginBottom: 8 }}>Email</div>
+              <a href="mailto:hej@patoagencja.com" style={{ fontSize: 18, color: '#fff', textDecoration: 'none', borderBottom: '1px solid rgba(255,255,255,0.5)' }}>hej@patoagencja.com</a>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.1em', opacity: 0.7, marginBottom: 8 }}>Odpowiedź</div>
+              <div style={{ fontSize: 18 }}>Do 24h roboczych</div>
+            </div>
+          </div>
+        </div>
+        {!sent ? (
+          <form onSubmit={submit} style={{ background: '#fff', color: A_COLORS.ink, padding: 36, borderRadius: 2 }}>
+            {[{ k: 'name', label: 'Imię i firma', ph: 'Anna Kowalska, Belveo' }, { k: 'email', label: 'Email', ph: 'anna@belveo.com', type: 'email' }].map(({ k, label, ph, type }) => (
+              <div key={k} style={{ marginBottom: 22 }}>
+                <label style={{ display: 'block', fontSize: 11, fontFamily: '"JetBrains Mono", monospace', textTransform: 'uppercase', letterSpacing: '0.1em', color: A_COLORS.ink70, marginBottom: 8 }}>{label}</label>
+                <input type={type || 'text'} value={form[k]} onChange={e => update(k, e.target.value)} placeholder={ph}
+                  style={{ width: '100%', padding: '12px 0', border: 'none', borderBottom: `1px solid ${errors[k] ? '#D93838' : A_COLORS.hair}`, background: 'transparent', fontSize: 17, outline: 'none', fontFamily: 'inherit', color: A_COLORS.ink, boxSizing: 'border-box' }} />
+                {errors[k] && <div style={{ fontSize: 12, color: '#D93838', marginTop: 6 }}>{errors[k]}</div>}
+              </div>
+            ))}
+            <div style={{ marginBottom: 22 }}>
+              <label style={{ display: 'block', fontSize: 11, fontFamily: '"JetBrains Mono", monospace', textTransform: 'uppercase', letterSpacing: '0.1em', color: A_COLORS.ink70, marginBottom: 12 }}>Budżet miesięczny</label>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {['< 10k', '10–30k', '30–80k', '80k+'].map(b => (
+                  <button key={b} type="button" onClick={() => update('budget', b)} style={{ padding: '8px 16px', fontSize: 13, fontWeight: 500, cursor: 'pointer', border: `1px solid ${form.budget === b ? A_COLORS.ink : A_COLORS.hair}`, background: form.budget === b ? A_COLORS.ink : '#fff', color: form.budget === b ? '#fff' : A_COLORS.ink, borderRadius: 2 }}>{b}</button>
+                ))}
+              </div>
+            </div>
+            <div style={{ marginBottom: 28 }}>
+              <label style={{ display: 'block', fontSize: 11, fontFamily: '"JetBrains Mono", monospace', textTransform: 'uppercase', letterSpacing: '0.1em', color: A_COLORS.ink70, marginBottom: 8 }}>Z czym możemy pomóc</label>
+              <textarea value={form.msg} onChange={e => update('msg', e.target.value)} placeholder="Krótko — co próbujesz osiągnąć i gdzie utknąłeś/aś." rows={4}
+                style={{ width: '100%', padding: '12px 0', border: 'none', borderBottom: `1px solid ${errors.msg ? '#D93838' : A_COLORS.hair}`, background: 'transparent', fontSize: 17, outline: 'none', fontFamily: 'inherit', color: A_COLORS.ink, resize: 'vertical', boxSizing: 'border-box' }} />
+              {errors.msg && <div style={{ fontSize: 12, color: '#D93838', marginTop: 6 }}>{errors.msg}</div>}
+            </div>
+            <button type="submit" style={{ width: '100%', padding: '18px', fontSize: 15, fontWeight: 600, cursor: 'pointer', background: A_COLORS.ink, color: '#fff', border: 'none', borderRadius: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, transition: 'background .15s' }}
+              onMouseEnter={e => e.currentTarget.style.background = A_COLORS.accent}
+              onMouseLeave={e => e.currentTarget.style.background = A_COLORS.ink}>
+              Wyślij i umów rozmowę
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 8h10M9 3l5 5-5 5"/></svg>
+            </button>
+          </form>
+        ) : (
+          <div style={{ background: '#fff', color: A_COLORS.ink, padding: 48, borderRadius: 2, textAlign: 'center' }}>
+            <div style={{ fontSize: 44, marginBottom: 16 }}>✓</div>
+            <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 12 }}>Mamy twoje zgłoszenie.</div>
+            <p style={{ fontSize: 15, color: A_COLORS.ink70, margin: 0 }}>Odezwiemy się maksymalnie w 24h roboczych.</p>
+          </div>
+        )}
+      </div>
+    </A_Section>
+  );
+}
+
+function A_Footer() {
+  return (
+    <footer style={{ padding: '56px 56px 40px', background: A_COLORS.ink, color: '#fff' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 1fr', gap: 40, marginBottom: 80 }}>
+        <div>
+          <img src="assets/patoagencja-wordmark-white.png" alt="patoagencja" style={{ height: 24, display: 'block', marginBottom: 20 }} />
+          <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.6)', lineHeight: 1.55, maxWidth: 360, margin: 0 }}>Mały zespół od performance marketingu, SEO, stron i AI. Warszawa, zdalnie dla reszty świata.</p>
+        </div>
+        {[
+          ['Usługi', [['Performance','uslugi.html'],['SEO','uslugi.html'],['Strony','uslugi.html'],['AI i automatyzacje','uslugi.html'],['Strategia','uslugi.html']]],
+          ['Firma', [['O nas','o-nas.html'],['Case studies','klienci.html'],['Kursy','kursy.html'],['Blog','#'],['Kontakt','kontakt.html']]],
+          ['Kontakt', [['hej@patoagencja.com','mailto:hej@patoagencja.com'],['+48 500 000 000','tel:+48500000000'],['Warszawa, PL','#'],['@patoagencja','#']]],
+        ].map(([t, items]) => (
+          <div key={t}>
+            <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'rgba(255,255,255,0.4)', marginBottom: 20 }}>{t}</div>
+            {items.map(([label, href]) => (
+              <div key={label} style={{ fontSize: 14, padding: '5px 0' }}>
+                <a href={href} style={{ color: 'rgba(255,255,255,0.85)', textDecoration: 'none' }}
+                   onMouseEnter={e => e.currentTarget.style.color = '#fff'}
+                   onMouseLeave={e => e.currentTarget.style.color = 'rgba(255,255,255,0.85)'}>{label}</a>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      <div style={{ borderTop: '1px solid rgba(255,255,255,0.12)', paddingTop: 24, display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'rgba(255,255,255,0.5)', fontFamily: '"JetBrains Mono", monospace' }}>
+        <span>© 2026 Patoagencja sp. z o.o.</span>
+        <span>Zrobione bez AI. Żartowaliśmy — z AI.</span>
+      </div>
+    </footer>
+  );
+}
+
+// ─── KLIENCI ───────────────────────────────────
+function A_KlienciContent() {
+  const cases = [
+    { c: 'BELVEO', cat: 'D2C Skincare', year: '2025', tint: '#E8EDF7', ink: '#0A0A0A',
+      head: 'Z 40k do 220k PLN/mies. przy utrzymaniu ROAS 4.8x.',
+      copy: 'Po audycie konta Meta odbudowaliśmy strukturę kampanii i przeszliśmy z ręcznego targetowania na Advantage+. ROAS utrzymany przez 9 miesięcy systematycznej optymalizacji.',
+      metrics: [['ROAS', '4.8x'], ['Przychód', '+412%'], ['Okres', '9 mies.']] },
+    { c: 'NORDSTAR', cat: 'B2B SaaS', year: '2024', tint: '#0A0A0A', ink: '#fff',
+      head: 'CAC −37% po rebudowie kont Meta i Google.',
+      copy: 'Konsolidacja kont, re-segmentacja intent + brand, testy kreatywów wideo pod Search Ads. Zespół sprzedaży zyskał 2.1x więcej wartościowych MQL-i.',
+      metrics: [['CAC', '−37%'], ['MQL/mies.', '2.1x'], ['Okres', '6 mies.']] },
+    { c: 'KRAFT/Co', cat: 'E-commerce spożywczy', year: '2025', tint: '#F0B8C4', ink: '#0A0A0A',
+      head: '42 frazy produktowe w top 3 Google w 11 mies.',
+      copy: 'Audyt techniczny, przebudowa architektury kategorii, 80+ treści blogowych i systematyczny link building w branży premium food.',
+      metrics: [['Ruch org.', '+286%'], ['Top 3', '42 fraz'], ['Okres', '11 mies.']] },
+  ];
+
+  return (
+    <div style={{ background: A_COLORS.bg }}>
+      {/* Index hero */}
+      <section style={{ padding: '100px 56px 60px', borderBottom: `1px solid ${A_COLORS.hair}` }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'end', gap: 40 }}>
+          <div>
+            <div style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 12, color: A_COLORS.ink40, letterSpacing: '0.12em', marginBottom: 24 }}>→ KLIENCI / LOOKBOOK</div>
+            <h1 style={{ fontSize: 'clamp(56px, 7vw, 120px)', fontWeight: 700, letterSpacing: '-0.045em', lineHeight: 0.9, margin: 0, maxWidth: 1400 }}>
+              Pracujemy z firmami, które traktują<br />marketing <em style={{ fontWeight: 500, color: A_COLORS.accent }}>poważnie.</em>
+            </h1>
+          </div>
+          <div style={{ textAlign: 'right', fontFamily: '"JetBrains Mono", monospace' }}>
+            <div style={{ fontSize: 80, fontWeight: 700, letterSpacing: '-0.04em', color: A_COLORS.accent, lineHeight: 1 }}>40+</div>
+            <div style={{ fontSize: 12, color: A_COLORS.ink40, letterSpacing: '0.1em', marginTop: 8 }}>MAREK B2C &amp; B2B</div>
+          </div>
+        </div>
+
+        {/* Index table */}
+        <div style={{ marginTop: 80, borderTop: `1px solid ${A_COLORS.ink}` }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '80px 2fr 2fr 1fr 1fr 60px', padding: '16px 0', fontFamily: '"JetBrains Mono", monospace', fontSize: 11, letterSpacing: '0.1em', color: A_COLORS.ink40, borderBottom: `1px solid ${A_COLORS.hair}` }}>
+            <span>№</span><span>KLIENT</span><span>BRANŻA</span><span>USŁUGA</span><span>ROK</span><span></span>
+          </div>
+          {[
+            ['01', 'BELVEO', 'D2C Skincare', 'Meta Ads', '2025'],
+            ['02', 'NORDSTAR', 'B2B SaaS', 'Meta + Google', '2024'],
+            ['03', 'KRAFT/Co', 'Food e-commerce', 'SEO + content', '2025'],
+            ['04', 'Mint&Oak', 'Gastronomia', 'Meta Ads', '2025'],
+            ['05', 'Orbital', 'Fintech', 'Google Ads', '2024'],
+            ['06', 'Hygge', 'Home decor', 'TikTok Ads', '2025'],
+          ].map((row, i) => (
+            <div key={i} style={{ display: 'grid', gridTemplateColumns: '80px 2fr 2fr 1fr 1fr 60px', padding: '20px 0', borderBottom: `1px solid ${A_COLORS.hair}`, fontSize: 16, alignItems: 'center', cursor: 'pointer', transition: 'all .2s' }}
+              onMouseEnter={e => { e.currentTarget.style.background = A_COLORS.ink; e.currentTarget.style.color = '#fff'; e.currentTarget.style.paddingLeft = '16px'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = A_COLORS.ink; e.currentTarget.style.paddingLeft = '0'; }}>
+              <span style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 12 }}>{row[0]}</span>
+              <span style={{ fontWeight: 700, letterSpacing: '-0.01em' }}>{row[1]}</span>
+              <span style={{ opacity: 0.7 }}>{row[2]}</span>
+              <span style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 13 }}>{row[3]}</span>
+              <span style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 13 }}>{row[4]}</span>
+              <span style={{ textAlign: 'right' }}>→</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Full-bleed case studies */}
+      {cases.map((cs, i) => (
+        <section key={i} style={{ background: cs.tint, color: cs.ink, padding: '120px 56px', minHeight: '90vh', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 80, alignItems: 'center', position: 'relative' }}>
+          <div style={{ position: 'absolute', top: 40, left: 56, fontFamily: '"JetBrains Mono", monospace', fontSize: 11, letterSpacing: '0.15em', opacity: 0.5 }}>CASE STUDY {String(i+1).padStart(2,'0')} / 0{cases.length}</div>
+          <div style={{ position: 'absolute', top: 40, right: 56, fontFamily: '"JetBrains Mono", monospace', fontSize: 11, letterSpacing: '0.15em', opacity: 0.5 }}>{cs.cat.toUpperCase()} · {cs.year}</div>
+          <div>
+            <div style={{ fontSize: 80, fontWeight: 700, letterSpacing: '-0.045em', lineHeight: 0.9, marginBottom: 40 }}>{cs.c}</div>
+            <h2 style={{ fontSize: 'clamp(32px, 3.6vw, 52px)', fontWeight: 700, letterSpacing: '-0.025em', lineHeight: 1.08, margin: '0 0 32px', textWrap: 'balance' }}>{cs.head}</h2>
+            <p style={{ fontSize: 17, lineHeight: 1.55, opacity: 0.75, margin: 0, maxWidth: 560, textWrap: 'pretty' }}>{cs.copy}</p>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 32, borderTop: `1px solid ${cs.ink === '#fff' ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)'}`, paddingTop: 40 }}>
+            {cs.metrics.map(([k, v]) => (
+              <div key={k}>
+                <div style={{ fontSize: 72, fontWeight: 700, letterSpacing: '-0.04em', lineHeight: 0.9 }}>{v}</div>
+                <div style={{ fontSize: 11, fontFamily: '"JetBrains Mono", monospace', letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.6, marginTop: 12 }}>{k}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ))}
+
+      {/* Współpraca */}
+      <section style={{ padding: '100px 56px', background: A_COLORS.bg, borderTop: `1px solid ${A_COLORS.hair}` }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 80 }}>
+          <div>
+            <div style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 12, color: A_COLORS.accent, letterSpacing: '0.12em', marginBottom: 20 }}>→ WSPÓŁPRACA</div>
+            <h2 style={{ fontSize: 48, fontWeight: 700, letterSpacing: '-0.03em', lineHeight: 1, margin: 0 }}>Regularny kontakt.<br /><em style={{ fontWeight: 500, color: A_COLORS.accent }}>Zero zgadywania.</em></h2>
+          </div>
+          <div>
+            <p style={{ fontSize: 18, color: A_COLORS.ink70, lineHeight: 1.55, margin: '0 0 40px', textWrap: 'pretty' }}>
+              Masz stały dostęp do wyników kampanii. Regularnie dostajesz raporty z wnioskami — nie tylko tabelki z liczbami. Jeśli coś idzie nie tak, dowiadujesz się od nas — nie z własnego panelu reklamowego trzy dni później.
+            </p>
+            {[
+              ['Stały opiekun', 'Jeden punkt kontaktu, który zna twoje konto'],
+              ['Cykliczne raporty', 'Tygodniowe lub miesięczne, z wnioskami i rekomendacjami'],
+              ['Szybka reakcja', 'Jeśli coś idzie nie tak — dowiadujesz się od nas'],
+            ].map(([t, d], i) => (
+              <div key={i} style={{ padding: '20px 0', borderTop: `1px solid ${A_COLORS.hair}`, display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 24 }}>
+                <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: '-0.015em' }}>{t}</div>
+                <div style={{ fontSize: 15, color: A_COLORS.ink70, lineHeight: 1.5 }}>{d}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function Page() {
+  const [scrolled, setScrolled] = React.useState(false);
+  React.useEffect(() => {
+    const h = () => setScrolled(window.scrollY > 40);
+    window.addEventListener('scroll', h); return () => window.removeEventListener('scroll', h);
+  }, []);
+  return (<><A_Nav scrolled={scrolled} /><A_KlienciContent /><A_CTA /><A_Footer /></>);
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<Page />);
+</script>
+</body>
+</html>
