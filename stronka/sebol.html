@@ -27,46 +27,102 @@ const A_COLORS = {
   hair: '#E6E3DA', accent: '#2626E0', accentSoft: '#F0B8C4', paper: '#FFFFFF',
 };
 
+// ─── MOBILE HOOK + CONTEXT ────────────────────
+const MobileCtx = React.createContext(false);
+function useMobile() {
+  const [m, setM] = React.useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
+  React.useEffect(() => {
+    const h = () => setM(window.innerWidth < 768);
+    window.addEventListener('resize', h);
+    return () => window.removeEventListener('resize', h);
+  }, []);
+  return m;
+}
+
 const NAV_LINKS = [
   ['O nas','o-nas.html'],['Usługi','uslugi.html'],['Klienci','klienci.html'],
   ['Kursy','kursy.html'],['Sebol','sebol.html'],['Kontakt','kontakt.html'],
 ];
 
-function A_Nav({ scrolled }) {
+function A_Nav({ scrolled, activePage }) {
+  const isMobile = React.useContext(MobileCtx);
+  const [menuOpen, setMenuOpen] = React.useState(false);
   return (
-    <header style={{
-      position: 'sticky', top: 0, zIndex: 50,
-      padding: scrolled ? '14px 56px' : '22px 56px',
-      background: 'rgba(250,250,247,0.95)', backdropFilter: 'blur(16px)',
-      borderBottom: `1px solid ${A_COLORS.hair}`,
-      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      transition: 'all .25s ease',
-    }}>
-      <a href="index.html" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }}>
-        <img src="assets/patoagencja-wordmark-ink.png" alt="patoagencja" style={{ height: 22, display: 'block' }} />
-      </a>
-      <nav style={{ display: 'flex', gap: 40, fontSize: 14, fontWeight: 500 }}>
-        {NAV_LINKS.map(([l, href]) => (
-          <a key={l} href={href} style={{ color: l === 'Sebol' ? A_COLORS.accent : A_COLORS.ink, textDecoration: 'none', position: 'relative' }}
-             onMouseEnter={e => e.currentTarget.querySelector('span').style.width = '100%'}
-             onMouseLeave={e => e.currentTarget.querySelector('span').style.width = l === 'Sebol' ? '100%' : '0%'}>
-            {l}
-            <span style={{ position: 'absolute', left: 0, bottom: -4, height: 1, width: l === 'Sebol' ? '100%' : '0%', background: A_COLORS.accent, transition: 'width .2s' }} />
-          </a>
-        ))}
-      </nav>
-      <a href="kontakt.html" style={{ background: A_COLORS.ink, color: '#fff', padding: '10px 18px', fontSize: 13, fontWeight: 600, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 8, borderRadius: 2, transition: 'background .15s' }}
-        onMouseEnter={e => e.currentTarget.style.background = A_COLORS.accent}
-        onMouseLeave={e => e.currentTarget.style.background = A_COLORS.ink}>
-        Umów rozmowę
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 6h6M7 3l3 3-3 3"/></svg>
-      </a>
-    </header>
+    <>
+      <header style={{
+        position: 'sticky', top: 0, zIndex: 50,
+        padding: isMobile ? (scrolled ? '12px 20px' : '18px 20px') : (scrolled ? '14px 56px' : '22px 56px'),
+        background: 'rgba(250,250,247,0.95)', backdropFilter: 'blur(16px)',
+        borderBottom: `1px solid ${A_COLORS.hair}`,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        transition: 'all .25s ease',
+      }}>
+        <a href="index.html" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }}>
+          <img src="assets/patoagencja-wordmark-ink.png" alt="patoagencja" style={{ height: 20, display: 'block' }} />
+        </a>
+        {isMobile ? (
+          <button onClick={() => setMenuOpen(o => !o)} style={{
+            background: 'none', border: 'none', cursor: 'pointer', padding: 8,
+            display: 'flex', flexDirection: 'column', gap: 5, alignItems: 'center',
+          }}>
+            <span style={{ display: 'block', width: 22, height: 2, background: A_COLORS.ink, transition: 'all .2s', transform: menuOpen ? 'rotate(45deg) translate(5px, 5px)' : 'none' }} />
+            <span style={{ display: 'block', width: 22, height: 2, background: A_COLORS.ink, transition: 'all .2s', opacity: menuOpen ? 0 : 1 }} />
+            <span style={{ display: 'block', width: 22, height: 2, background: A_COLORS.ink, transition: 'all .2s', transform: menuOpen ? 'rotate(-45deg) translate(5px, -5px)' : 'none' }} />
+          </button>
+        ) : (
+          <>
+            <nav style={{ display: 'flex', gap: 40, fontSize: 14, fontWeight: 500 }}>
+              {NAV_LINKS.map(([l, href]) => {
+                const isActive = activePage === l;
+                return (
+                  <a key={l} href={href} style={{ color: isActive ? A_COLORS.accent : A_COLORS.ink, textDecoration: 'none', position: 'relative' }}
+                    onMouseEnter={e => { if (!isActive) e.currentTarget.querySelector('span').style.width = '100%'; }}
+                    onMouseLeave={e => { if (!isActive) e.currentTarget.querySelector('span').style.width = '0%'; }}>
+                    {l}
+                    <span style={{ position: 'absolute', left: 0, bottom: -4, height: 1, width: isActive ? '100%' : '0%', background: A_COLORS.accent, transition: 'width .2s' }} />
+                  </a>
+                );
+              })}
+            </nav>
+            <a href="kontakt.html" style={{ background: A_COLORS.ink, color: '#fff', padding: '10px 18px', fontSize: 13, fontWeight: 600, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 8, borderRadius: 2, transition: 'background .15s' }}
+              onMouseEnter={e => e.currentTarget.style.background = A_COLORS.accent}
+              onMouseLeave={e => e.currentTarget.style.background = A_COLORS.ink}>
+              Umów rozmowę
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 6h6M7 3l3 3-3 3"/></svg>
+            </a>
+          </>
+        )}
+      </header>
+      {isMobile && menuOpen && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 49,
+          background: 'rgba(250,250,247,0.97)', backdropFilter: 'blur(16px)',
+          display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: 0,
+        }}>
+          {NAV_LINKS.map(([l, href]) => {
+            const isActive = activePage === l;
+            return (
+              <a key={l} href={href} onClick={() => setMenuOpen(false)} style={{
+                fontSize: 32, fontWeight: 700, letterSpacing: '-0.02em',
+                color: isActive ? A_COLORS.accent : A_COLORS.ink,
+                textDecoration: 'none', padding: '16px 0',
+                borderBottom: `1px solid ${A_COLORS.hair}`, width: '80%', textAlign: 'center',
+              }}>{l}</a>
+            );
+          })}
+          <a href="kontakt.html" onClick={() => setMenuOpen(false)} style={{
+            marginTop: 32, background: A_COLORS.ink, color: '#fff', padding: '16px 32px',
+            fontSize: 16, fontWeight: 600, textDecoration: 'none', borderRadius: 2,
+          }}>Umów rozmowę →</a>
+        </div>
+      )}
+    </>
   );
 }
 
 // ─── SEBOL HERO ────────────────────────────────
 function SebolHero() {
+  const isMobile = React.useContext(MobileCtx);
   const [tick, setTick] = React.useState(0);
   React.useEffect(() => { const t = setInterval(() => setTick(x => x+1), 2200); return () => clearInterval(t); }, []);
   const logs = [
@@ -80,8 +136,9 @@ function SebolHero() {
 
   return (
     <section style={{
-      display: 'grid', gridTemplateColumns: '1fr 1fr',
-      minHeight: '90vh', borderBottom: `1px solid ${A_COLORS.hair}`,
+      display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr',
+      minHeight: isMobile ? 'auto' : '90vh',
+      borderBottom: `1px solid ${A_COLORS.hair}`,
     }}>
       <style>{`
         @keyframes sb-blink { 50% { opacity: 0; } }
@@ -89,14 +146,14 @@ function SebolHero() {
       `}</style>
 
       {/* Left — copy */}
-      <div style={{ padding: '80px 56px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+      <div style={{ padding: isMobile ? '60px 20px 40px' : '80px 56px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: isMobile ? 40 : 0 }}>
         <div style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 12, color: A_COLORS.ink40, letterSpacing: '0.12em', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ width: 8, height: 8, borderRadius: 4, background: '#27c93f', display: 'inline-block', animation: 'sb-pulse 1.8s ease-in-out infinite' }} />
           Sebol · AI Agent · Live
         </div>
 
         <div>
-          <h1 style={{ fontSize: 'clamp(52px, 6.8vw, 112px)', fontWeight: 700, letterSpacing: '-0.045em', lineHeight: 0.92, margin: '0 0 40px', color: A_COLORS.ink }}>
+          <h1 style={{ fontSize: 'clamp(44px, 6.8vw, 112px)', fontWeight: 700, letterSpacing: '-0.045em', lineHeight: 0.92, margin: '0 0 40px', color: A_COLORS.ink }}>
             Twoje kampanie.<br />
             <em style={{ fontWeight: 500, color: A_COLORS.accent }}>Zarządzane</em><br />
             przez AI.
@@ -117,17 +174,17 @@ function SebolHero() {
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 0, borderTop: `1px solid ${A_COLORS.hair}`, paddingTop: 32 }}>
-          {[['Google Ads', 'Meta Ads', 'Slack'].map((t, i) => (
+          {['Google Ads', 'Meta Ads', 'Slack'].map((t, i) => (
             <div key={t} style={{ paddingRight: 24, borderRight: i < 2 ? `1px solid ${A_COLORS.hair}` : 'none', paddingLeft: i > 0 ? 24 : 0 }}>
               <div style={{ fontSize: 11, fontFamily: '"JetBrains Mono", monospace', color: A_COLORS.accent, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4 }}>Integracja</div>
               <div style={{ fontSize: 16, fontWeight: 600 }}>{t}</div>
             </div>
-          ))]}
+          ))}
         </div>
       </div>
 
       {/* Right — terminal */}
-      <div style={{ background: A_COLORS.ink, padding: '80px 56px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+      <div style={{ background: A_COLORS.ink, padding: isMobile ? '40px 20px' : '80px 56px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
         <div style={{
           background: '#111', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 4,
           fontFamily: '"JetBrains Mono", monospace', fontSize: 12.5, overflow: 'hidden',
@@ -141,7 +198,7 @@ function SebolHero() {
               <span style={{ width: 6, height: 6, borderRadius: 3, background: '#27c93f' }} />live
             </span>
           </div>
-          <div style={{ padding: 20, minHeight: 320 }}>
+          <div style={{ padding: 20, minHeight: isMobile ? 240 : 320 }}>
             <div style={{ color: 'rgba(255,255,255,0.35)', marginBottom: 20, fontSize: 11 }}>
               # Sebol — autonomiczny agent AI do performance marketingu
             </div>
@@ -175,15 +232,16 @@ function SebolHero() {
 
 // ─── PROBLEM ───────────────────────────────────
 function SebolProblem() {
+  const isMobile = React.useContext(MobileCtx);
   return (
-    <section style={{ padding: '120px 56px', borderBottom: `1px solid ${A_COLORS.hair}` }}>
+    <section style={{ padding: isMobile ? '60px 20px' : '120px 56px', borderBottom: `1px solid ${A_COLORS.hair}` }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, fontFamily: '"JetBrains Mono", monospace', fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase', color: A_COLORS.ink40, marginBottom: 80 }}>
         <span style={{ color: A_COLORS.accent, fontWeight: 600 }}>§01</span>
         <span>Problem</span>
         <span style={{ flex: 1, height: 1, background: A_COLORS.hair, transform: 'translateY(-3px)' }} />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 80, marginBottom: 80 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: isMobile ? 24 : 80, marginBottom: 80 }}>
         <h2 style={{ fontSize: 'clamp(44px, 5.4vw, 88px)', fontWeight: 700, letterSpacing: '-0.035em', lineHeight: 0.96, margin: 0, color: A_COLORS.ink }}>
           Twój budżet<br />reklamowy<br /><em style={{ fontWeight: 500, color: A_COLORS.accent }}>wycieka.</em>
         </h2>
@@ -193,13 +251,22 @@ function SebolProblem() {
         </p>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', borderTop: `1px solid ${A_COLORS.ink}` }}>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)',
+        borderTop: `1px solid ${A_COLORS.ink}`,
+      }}>
         {[
           { n: '01', t: 'Ręczne raporty', d: 'Analitycy tracą 3–5h tygodniowo na kopiowanie danych do Excela. AI robi to w 4 sekundy.' },
           { n: '02', t: 'Przepalony budżet', d: 'Niemonitorowane kampanie przepalają do 40% budżetu. Alerty przychodzą za późno.' },
           { n: '03', t: 'Brak kontekstu', d: 'Zapytanie klienta wymaga 20+ minut ręcznego przeklikiwania paneli i zbierania danych.' },
         ].map((p, i) => (
-          <div key={i} style={{ padding: '40px 32px 40px 0', borderRight: i < 2 ? `1px solid ${A_COLORS.hair}` : 'none', paddingLeft: i > 0 ? 32 : 0 }}>
+          <div key={i} style={{
+            padding: isMobile ? '32px 0' : '40px 32px 40px 0',
+            borderRight: !isMobile && i < 2 ? `1px solid ${A_COLORS.hair}` : 'none',
+            borderBottom: isMobile && i < 2 ? `1px solid ${A_COLORS.hair}` : 'none',
+            paddingLeft: !isMobile && i > 0 ? 32 : 0,
+          }}>
             <div style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 12, color: A_COLORS.accent, letterSpacing: '0.1em', marginBottom: 20 }}>{p.n}</div>
             <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.02em', marginBottom: 14, color: A_COLORS.ink }}>{p.t}</div>
             <p style={{ fontSize: 15, lineHeight: 1.55, color: A_COLORS.ink70, margin: 0, textWrap: 'pretty' }}>{p.d}</p>
@@ -212,8 +279,9 @@ function SebolProblem() {
 
 // ─── HOW IT WORKS ──────────────────────────────
 function SebolHow() {
+  const isMobile = React.useContext(MobileCtx);
   return (
-    <section style={{ padding: '120px 56px', background: A_COLORS.ink, color: '#fff' }}>
+    <section style={{ padding: isMobile ? '60px 20px' : '120px 56px', background: A_COLORS.ink, color: '#fff' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, fontFamily: '"JetBrains Mono", monospace', fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)', marginBottom: 80 }}>
         <span style={{ color: A_COLORS.accent, fontWeight: 600 }}>§02</span>
         <span>Jak to działa</span>
@@ -224,13 +292,23 @@ function SebolHow() {
         3 kroki do<br /><em style={{ fontWeight: 500, color: '#8FB4FF' }}>autonomicznego</em><br />marketingu.
       </h2>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', borderTop: '1px solid rgba(255,255,255,0.15)' }}>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)',
+        borderTop: '1px solid rgba(255,255,255,0.15)',
+      }}>
         {[
           { n: '01', t: 'Podłącz konta', d: 'Google Ads, Meta Ads i Slack w kilka minut. Sebol dostaje dostęp i od razu zaczyna zbierać dane.' },
           { n: '02', t: 'Monitor 24/7', d: 'Co godzinę sprawdza tempo wydawania, CTR, CPC i konwersje. Żadna anomalia nie umknie.' },
           { n: '03', t: 'Raport w Slacku', d: 'Codzienny digest, alerty w czasie rzeczywistym i rekomendacje — prosto na kanał zespołu.' },
         ].map((s, i) => (
-          <div key={i} style={{ padding: '40px 32px 40px 0', borderRight: i < 2 ? '1px solid rgba(255,255,255,0.15)' : 'none', paddingLeft: i > 0 ? 32 : 0, minHeight: 240 }}>
+          <div key={i} style={{
+            padding: isMobile ? '32px 0' : '40px 32px 40px 0',
+            borderRight: !isMobile && i < 2 ? '1px solid rgba(255,255,255,0.15)' : 'none',
+            borderBottom: isMobile && i < 2 ? '1px solid rgba(255,255,255,0.15)' : 'none',
+            paddingLeft: !isMobile && i > 0 ? 32 : 0,
+            minHeight: isMobile ? 'auto' : 240,
+          }}>
             <div style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 40, color: A_COLORS.accent, fontWeight: 700, lineHeight: 1, marginBottom: 24 }}>{s.n}</div>
             <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.02em', marginBottom: 14 }}>{s.t}</div>
             <p style={{ fontSize: 15, lineHeight: 1.55, color: 'rgba(255,255,255,0.6)', margin: 0, textWrap: 'pretty' }}>{s.d}</p>
@@ -243,6 +321,7 @@ function SebolHow() {
 
 // ─── FEATURES ──────────────────────────────────
 function SebolFeatures() {
+  const isMobile = React.useContext(MobileCtx);
   const features = [
     { t: 'Daily Digest', d: 'Automatyczny raport każdego ranka — wyniki kampanii, trendy, rekomendacje. Bez wchodzenia do żadnego panelu.', tag: 'Raportowanie' },
     { t: 'Budget Alerts', d: 'System pilnuje tempa wydawania budżetu co godzinę. Jeśli coś wybiega poza normę — Slack dostaje alert natychmiast.', tag: 'Alerty' },
@@ -253,14 +332,14 @@ function SebolFeatures() {
   ];
 
   return (
-    <section style={{ padding: '120px 56px', borderBottom: `1px solid ${A_COLORS.hair}` }}>
+    <section style={{ padding: isMobile ? '60px 20px' : '120px 56px', borderBottom: `1px solid ${A_COLORS.hair}` }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, fontFamily: '"JetBrains Mono", monospace', fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase', color: A_COLORS.ink40, marginBottom: 80 }}>
         <span style={{ color: A_COLORS.accent, fontWeight: 600 }}>§03</span>
         <span>Funkcje</span>
         <span style={{ flex: 1, height: 1, background: A_COLORS.hair, transform: 'translateY(-3px)' }} />
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: 80, gap: 40 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: 80, gap: 40, flexWrap: 'wrap' }}>
         <h2 style={{ fontSize: 'clamp(44px, 5.4vw, 88px)', fontWeight: 700, letterSpacing: '-0.035em', lineHeight: 0.96, margin: 0, color: A_COLORS.ink }}>
           Co robi<br />Sebol.
         </h2>
@@ -269,13 +348,17 @@ function SebolFeatures() {
         </p>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', borderTop: `1px solid ${A_COLORS.ink}` }}>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)',
+        borderTop: `1px solid ${A_COLORS.ink}`,
+      }}>
         {features.map((f, i) => (
           <div key={i} style={{
-            padding: '40px 32px 40px 0',
-            borderRight: (i % 3) < 2 ? `1px solid ${A_COLORS.hair}` : 'none',
-            borderBottom: i < 3 ? `1px solid ${A_COLORS.hair}` : 'none',
-            paddingLeft: (i % 3) > 0 ? 32 : 0,
+            padding: isMobile ? '32px 0' : '40px 32px 40px 0',
+            borderRight: !isMobile && (i % 3) < 2 ? `1px solid ${A_COLORS.hair}` : 'none',
+            borderBottom: isMobile ? (i < features.length - 1 ? `1px solid ${A_COLORS.hair}` : 'none') : (i < 3 ? `1px solid ${A_COLORS.hair}` : 'none'),
+            paddingLeft: !isMobile && (i % 3) > 0 ? 32 : 0,
           }}>
             <div style={{ fontSize: 11, fontFamily: '"JetBrains Mono", monospace', color: A_COLORS.accent, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 16 }}>{f.tag}</div>
             <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.02em', marginBottom: 12, color: A_COLORS.ink }}>{f.t}</div>
@@ -289,11 +372,12 @@ function SebolFeatures() {
 
 // ─── TESTIMONIAL ───────────────────────────────
 function SebolTestimonial() {
+  const isMobile = React.useContext(MobileCtx);
   return (
-    <section style={{ padding: '120px 56px', background: A_COLORS.accent, color: '#fff' }}>
+    <section style={{ padding: isMobile ? '72px 20px' : '120px 56px', background: A_COLORS.accent, color: '#fff' }}>
       <div style={{ maxWidth: 960, margin: '0 auto', textAlign: 'center' }}>
         <div style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 12, letterSpacing: '0.15em', opacity: 0.7, marginBottom: 48 }}>§04 · OPINIA ZESPOŁU</div>
-        <p style={{ fontSize: 'clamp(28px, 3.8vw, 52px)', fontWeight: 500, lineHeight: 1.15, letterSpacing: '-0.025em', margin: '0 0 48px', textWrap: 'balance' }}>
+        <p style={{ fontSize: 'clamp(22px, 3.8vw, 52px)', fontWeight: 500, lineHeight: 1.15, letterSpacing: '-0.025em', margin: '0 0 48px', textWrap: 'balance' }}>
           „Zamiast spędzać rano na sprawdzaniu paneli, sprawdzam Slacka —
           gdzie Sebol ma <em style={{ color: A_COLORS.accentSoft, fontWeight: 500 }}>gotowe raporty</em>
           i flaguje to, co wymaga uwagi."
@@ -308,12 +392,13 @@ function SebolTestimonial() {
 
 // ─── CTA / DEMO ────────────────────────────────
 function SebolCTA() {
+  const isMobile = React.useContext(MobileCtx);
   const [sent, setSent] = React.useState(false);
   const [email, setEmail] = React.useState('');
 
   return (
-    <section style={{ padding: '120px 56px', borderTop: `1px solid ${A_COLORS.hair}` }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 80, alignItems: 'center' }}>
+    <section style={{ padding: isMobile ? '60px 20px' : '120px 56px', borderTop: `1px solid ${A_COLORS.hair}` }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: isMobile ? 40 : 80, alignItems: 'center' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, fontFamily: '"JetBrains Mono", monospace', fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase', color: A_COLORS.ink40, marginBottom: 40 }}>
             <span style={{ color: A_COLORS.accent, fontWeight: 600 }}>§05</span>
@@ -327,7 +412,7 @@ function SebolCTA() {
             30-minutowe demo na żywych danych. Podłączamy Sebola do twoich kont —
             i pokazujemy co zobaczyłby w ciągu pierwszej godziny pracy.
           </p>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, borderTop: `1px solid ${A_COLORS.hair}`, paddingTop: 32 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 24, borderTop: `1px solid ${A_COLORS.hair}`, paddingTop: 32 }}>
             <div>
               <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.1em', color: A_COLORS.ink40, marginBottom: 8, fontFamily: '"JetBrains Mono", monospace' }}>Email</div>
               <a href="mailto:hej@patoagencja.com" style={{ fontSize: 16, color: A_COLORS.ink, textDecoration: 'none', borderBottom: `1px solid ${A_COLORS.hair}` }}>hej@patoagencja.com</a>
@@ -368,9 +453,10 @@ function SebolCTA() {
 
 // ─── FOOTER ────────────────────────────────────
 function A_Footer() {
+  const isMobile = React.useContext(MobileCtx);
   return (
-    <footer style={{ padding: '56px 56px 40px', background: A_COLORS.ink, color: '#fff' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 1fr', gap: 40, marginBottom: 80 }}>
+    <footer style={{ padding: isMobile ? '48px 20px 32px' : '56px 56px 40px', background: A_COLORS.ink, color: '#fff' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.5fr 1fr 1fr 1fr', gap: 40, marginBottom: 80 }}>
         <div>
           <img src="assets/patoagencja-wordmark-white.png" alt="patoagencja" style={{ height: 24, display: 'block', marginBottom: 20 }} />
           <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.6)', lineHeight: 1.55, maxWidth: 360, margin: 0 }}>Mały zespół od performance marketingu, SEO, stron i AI. Warszawa, zdalnie dla reszty świata.</p>
@@ -392,7 +478,7 @@ function A_Footer() {
           </div>
         ))}
       </div>
-      <div style={{ borderTop: '1px solid rgba(255,255,255,0.12)', paddingTop: 24, display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'rgba(255,255,255,0.5)', fontFamily: '"JetBrains Mono", monospace' }}>
+      <div style={{ borderTop: '1px solid rgba(255,255,255,0.12)', paddingTop: 24, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, fontSize: 12, color: 'rgba(255,255,255,0.5)', fontFamily: '"JetBrains Mono", monospace' }}>
         <span>© 2026 Patoagencja sp. z o.o.</span>
         <span>Zrobione bez AI. Żartowaliśmy — z AI.</span>
       </div>
@@ -401,21 +487,24 @@ function A_Footer() {
 }
 
 function Page() {
+  const isMobile = useMobile();
   const [scrolled, setScrolled] = React.useState(false);
   React.useEffect(() => {
     const h = () => setScrolled(window.scrollY > 40);
     window.addEventListener('scroll', h); return () => window.removeEventListener('scroll', h);
   }, []);
-  return (<>
-    <A_Nav scrolled={scrolled} />
-    <SebolHero />
-    <SebolProblem />
-    <SebolHow />
-    <SebolFeatures />
-    <SebolTestimonial />
-    <SebolCTA />
-    <A_Footer />
-  </>);
+  return (
+    <MobileCtx.Provider value={isMobile}>
+      <A_Nav scrolled={scrolled} activePage="Sebol" />
+      <SebolHero />
+      <SebolProblem />
+      <SebolHow />
+      <SebolFeatures />
+      <SebolTestimonial />
+      <SebolCTA />
+      <A_Footer />
+    </MobileCtx.Provider>
+  );
 }
 ReactDOM.createRoot(document.getElementById('root')).render(<Page />);
 </script>

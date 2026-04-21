@@ -27,50 +27,129 @@ const A_COLORS = {
   hair: '#E6E3DA', accent: '#2626E0', accentSoft: '#F0B8C4', accentInk: '#FFFFFF', paper: '#FFFFFF',
 };
 
-const A_Section = ({ children, style, id, tight }) => (
-  <section id={id} style={{ padding: tight ? '72px 56px' : '120px 56px', borderTop: `1px solid ${A_COLORS.hair}`, ...style }}>
-    {children}
-  </section>
-);
+// ─── MOBILE HOOK + CONTEXT ────────────────────
+const MobileCtx = React.createContext(false);
+function useMobile() {
+  const [m, setM] = React.useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
+  React.useEffect(() => {
+    const h = () => setM(window.innerWidth < 768);
+    window.addEventListener('resize', h);
+    return () => window.removeEventListener('resize', h);
+  }, []);
+  return m;
+}
 
-function A_Nav({ scrolled }) {
+const A_Section = ({ children, style, id, tight }) => {
+  const isMobile = React.useContext(MobileCtx);
   return (
-    <header style={{
-      position: 'sticky', top: 0, zIndex: 50,
-      padding: scrolled ? '14px 56px' : '22px 56px',
-      background: scrolled ? 'rgba(250,250,247,0.85)' : 'rgba(250,250,247,0.95)',
-      backdropFilter: 'blur(16px)',
-      borderBottom: `1px solid ${A_COLORS.hair}`,
-      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      transition: 'all .25s ease',
+    <section id={id} style={{
+      padding: isMobile ? (tight ? '48px 20px' : '72px 20px') : (tight ? '72px 56px' : '120px 56px'),
+      borderTop: `1px solid ${A_COLORS.hair}`,
+      ...style,
     }}>
-      <a href="index.html" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }}>
-        <img src="assets/patoagencja-wordmark-ink.png" alt="patoagencja" style={{ height: 22, display: 'block' }} />
-      </a>
-      <nav style={{ display: 'flex', gap: 40, fontSize: 14, fontWeight: 500 }}>
-        {[['O nas','o-nas.html'],['Usługi','uslugi.html'],['Klienci','klienci.html'],['Kursy','kursy.html'],['Sebol','sebol.html'],['Kontakt','kontakt.html']].map(([l,href]) => (
-          <a key={l} href={href} style={{ color: l === 'O nas' ? A_COLORS.accent : A_COLORS.ink, textDecoration: 'none', position: 'relative' }}
-             onMouseEnter={e => e.currentTarget.querySelector('span').style.width = '100%'}
-             onMouseLeave={e => e.currentTarget.querySelector('span').style.width = l === 'O nas' ? '100%' : '0%'}>
-            {l}
-            <span style={{ position: 'absolute', left: 0, bottom: -4, height: 1, width: l === 'O nas' ? '100%' : '0%', background: A_COLORS.accent, transition: 'width .2s' }} />
-          </a>
-        ))}
-      </nav>
-      <a href="kontakt.html" style={{
-        background: A_COLORS.ink, color: '#fff', padding: '10px 18px', fontSize: 13, fontWeight: 600,
-        textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 8, borderRadius: 2, transition: 'background .15s',
-      }}
-      onMouseEnter={e => e.currentTarget.style.background = A_COLORS.accent}
-      onMouseLeave={e => e.currentTarget.style.background = A_COLORS.ink}>
-        Umów rozmowę
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 6h6M7 3l3 3-3 3"/></svg>
-      </a>
-    </header>
+      {children}
+    </section>
+  );
+};
+
+const A_Eyebrow = ({ num, children }) => {
+  const isMobile = React.useContext(MobileCtx);
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'baseline', gap: 16,
+      fontFamily: '"JetBrains Mono", monospace', fontSize: 12, letterSpacing: '0.12em',
+      textTransform: 'uppercase', color: A_COLORS.ink70, marginBottom: isMobile ? 24 : 40,
+    }}>
+      <span style={{ color: A_COLORS.accent, fontWeight: 600 }}>{num}</span>
+      <span style={{ flex: '0 0 auto' }}>{children}</span>
+      <span style={{ flex: 1, height: 1, background: A_COLORS.hair, transform: 'translateY(-3px)' }} />
+    </div>
+  );
+};
+
+function A_Nav({ scrolled, activePage }) {
+  const isMobile = React.useContext(MobileCtx);
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const NAV = [['O nas','o-nas.html'],['Usługi','uslugi.html'],['Klienci','klienci.html'],['Kursy','kursy.html'],['Sebol','sebol.html'],['Kontakt','kontakt.html']];
+  return (
+    <>
+      <header style={{
+        position: 'sticky', top: 0, zIndex: 50,
+        padding: isMobile ? (scrolled ? '12px 20px' : '18px 20px') : (scrolled ? '14px 56px' : '22px 56px'),
+        background: scrolled || menuOpen ? 'rgba(250,250,247,0.95)' : 'rgba(250,250,247,0.95)',
+        backdropFilter: 'blur(16px)',
+        borderBottom: `1px solid ${A_COLORS.hair}`,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        transition: 'all .25s ease',
+      }}>
+        <a href="index.html" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }}>
+          <img src="assets/patoagencja-wordmark-ink.png" alt="patoagencja" style={{ height: 20, display: 'block' }} />
+        </a>
+        {isMobile ? (
+          <button onClick={() => setMenuOpen(o => !o)} style={{
+            background: 'none', border: 'none', cursor: 'pointer', padding: 8,
+            display: 'flex', flexDirection: 'column', gap: 5, alignItems: 'center',
+          }}>
+            <span style={{ display: 'block', width: 22, height: 2, background: A_COLORS.ink, transition: 'all .2s', transform: menuOpen ? 'rotate(45deg) translate(5px, 5px)' : 'none' }} />
+            <span style={{ display: 'block', width: 22, height: 2, background: A_COLORS.ink, transition: 'all .2s', opacity: menuOpen ? 0 : 1 }} />
+            <span style={{ display: 'block', width: 22, height: 2, background: A_COLORS.ink, transition: 'all .2s', transform: menuOpen ? 'rotate(-45deg) translate(5px, -5px)' : 'none' }} />
+          </button>
+        ) : (
+          <>
+            <nav style={{ display: 'flex', gap: 40, fontSize: 14, fontWeight: 500 }}>
+              {NAV.map(([l, href]) => {
+                const isActive = activePage === l;
+                return (
+                  <a key={l} href={href} style={{ color: isActive ? A_COLORS.accent : A_COLORS.ink, textDecoration: 'none', position: 'relative' }}
+                    onMouseEnter={e => { if (!isActive) e.currentTarget.querySelector('span').style.width = '100%'; }}
+                    onMouseLeave={e => { if (!isActive) e.currentTarget.querySelector('span').style.width = '0%'; }}>
+                    {l}
+                    <span style={{ position: 'absolute', left: 0, bottom: -4, height: 1, width: isActive ? '100%' : '0%', background: A_COLORS.accent, transition: 'width .2s' }} />
+                  </a>
+                );
+              })}
+            </nav>
+            <a href="kontakt.html" style={{
+              background: A_COLORS.ink, color: '#fff', padding: '10px 18px', fontSize: 13, fontWeight: 600,
+              textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 8, borderRadius: 2, transition: 'background .15s',
+            }}
+            onMouseEnter={e => e.currentTarget.style.background = A_COLORS.accent}
+            onMouseLeave={e => e.currentTarget.style.background = A_COLORS.ink}>
+              Umów rozmowę
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 6h6M7 3l3 3-3 3"/></svg>
+            </a>
+          </>
+        )}
+      </header>
+      {isMobile && menuOpen && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 49,
+          background: 'rgba(250,250,247,0.97)', backdropFilter: 'blur(16px)',
+          display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: 0,
+        }}>
+          {NAV.map(([l, href]) => {
+            const isActive = activePage === l;
+            return (
+              <a key={l} href={href} onClick={() => setMenuOpen(false)} style={{
+                fontSize: 32, fontWeight: 700, letterSpacing: '-0.02em',
+                color: isActive ? A_COLORS.accent : A_COLORS.ink,
+                textDecoration: 'none', padding: '16px 0',
+                borderBottom: `1px solid ${A_COLORS.hair}`, width: '80%', textAlign: 'center',
+              }}>{l}</a>
+            );
+          })}
+          <a href="kontakt.html" onClick={() => setMenuOpen(false)} style={{
+            marginTop: 32, background: A_COLORS.ink, color: '#fff', padding: '16px 32px',
+            fontSize: 16, fontWeight: 600, textDecoration: 'none', borderRadius: 2,
+          }}>Umów rozmowę →</a>
+        </div>
+      )}
+    </>
   );
 }
 
 function A_CTA() {
+  const isMobile = React.useContext(MobileCtx);
   const [form, setForm] = React.useState({ name: '', email: '', budget: '', msg: '' });
   const [errors, setErrors] = React.useState({});
   const [sent, setSent] = React.useState(false);
@@ -89,7 +168,7 @@ function A_CTA() {
         <span>§06</span><span>Umów rozmowę</span>
         <span style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.25)', transform: 'translateY(-3px)' }} />
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: 80, alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.1fr 1fr', gap: isMobile ? 40 : 80, alignItems: 'start' }}>
         <div>
           <h2 style={{ fontSize: 'clamp(52px, 6.4vw, 104px)', fontWeight: 700, letterSpacing: '-0.04em', lineHeight: 0.94, margin: '0 0 40px' }}>
             Gadamy 30 minut.<br /><span style={{ fontStyle: 'italic', fontWeight: 500 }}>Bez zobowiązań,</span><br />bez prezentacji.
@@ -97,7 +176,7 @@ function A_CTA() {
           <p style={{ fontSize: 19, lineHeight: 1.5, color: 'rgba(255,255,255,0.9)', maxWidth: 480, margin: '0 0 48px', textWrap: 'pretty' }}>
             Powiedz co próbujesz osiągnąć i z czym masz problem. Jeśli umiemy pomóc — powiemy jak. Jeśli nie — też powiemy.
           </p>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, borderTop: '1px solid rgba(255,255,255,0.3)', paddingTop: 32 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 24, borderTop: '1px solid rgba(255,255,255,0.3)', paddingTop: 32 }}>
             <div>
               <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.1em', opacity: 0.7, marginBottom: 8 }}>Email</div>
               <a href="mailto:hej@patoagencja.com" style={{ fontSize: 18, color: '#fff', textDecoration: 'none', borderBottom: '1px solid rgba(255,255,255,0.5)' }}>hej@patoagencja.com</a>
@@ -152,9 +231,10 @@ function A_CTA() {
 }
 
 function A_Footer() {
+  const isMobile = React.useContext(MobileCtx);
   return (
-    <footer style={{ padding: '56px 56px 40px', background: A_COLORS.ink, color: '#fff' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 1fr', gap: 40, marginBottom: 80 }}>
+    <footer style={{ padding: isMobile ? '48px 20px 32px' : '56px 56px 40px', background: A_COLORS.ink, color: '#fff' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.5fr 1fr 1fr 1fr', gap: 40, marginBottom: 80 }}>
         <div>
           <img src="assets/patoagencja-wordmark-white.png" alt="patoagencja" style={{ height: 24, display: 'block', marginBottom: 20 }} />
           <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.6)', lineHeight: 1.55, maxWidth: 360, margin: 0 }}>Mały zespół od performance marketingu, SEO, stron i AI. Warszawa, zdalnie dla reszty świata.</p>
@@ -176,7 +256,7 @@ function A_Footer() {
           </div>
         ))}
       </div>
-      <div style={{ borderTop: '1px solid rgba(255,255,255,0.12)', paddingTop: 24, display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'rgba(255,255,255,0.5)', fontFamily: '"JetBrains Mono", monospace' }}>
+      <div style={{ borderTop: '1px solid rgba(255,255,255,0.12)', paddingTop: 24, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, fontSize: 12, color: 'rgba(255,255,255,0.5)', fontFamily: '"JetBrains Mono", monospace' }}>
         <span>© 2026 Patoagencja sp. z o.o.</span>
         <span>Zrobione bez AI. Żartowaliśmy — z AI.</span>
       </div>
@@ -186,6 +266,7 @@ function A_Footer() {
 
 // ─── O NAS ─────────────────────────────────────
 function A_OnasContent() {
+  const isMobile = React.useContext(MobileCtx);
   const team = [
     { n: 'Kuba', r: 'Performance Lead' },
     { n: 'Marta', r: 'SEO & Content' },
@@ -196,13 +277,18 @@ function A_OnasContent() {
   return (
     <div style={{ background: A_COLORS.bg }}>
       {/* Hero — manifest */}
-      <section style={{ padding: '120px 56px 80px', minHeight: '85vh', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', borderBottom: `1px solid ${A_COLORS.hair}` }}>
-        <div style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase', color: A_COLORS.ink40, display: 'flex', justifyContent: 'space-between' }}>
+      <section style={{
+        padding: isMobile ? '80px 20px 48px' : '120px 56px 80px',
+        minHeight: isMobile ? 'auto' : '85vh',
+        display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+        borderBottom: `1px solid ${A_COLORS.hair}`,
+      }}>
+        <div style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase', color: A_COLORS.ink40, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
           <span>→ O nas / Manifest</span>
           <span>Warszawa · 2026</span>
         </div>
-        <div>
-          <p style={{ fontSize: 'clamp(36px, 4.4vw, 72px)', lineHeight: 1.08, letterSpacing: '-0.03em', fontWeight: 500, color: A_COLORS.ink, margin: 0, maxWidth: 1300, textWrap: 'balance' }}>
+        <div style={{ marginTop: isMobile ? 48 : 0, marginBottom: isMobile ? 48 : 0 }}>
+          <p style={{ fontSize: 'clamp(28px, 4.4vw, 72px)', lineHeight: 1.08, letterSpacing: '-0.03em', fontWeight: 500, color: A_COLORS.ink, margin: 0, maxWidth: 1300, textWrap: 'balance' }}>
             Jesteśmy <em style={{ color: A_COLORS.accent }}>agencją, która robi robotę</em> — kampanie, strony, SEO, content i automatyzacje.
             Bez zbędnego teatru, bez korporacyjnego bełkotu i <em>bez raportów, które nic nie mówią.</em>
           </p>
@@ -211,7 +297,7 @@ function A_OnasContent() {
       </section>
 
       {/* 5 pryncypiów */}
-      <section style={{ padding: '100px 56px', background: A_COLORS.ink, color: '#fff' }}>
+      <section style={{ padding: isMobile ? '60px 20px' : '100px 56px', background: A_COLORS.ink, color: '#fff' }}>
         <div style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 12, color: A_COLORS.accentSoft, letterSpacing: '0.12em', marginBottom: 60 }}>5 RZECZY, W KTÓRE WIERZYMY</div>
         {[
           { n: '01', t: 'Mówimy jak jest', d: 'Nawet jeśli nie jest dobrze. Szczególnie wtedy.' },
@@ -220,23 +306,31 @@ function A_OnasContent() {
           { n: '04', t: 'Nie jesteśmy dla każdego', d: 'Celowo. Bierzemy tylko klientów, którym umiemy pomóc.' },
           { n: '05', t: 'AI jako narzędzie', d: 'Nie slogan. Używamy, bo skraca czas i obniża koszty.' },
         ].map((p, i) => (
-          <div key={i} style={{ display: 'grid', gridTemplateColumns: '200px 1fr 1fr', gap: 40, padding: '40px 0', borderTop: '1px solid rgba(255,255,255,0.15)', alignItems: 'baseline' }}>
-            <div style={{ fontSize: 80, fontWeight: 700, letterSpacing: '-0.04em', color: A_COLORS.accent, fontVariantNumeric: 'tabular-nums', lineHeight: 0.9 }}>{p.n}</div>
-            <div style={{ fontSize: 36, fontWeight: 700, letterSpacing: '-0.025em', lineHeight: 1.05 }}>{p.t}</div>
-            <div style={{ fontSize: 17, color: 'rgba(255,255,255,0.6)', lineHeight: 1.5, textWrap: 'pretty' }}>{p.d}</div>
+          <div key={i} style={{
+            display: 'grid',
+            gridTemplateColumns: isMobile ? '60px 1fr' : '200px 1fr 1fr',
+            gap: isMobile ? 16 : 40,
+            padding: '40px 0', borderTop: '1px solid rgba(255,255,255,0.15)', alignItems: 'baseline',
+          }}>
+            <div style={{ fontSize: isMobile ? 48 : 80, fontWeight: 700, letterSpacing: '-0.04em', color: A_COLORS.accent, fontVariantNumeric: 'tabular-nums', lineHeight: 0.9 }}>{p.n}</div>
+            <div>
+              <div style={{ fontSize: isMobile ? 24 : 36, fontWeight: 700, letterSpacing: '-0.025em', lineHeight: 1.05 }}>{p.t}</div>
+              {isMobile && <div style={{ fontSize: 15, color: 'rgba(255,255,255,0.6)', lineHeight: 1.5, marginTop: 8 }}>{p.d}</div>}
+            </div>
+            {!isMobile && <div style={{ fontSize: 17, color: 'rgba(255,255,255,0.6)', lineHeight: 1.5, textWrap: 'pretty' }}>{p.d}</div>}
           </div>
         ))}
       </section>
 
       {/* Zespół */}
-      <section style={{ padding: '100px 56px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: 60 }}>
-          <h2 style={{ fontSize: 'clamp(48px, 6vw, 96px)', fontWeight: 700, letterSpacing: '-0.04em', lineHeight: 0.95, margin: 0 }}>
+      <section style={{ padding: isMobile ? '60px 20px' : '100px 56px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: 60, flexWrap: 'wrap', gap: 16 }}>
+          <h2 style={{ fontSize: 'clamp(40px, 6vw, 96px)', fontWeight: 700, letterSpacing: '-0.04em', lineHeight: 0.95, margin: 0 }}>
             Pięciu ludzi.<br /><em style={{ fontWeight: 500, color: A_COLORS.accent }}>Pełna odpowiedzialność.</em>
           </h2>
           <div style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 12, color: A_COLORS.ink40 }}>05 · 05</div>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(5, 1fr)', gap: 16 }}>
           {team.map((p, i) => (
             <div key={i} style={{ cursor: 'pointer' }}>
               <div style={{ aspectRatio: '3/5', background: i % 2 === 0 ? A_COLORS.accent : A_COLORS.ink, marginBottom: 16, position: 'relative', overflow: 'hidden', display: 'flex', alignItems: 'flex-end', padding: 20 }}>
@@ -251,15 +345,19 @@ function A_OnasContent() {
       </section>
 
       {/* Dla kogo / nie dla kogo */}
-      <section style={{ padding: '0', display: 'grid', gridTemplateColumns: '1fr 1fr', minHeight: '70vh' }}>
-        <div style={{ padding: '80px 56px', background: A_COLORS.paper, borderRight: `1px solid ${A_COLORS.hair}` }}>
+      <section style={{
+        padding: 0, display: 'grid',
+        gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr',
+        minHeight: isMobile ? 'auto' : '70vh',
+      }}>
+        <div style={{ padding: isMobile ? '60px 20px' : '80px 56px', background: A_COLORS.paper, borderRight: isMobile ? 'none' : `1px solid ${A_COLORS.hair}`, borderBottom: isMobile ? `1px solid ${A_COLORS.hair}` : 'none' }}>
           <div style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 12, color: A_COLORS.accent, letterSpacing: '0.12em', marginBottom: 32 }}>→ JESTEŚMY DLA</div>
           <h3 style={{ fontSize: 44, fontWeight: 700, letterSpacing: '-0.03em', lineHeight: 1.05, margin: '0 0 40px' }}>Firm, które chcą<br /><em style={{ fontWeight: 500 }}>wiedzieć za co płacą.</em></h3>
           {['Kampanie działają, ale wiesz że mogą lepiej', 'Chcesz wiedzieć co działa i dlaczego', 'Reagujesz na problemy, nie omijasz ich', 'Rozumiesz, że marketing wymaga czasu'].map((x, i) => (
             <div key={i} style={{ padding: '16px 0', borderTop: `1px solid ${A_COLORS.hair}`, fontSize: 16, color: A_COLORS.ink }}>{x}</div>
           ))}
         </div>
-        <div style={{ padding: '80px 56px', background: A_COLORS.ink, color: '#fff' }}>
+        <div style={{ padding: isMobile ? '60px 20px' : '80px 56px', background: A_COLORS.ink, color: '#fff' }}>
           <div style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 12, color: A_COLORS.accentSoft, letterSpacing: '0.12em', marginBottom: 32 }}>✕ NIE JESTEŚMY DLA</div>
           <h3 style={{ fontSize: 44, fontWeight: 700, letterSpacing: '-0.03em', lineHeight: 1.05, margin: '0 0 40px' }}>Firm szukających<br /><em style={{ fontWeight: 500, color: A_COLORS.accentSoft }}>najtańszej opcji.</em></h3>
           <p style={{ fontSize: 18, lineHeight: 1.55, color: 'rgba(255,255,255,0.75)', margin: 0, textWrap: 'pretty' }}>
@@ -272,12 +370,20 @@ function A_OnasContent() {
 }
 
 function Page() {
+  const isMobile = useMobile();
   const [scrolled, setScrolled] = React.useState(false);
   React.useEffect(() => {
     const h = () => setScrolled(window.scrollY > 40);
     window.addEventListener('scroll', h); return () => window.removeEventListener('scroll', h);
   }, []);
-  return (<><A_Nav scrolled={scrolled} /><A_OnasContent /><A_CTA /><A_Footer /></>);
+  return (
+    <MobileCtx.Provider value={isMobile}>
+      <A_Nav scrolled={scrolled} activePage="O nas" />
+      <A_OnasContent />
+      <A_CTA />
+      <A_Footer />
+    </MobileCtx.Provider>
+  );
 }
 ReactDOM.createRoot(document.getElementById('root')).render(<Page />);
 </script>
