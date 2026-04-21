@@ -47,7 +47,7 @@ function A_Nav({ scrolled }) {
         <img src="assets/patoagencja-wordmark-ink.png" alt="patoagencja" style={{ height: 22, display: 'block' }} />
       </a>
       <nav style={{ display: 'flex', gap: 40, fontSize: 14, fontWeight: 500 }}>
-        {[['O nas','o-nas.html'],['Usługi','uslugi.html'],['Klienci','klienci.html'],['Kursy','kursy.html'],['Kontakt','kontakt.html']].map(([l,href]) => (
+        {[['O nas','o-nas.html'],['Usługi','uslugi.html'],['Klienci','klienci.html'],['Kursy','kursy.html'],['Sebol','sebol.html'],['Kontakt','kontakt.html']].map(([l,href]) => (
           <a key={l} href={href} style={{ color: l === 'Kursy' ? A_COLORS.accent : A_COLORS.ink, textDecoration: 'none', position: 'relative' }}
              onMouseEnter={e => e.currentTarget.querySelector('span').style.width = '100%'}
              onMouseLeave={e => e.currentTarget.querySelector('span').style.width = l === 'Kursy' ? '100%' : '0%'}>
