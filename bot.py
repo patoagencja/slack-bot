@@ -3793,6 +3793,7 @@ def sync_calendar_from_email():
             continue
 
         try:
+            cal_name = os.environ.get("EMAIL_CALENDAR_SYNC_CALENDAR_NAME")
             cal_result = icloud_calendar_tool(
                 action="create",
                 title=invite.get("title"),
@@ -3800,6 +3801,7 @@ def sync_calendar_from_email():
                 end=invite.get("end"),
                 location=invite.get("location"),
                 description=invite.get("description"),
+                calendar_name=cal_name,
             )
             if "error" not in cal_result:
                 synced_ids.add(inv_id)
