@@ -60,6 +60,7 @@ from tools.campaign_creator import (
     get_meta_account_id, generate_campaign_expert_analysis,
 )
 from tools.voice_transcription import transcribe_slack_audio, SLACK_AUDIO_MIMES
+from tools.marketing_skills import load_marketing_skill, SKILLS_INDEX
 from tools.icloud_calendar import icloud_calendar_tool
 from tools.pptx_presentation import generate_pptx, share_pptx
 from tools.memory import init_memory, remember, recall_as_context, get_history
@@ -585,6 +586,60 @@ Pytanie o kampanie/metryki/spend/ROAS/CTR → WYWOŁAJ narzędzie:
 NIGDY nie mów "nie mam dostępu" - zawsze najpierw użyj narzędzi!
 ⛔ BEZWZGLĘDNY ZAKAZ: Gdy ktoś pyta o GA4/analytics → wywołaj get_ga4_data() i podaj TYLKO dane z tego narzędzia. NIGDY nie zastępuj danych GA4 estymacjami z Meta Ads, Google Ads ani żadnych innych źródeł. Jeśli get_ga4_data() zwróci błąd → powiedz wprost jaki błąd wystąpił, NIE wymyślaj alternatywnych danych.
 
+# MARKETING SKILLS (ekspercie playbooki)
+Masz dostęp do 41 specjalistycznych marketing skillów. Gdy użytkownik prosi o pomoc z zadaniem marketingowym, ZAWSZE wywołaj load_marketing_skill() z odpowiednią nazwą — otrzymasz pełne eksperckie wytyczne i wykonaj zadanie zgodnie z nimi.
+
+Dostępne skille:
+- copywriting — copy na strony (homepage, landing, pricing, feature, about)
+- paid-ads — kampanie Google Ads, Meta, LinkedIn, TikTok, Twitter/X
+- seo-audit — audyt i diagnoza problemów SEO
+- ai-seo — optymalizacja pod AI search (LLMs, ChatGPT, Perplexity)
+- ad-creative — generowanie i iteracja kreacji reklamowych
+- analytics-tracking — setup i audyt trackingu analitycznego
+- content-strategy — strategia contentowa, dobór tematów
+- social-content — posty na LinkedIn, Instagram, TikTok, Twitter/X
+- email-sequence — sekwencje emailowe, drip campaigns, lifecycle
+- cold-email — zimne maile B2B, follow-upy
+- copywriting — copy stron www
+- copy-editing — edycja i poprawa istniejącego copy
+- page-cro — optymalizacja konwersji stron
+- signup-flow-cro — optymalizacja flow rejestracji
+- onboarding-cro — onboarding i aktywacja użytkowników
+- popup-cro — popupy, modale, slide-iny
+- form-cro — formularze lead gen
+- paywall-upgrade-cro — paywalle, upgrade screens, upsell
+- launch-strategy — strategia launchu produktu
+- pricing-strategy — pricing, pakiety, monetyzacja
+- lead-magnets — lead magnety do zbierania emaili
+- referral-program — programy referral i afiliacyjne
+- churn-prevention — zapobieganie churnie, save offers
+- customer-research — badania i analiza klientów
+- competitor-profiling — profilowanie konkurencji
+- competitor-alternatives — strony porównawcze vs. konkurencja
+- marketing-ideas — pomysły marketingowe dla SaaS
+- marketing-psychology — psychologia i behawiorystyka w marketingu
+- ab-test-setup — planowanie i design testów A/B
+- programmatic-seo — SEO programmatyczne, strony w skali
+- site-architecture — architektura strony, nawigacja, URL structure
+- schema-markup — schema markup i structured data
+- directory-submissions — zgłaszanie do katalogów startupów/SaaS
+- free-tool-strategy — strategia darmowego narzędzia marketingowego
+- community-marketing — budowanie społeczności
+- co-marketing — partnerstwa i wspólne kampanie
+- sales-enablement — materiały sprzedażowe, pitch decki, one-pagery
+- revops — revenue operations, handoff marketing→sprzedaż
+- aso-audit — audyt App Store / Google Play
+- video — tworzenie video contentów z AI
+- image — generowanie i optymalizacja grafik marketingowych
+- product-marketing-context — kontekst product marketingu (brief)
+
+Przykłady użycia:
+- "napisz copy na landing" → load_marketing_skill("copywriting")
+- "zrób audyt SEO" → load_marketing_skill("seo-audit")
+- "pomóż z kampaniami Google" → load_marketing_skill("paid-ads")
+- "napisz sekwencję emailową" → load_marketing_skill("email-sequence")
+- "strategia na launch" → load_marketing_skill("launch-strategy")
+
 # TON I STYL
 - Polski, naturalny, mówisz "Ty", jesteś częścią teamu
 - Konkretne liczby: "CTR 2.3%" nie "niski CTR"
@@ -850,6 +905,29 @@ Pytanie → Direct answer → Context → Actionable next step
                 "required": ["topic"]
             }
         },
+        {
+            "name": "load_marketing_skill",
+            "description": (
+                "Ładuje pełne instrukcje wybranego marketing skilla. Użyj gdy użytkownik prosi o pomoc z: "
+                "copywritingiem, SEO, reklamami płatnymi, CRO, email marketingiem, strategią contentową, "
+                "social mediami, pricing, launch strategy, competitor research, cold email, churn, "
+                "lead magnets, referral program, onboarding, sales enablement i innymi zadaniami marketingowymi. "
+                "Zwraca ekspercie wytyczne jak wykonać zadanie."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "skill_name": {
+                        "type": "string",
+                        "description": (
+                            "Nazwa skilla do załadowania. Dostępne skille: "
+                            + ", ".join(sorted(SKILLS_INDEX.keys()))
+                        )
+                    }
+                },
+                "required": ["skill_name"]
+            }
+        },
     ]
 
     try:
@@ -1105,6 +1183,8 @@ Pytanie → Direct answer → Context → Actionable next step
                         campaign_name=tool_input.get('campaign_name', ''),
                         hours=tool_input.get('hours', 24),
                     )
+                elif tool_name == "load_marketing_skill":
+                    tool_result = load_marketing_skill(tool_input.get('skill_name', ''))
                 else:
                     tool_result = {"error": "Nieznane narzędzie"}
 
