@@ -456,8 +456,9 @@ def handle_mention(event, say):
         return
 
     # Weekly cost report (manual trigger)
-    _cost_triggers = ["raport kosztów", "raport kosztow", "koszty ai", "ile kosztuje ai",
-                      "podsumowanie kosztów", "weekly cost", "koszty tygodnia"]
+    _cost_triggers = ["koszty ai", "ile kosztuje ai", "koszty claude",
+                      "koszty sebol", "weekly cost", "koszty tygodnia",
+                      "ile kosztuje sebol", "raport ai"]
     if any(t in user_message.lower() for t in _cost_triggers):
         from jobs.cost_report import generate_weekly_cost_report
         _days_m = re.search(r'(\d+)\s*dni', user_message)
