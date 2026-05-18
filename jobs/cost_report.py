@@ -5,9 +5,9 @@ Pokazuje:
 - Koszt tokenów API Sebol (bot) per pracownik i per model
 - Łączny koszt AI na osobę i dla całego teamu
 
-Konfiguracja env:
-  TEAMS_PLAN_MONTHLY_PLN  — miesięczna opłata za Claude Teams w PLN (np. "600")
-  TEAMS_PLAN_MONTHLY_USD  — alternatywnie w USD (przeliczone wg USD_TO_PLN)
+Konfiguracja env (opcjonalna — domyślnie 125 EUR):
+  TEAMS_PLAN_MONTHLY_EUR  — miesięczna opłata za Claude Teams w EUR (domyślnie 125)
+  EUR_TO_PLN              — kurs EUR/PLN (domyślnie 4.25)
   ZARZAD_CHANNEL_ID       — opcjonalnie, domyślnie C0AJ4HBS94G
 """
 import os
@@ -23,22 +23,12 @@ logger = logging.getLogger(__name__)
 ZARZAD_CHANNEL = os.environ.get("ZARZAD_CHANNEL_ID", "C0AJ4HBS94G")
 _SLACK_ID_TO_NAME = {m["slack_id"]: m["name"] for m in TEAM_MEMBERS}
 
+EUR_TO_PLN = float(os.environ.get("EUR_TO_PLN", "4.25"))
+TEAMS_PLAN_MONTHLY_EUR = float(os.environ.get("TEAMS_PLAN_MONTHLY_EUR", "125"))
 
-def _teams_monthly_pln() -> float | None:
-    """Zwraca miesięczny koszt planu Teams w PLN lub None jeśli nie skonfigurowano."""
-    val = os.environ.get("TEAMS_PLAN_MONTHLY_PLN", "")
-    if val:
-        try:
-            return float(val)
-        except ValueError:
-            pass
-    val_usd = os.environ.get("TEAMS_PLAN_MONTHLY_USD", "")
-    if val_usd:
-        try:
-            return float(val_usd) * USD_TO_PLN
-        except ValueError:
-            pass
-    return None
+
+def _teams_monthly_pln() -> float:
+    return TEAMS_PLAN_MONTHLY_EUR * EUR_TO_PLN
 
 
 def generate_weekly_cost_report(days: int = 7) -> str:
@@ -50,19 +40,14 @@ def generate_weekly_cost_report(days: int = 7) -> str:
 
     # ── Sekcja 1: Plan Claude Teams ──────────────────────────────────────────
     monthly_pln = _teams_monthly_pln()
-    if monthly_pln:
-        weekly_plan_pln = monthly_pln / 4.33
-        per_person_plan = weekly_plan_pln / n_members if n_members else 0
-        lines.append("*📋 Plan Claude Teams*")
-        lines.append(f"  Miesięcznie: *{monthly_pln:.0f} PLN* → tygodniowo: *{weekly_plan_pln:.0f} PLN*")
-        lines.append(f"  Per osoba: *{per_person_plan:.0f} PLN/tydzień*")
-        lines.append(f"  _(podzielono na {n_members} osób)_\n")
-    else:
-        monthly_pln = 0
-        weekly_plan_pln = 0
-        per_person_plan = 0
-        lines.append("*📋 Plan Claude Teams*")
-        lines.append("  ⚠️ Brak konfiguracji — ustaw `TEAMS_PLAN_MONTHLY_PLN` lub `TEAMS_PLAN_MONTHLY_USD` w env.\n")
+    weekly_plan_pln = monthly_pln / 4.33
+    per_person_plan = weekly_plan_pln / n_members if n_members else 0
+    lines.append("*📋 Plan Claude Teams (Standard)*")
+    lines.append(
+        f"  Stała opłata: *€{TEAMS_PLAN_MONTHLY_EUR:.0f}/mc* ({monthly_pln:.0f} PLN)"
+        f"  →  tygodniowo: *{weekly_plan_pln:.0f} PLN*"
+    )
+    lines.append(f"  Per osoba: *{per_person_plan:.0f} PLN/tydzień*  _(6 osób × €{TEAMS_PLAN_MONTHLY_EUR/n_members:.2f})_\n")
 
     # ── Sekcja 2: Tokeny API Sebol (bot) ─────────────────────────────────────
     _, total = get_summary(days=days)
@@ -93,14 +78,14 @@ def generate_weekly_cost_report(days: int = 7) -> str:
     lines.append("")
 
     # ── Sekcja 3: Podsumowanie łączne ────────────────────────────────────────
-    total_pln = (monthly_pln / 4.33) + bot_total_pln
+    total_pln = weekly_plan_pln + bot_total_pln
     per_person_total = total_pln / n_members if n_members else 0
+    monthly_est_pln = monthly_pln + bot_total_pln * 4.33
 
     lines.append("*📊 Łącznie (plan + bot)*")
-    lines.append(f"  Koszt tygodnia: *{total_pln:.2f} PLN*")
+    lines.append(f"  Koszt tygodnia: *{total_pln:.2f} PLN*  (plan: {weekly_plan_pln:.0f} + bot: {bot_total_pln:.2f})")
     lines.append(f"  Per osoba (średnia): *{per_person_total:.2f} PLN/tydzień*")
-    if monthly_pln:
-        lines.append(f"  Szacowany miesięczny koszt AI: *~{(monthly_pln + bot_total_pln * 4.33):.0f} PLN*")
+    lines.append(f"  Szacowany miesięczny koszt AI: *~{monthly_est_pln:.0f} PLN*  (~€{monthly_est_pln/EUR_TO_PLN:.0f})")
 
     lines.append(f"\n_Wygenerowano przez Sebol • {now.strftime('%d.%m.%Y %H:%M')}_")
     return "\n".join(lines)
