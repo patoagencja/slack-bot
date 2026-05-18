@@ -65,7 +65,7 @@ from tools.icloud_calendar import icloud_calendar_tool
 from tools.pptx_presentation import generate_pptx, share_pptx
 from tools.memory import init_memory, remember, recall_as_context, get_history
 from tools.reminders import init_reminders, schedule_reminder, list_reminders
-from tools.token_log import init_token_log, TrackedAnthropicClient, get_summary, USD_TO_PLN
+from tools.token_log import init_token_log, TrackedAnthropicClient, get_summary, get_user_summary, set_current_user, USD_TO_PLN
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -452,6 +452,16 @@ def handle_mention(event, say):
         except Exception as e:
             say(f"❌ Błąd Email Summary: `{str(e)}`")
             logger.error(f"Błąd email trigger w mention: {e}")
+        return
+
+    # Token usage per user
+    _tok_triggers = ["kto ile tokenów", "kto ile żre tokenów", "tokeny per osoba",
+                     "token usage", "kto używa tokenów", "zużycie tokenów",
+                     "ile tokenów zużywa", "raport tokenów", "kto ile kosztuje claude"]
+    if any(t in user_message.lower() for t in _tok_triggers):
+        _days_m = re.search(r'(\d+)\s*dni', user_message)
+        _days = int(_days_m.group(1)) if _days_m else 30
+        say(text=_format_user_token_report(_days), thread_ts=thread_ts)
         return
 
     # === NIEOBECNOŚCI / PROŚBY via @mention ===
@@ -932,6 +942,7 @@ Pytanie → Direct answer → Context → Actionable next step
 
     try:
         user_id = event.get('user')
+        set_current_user(user_id or "")
 
         # Store incoming message to long-term memory
         remember(user_id, channel, event.get("ts", ""), "user", user_message)
@@ -1323,6 +1334,31 @@ def handle_linkedin_slash(ack, respond, command):
     ).start()
 
 
+_SLACK_ID_TO_NAME = {m["slack_id"]: m["name"] for m in TEAM_MEMBERS}
+
+
+def _format_user_token_report(days: int = 30) -> str:
+    rows = get_user_summary(days=days)
+    if not rows:
+        return f"Brak danych per-użytkownik z ostatnich {days} dni.\n_(Dane zbierane są od momentu wdrożenia tej funkcji.)_"
+
+    total_pln = sum(r["cost_pln"] for r in rows)
+    medals = ["🥇", "🥈", "🥉"]
+    lines = [f"*👥 Tokeny per osoba — ostatnie {days} dni*\n"]
+    for i, row in enumerate(rows):
+        uid = row["user_id"]
+        name = _SLACK_ID_TO_NAME.get(uid) or f"<@{uid}>"
+        medal = medals[i] if i < 3 else f"{i+1}."
+        pct = (row["cost_pln"] / total_pln * 100) if total_pln else 0
+        bar = "█" * int(pct / 5) + "░" * (20 - int(pct / 5))
+        lines.append(
+            f"{medal} *{name}*  `{row['cost_pln']:.3f} PLN`  ({pct:.0f}%)\n"
+            f"    `{bar}` {row['calls']} wywołań · {row['input_tokens']:,} in / {row['output_tokens']:,} out"
+        )
+    lines.append(f"\n💰 Łącznie: *{total_pln:.3f} PLN*  |  _kurs: 1 USD = {USD_TO_PLN} PLN_")
+    return "\n".join(lines)
+
+
 # ── /koszty slash command ─────────────────────────────────────────────────────
 
 @app.command("/koszty")
@@ -1356,6 +1392,7 @@ def handle_koszty_slash(ack, respond, command):
             )
 
     lines.append(f"\n_Kurs: 1 USD = {USD_TO_PLN} PLN_")
+    lines.append("\n" + _format_user_token_report(days))
     respond("\n".join(lines))
 
 
