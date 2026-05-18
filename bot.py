@@ -455,6 +455,8 @@ def handle_mention(event, say):
             logger.error(f"Błąd email trigger w mention: {e}")
         return
 
+    thread_ts = event.get('thread_ts', event['ts'])
+
     # Weekly cost report (manual trigger)
     _cost_triggers = ["koszty ai", "ile kosztuje ai", "koszty claude",
                       "koszty sebol", "weekly cost", "koszty tygodnia",
@@ -497,7 +499,6 @@ def handle_mention(event, say):
             return
 
     channel   = event['channel']
-    thread_ts = event.get('thread_ts', event['ts'])
     _mention_user_id = event.get('user', '')
 
     # Track thread so bot responds to follow-ups without explicit mention
