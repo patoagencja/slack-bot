@@ -3,6 +3,7 @@ data/team_availability.json
 data/team_requests.json
 data/memory.db
 data/wizard_state.json
+data/token_usage.db
 
 # Python
 __pycache__/
