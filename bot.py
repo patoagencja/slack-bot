@@ -1998,8 +1998,19 @@ def handle_message_events(body, say, logger):
                     _say_dm("\n".join(_dm_results))
                     return
 
-        # === CAMPAIGN approve/cancel (DM) ===
+        # === AI cost report (DM) ===
         _dm_text_l    = user_message.lower()
+        _dm_cost_triggers = ["koszty ai", "ile kosztuje ai", "koszty claude",
+                             "koszty sebol", "weekly cost", "koszty tygodnia",
+                             "ile kosztuje sebol", "raport ai"]
+        if any(t in _dm_text_l for t in _dm_cost_triggers):
+            from jobs.cost_report import generate_weekly_cost_report
+            _days_m = re.search(r'(\d+)\s*dni', user_message)
+            _days = int(_days_m.group(1)) if _days_m else 7
+            _say_dm(text=generate_weekly_cost_report(_days))
+            return
+
+        # === CAMPAIGN approve/cancel (DM) ===
         _dm_approve_m = re.search(r'(zatwierdź|zatwierdz|uruchom)\s+kampanię\s+(\d+)', _dm_text_l)
         _dm_cancel_m  = re.search(r'(anuluj|usuń|usun|skasuj)\s+kampanię\s+(\d+)', _dm_text_l)
 
