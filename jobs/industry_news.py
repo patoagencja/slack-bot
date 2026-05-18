@@ -144,14 +144,19 @@ def _fetch_with_web_search(prompt: str) -> str:
 
 def _parse_points(raw: str) -> list[dict]:
     """Wyciąga listę punktów z odpowiedzi JSON Claude'a."""
-    try:
-        # Claude może owinąć JSON w ```json ... ```
-        match = re.search(r'\{[\s\S]*\}', raw)
-        if match:
-            data = json.loads(match.group())
-            return data.get("points", [])
-    except Exception as e:
-        logger.warning(f"Nie udało się sparsować JSON z newsów: {e}")
+    # Strip markdown code fences first
+    cleaned = re.sub(r'```(?:json)?\s*', '', raw).strip()
+    candidates = [cleaned, raw]
+    for text in candidates:
+        try:
+            match = re.search(r'\{[\s\S]*\}', text)
+            if match:
+                data = json.loads(match.group())
+                points = data.get("points", [])
+                if points:
+                    return points
+        except Exception as e:
+            logger.warning(f"Nie udało się sparsować JSON z newsów: {e}")
     return []
 
 
@@ -204,9 +209,8 @@ def generate_industry_news_digest() -> tuple[str, list[dict]]:
     points = _parse_points(raw)
 
     if not points:
-        # Fallback: zwróć surową odpowiedź jako jedną wiadomość
-        logger.warning("Brak punktów w odpowiedzi — fallback do surowego tekstu")
-        return raw + f"\n\n_Wygenerowano przez Sebol • {now.strftime('%d.%m.%Y %H:%M')}_", []
+        logger.warning("Brak punktów w odpowiedzi — nie udało się sparsować newsów")
+        return f"⚠️ Nie udało się wygenerować digestu newsów — Claude zwrócił nieoczekiwany format odpowiedzi.\n\n_Sebol • {now.strftime('%d.%m.%Y %H:%M')}_", []
 
     _record_points(points)
 
