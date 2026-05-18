@@ -52,6 +52,7 @@ from jobs.onboarding import (
     _handle_onboarding_done, check_stale_onboardings, handle_onboard_slash,
 )
 from jobs.industry_news import weekly_industry_news
+from jobs.cost_report import weekly_cost_report
 # jobs.reminders removed — reminders now use Slack chat.scheduleMessage
 from tools.campaign_creator import (
     download_slack_files, upload_creative_to_meta, parse_campaign_request,
@@ -452,6 +453,16 @@ def handle_mention(event, say):
         except Exception as e:
             say(f"❌ Błąd Email Summary: `{str(e)}`")
             logger.error(f"Błąd email trigger w mention: {e}")
+        return
+
+    # Weekly cost report (manual trigger)
+    _cost_triggers = ["raport kosztów", "raport kosztow", "koszty ai", "ile kosztuje ai",
+                      "podsumowanie kosztów", "weekly cost", "koszty tygodnia"]
+    if any(t in user_message.lower() for t in _cost_triggers):
+        from jobs.cost_report import generate_weekly_cost_report
+        _days_m = re.search(r'(\d+)\s*dni', user_message)
+        _days = int(_days_m.group(1)) if _days_m else 7
+        say(text=generate_weekly_cost_report(_days), thread_ts=thread_ts)
         return
 
     # Token usage per user
@@ -4197,12 +4208,13 @@ scheduler.add_job(check_budget_alerts,       'cron', minute=0, id='budget_alerts
 scheduler.add_job(weekly_report_dre,         'cron', day_of_week='fri', hour=16, minute=0, id='weekly_reports')
 scheduler.add_job(weekly_learnings_dre,      'cron', day_of_week='mon,thu', hour=8, minute=30, id='weekly_learnings')
 scheduler.add_job(daily_email_summary_slack, 'cron', hour=16, minute=0, id='daily_email_summary')
-scheduler.add_job(send_daily_team_availability, 'cron', day_of_week='mon-fri', hour=17, minute=0, id='team_availability')
+# send_daily_team_availability disabled — real-time notification on absence submit is enough
 scheduler.add_job(check_stale_onboardings,   'cron', hour=9, minute=30, id='stale_onboardings')
 # STANDUP wyłączony — nikt nie robi
 # scheduler.add_job(send_standup_questions,    'cron', day_of_week='mon-fri', hour=9, minute=0,  id='standup_send')
 # scheduler.add_job(post_standup_summary,      'cron', day_of_week='mon-fri', hour=9, minute=30, id='standup_summary')
 scheduler.add_job(weekly_industry_news,      'cron', day_of_week='mon',     hour=9, minute=0,  id='industry_news')
+scheduler.add_job(weekly_cost_report,        'cron', day_of_week='mon',     hour=9, minute=5,  id='weekly_cost_report')
 scheduler.add_job(sync_calendar_from_email,  'cron', minute=0,                                id='email_calendar_sync')
 # reminders job removed — Slack chat.scheduleMessage handles delivery natively
 scheduler.start()
