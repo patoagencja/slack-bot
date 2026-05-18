@@ -588,6 +588,7 @@ Przedstaw się krótko i naturalnie. Wymień funkcje w formie listy jak powyżej
 META ADS: "instax"/"fuji" → Instax Fujifilm | "zbiorcze" → Kampanie zbiorcze | "drzwi dre" → DRE (drzwi)
 GOOGLE ADS: "3wm"/"pato" → Agencja | "dre 2024"/"dre24" → DRE 2024 | "dre 2025"/"dre25"/"dre" → DRE 2025 | "m2" → M2 (nieruchomości) | "zbiorcze" → Zbiorcze
 ⚠️ "dre" = producent drzwi, NIE raper!
+⛔ BEZWZGLĘDNY ZAKAZ: NIE zgaduj klienta i NIE wybieraj domyślnego. Jeśli pytanie dotyczy kampanii/danych/raportów a klient NIE jest jednoznacznie podany w wiadomości → zapytaj "Dla którego klienta?" ZANIM wywołasz jakiekolwiek narzędzie. Zgadywanie = marnowanie tokenów.
 
 # NARZĘDZIA - ZAWSZE UŻYWAJ NAJPIERW
 Pytanie o kampanie/metryki/spend/ROAS/CTR → WYWOŁAJ narzędzie:
