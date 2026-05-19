@@ -269,6 +269,8 @@ def analyze_ticker(ticker: str, qqq_30d: float | None = None) -> dict:
 
     # ── Price ──
     price = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("ask") or 0.0
+    if not price:
+        raise ValueError(f"Ticker '{ticker}' nie istnieje lub yfinance nie zwrócił danych cenowych. Sprawdź symbol (np. TEM zamiast TEMPUS).")
     prev = info.get("previousClose") or info.get("regularMarketPreviousClose") or price
     change_pct = round((price - prev) / prev * 100, 2) if prev else 0.0
 
