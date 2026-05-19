@@ -237,7 +237,17 @@ def icloud_calendar_tool(
             ical_lines += ["END:VEVENT", "END:VCALENDAR"]
             ical_data = "\r\n".join(ical_lines)
 
-            calendar.save_event(ical_data)
+            import time as _time
+            for _attempt in range(4):
+                try:
+                    calendar.save_event(ical_data)
+                    break
+                except Exception as _e:
+                    if _attempt == 3:
+                        raise
+                    _wait = 2 ** (_attempt + 1)  # 2, 4, 8 s
+                    logger.warning("iCloud save_event attempt %d failed (%s), retry in %ds", _attempt + 1, _e, _wait)
+                    _time.sleep(_wait)
 
             result = {
                 "status": "created",
