@@ -53,6 +53,7 @@ from jobs.onboarding import (
 )
 from jobs.industry_news import weekly_industry_news
 from jobs.cost_report import weekly_cost_report
+from jobs.stock_digest import send_stock_digest, run_stock_digest, analyze_ticker, format_ticker_slack, WATCHLIST
 # jobs.reminders removed — reminders now use Slack chat.scheduleMessage
 from tools.campaign_creator import (
     download_slack_files, upload_creative_to_meta, parse_campaign_request,
@@ -476,6 +477,19 @@ def handle_mention(event, say):
         _days_m = re.search(r'(\d+)\s*dni', user_message)
         _days = int(_days_m.group(1)) if _days_m else 30
         say(text=_format_user_token_report(_days), thread_ts=thread_ts)
+        return
+
+    # Stock ticker detection
+    _words = set(re.findall(r'\b[A-Z]{1,5}\b', user_message.upper()))
+    _matched_tickers = [t for t in WATCHLIST if t in _words]
+    if _matched_tickers:
+        ticker = _matched_tickers[0]
+        say(text=f"📊 Analizuję *{ticker}*...", thread_ts=thread_ts)
+        try:
+            data = analyze_ticker(ticker)
+            say(text=format_ticker_slack(ticker, data), thread_ts=thread_ts)
+        except Exception as _e:
+            say(text=f"❌ Błąd analizy {ticker}: {_e}", thread_ts=thread_ts)
         return
 
     # === NIEOBECNOŚCI / PROŚBY via @mention ===
@@ -1408,6 +1422,43 @@ def handle_koszty_slash(ack, respond, command):
     lines.append(f"\n_Kurs: 1 USD = {USD_TO_PLN} PLN_")
     lines.append("\n" + _format_user_token_report(days))
     respond("\n".join(lines))
+
+
+@app.command("/analiza")
+def handle_analiza_slash(ack, respond, command):
+    ack()
+    ticker = (command.get("text") or "").strip().upper()
+    if not ticker:
+        respond("Użycie: `/analiza TICKER` np. `/analiza NVDA`")
+        return
+    respond(f"📊 Analizuję *{ticker}*...")
+    try:
+        data = analyze_ticker(ticker)
+        respond(format_ticker_slack(ticker, data))
+    except Exception as e:
+        respond(f"❌ Błąd: {e}")
+
+
+@app.command("/watchlist")
+def handle_watchlist_slash(ack, respond, command):
+    ack()
+    respond("⏳ Generuję watchlistę... (może chwilę potrwać)")
+    try:
+        msg = run_stock_digest()
+        respond(msg[:3000])  # Slack limit
+    except Exception as e:
+        respond(f"❌ Błąd: {e}")
+
+
+@app.command("/digest")
+def handle_digest_slash(ack, respond, command):
+    ack()
+    respond("⏳ Uruchamiam digest... (może potrwać 2-3 minuty)")
+    try:
+        send_stock_digest()
+        respond("✅ Digest wysłany na kanał!")
+    except Exception as e:
+        respond(f"❌ Błąd: {e}")
 
 
 # ── /cleanup slash command ────────────────────────────────────────────────────
@@ -4229,6 +4280,7 @@ scheduler.add_job(check_stale_onboardings,   'cron', hour=9, minute=30, id='stal
 # scheduler.add_job(post_standup_summary,      'cron', day_of_week='mon-fri', hour=9, minute=30, id='standup_summary')
 scheduler.add_job(weekly_industry_news,      'cron', day_of_week='mon',     hour=9, minute=0,  id='industry_news')
 scheduler.add_job(weekly_cost_report,        'cron', day_of_week='mon',     hour=9, minute=5,  id='weekly_cost_report')
+scheduler.add_job(send_stock_digest,         'cron', day_of_week='mon-fri', hour=13, minute=0, id='stock_digest')
 scheduler.add_job(sync_calendar_from_email,  'cron', minute=0,                                id='email_calendar_sync')
 # reminders job removed — Slack chat.scheduleMessage handles delivery natively
 scheduler.start()

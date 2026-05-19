@@ -17,3 +17,7 @@ google-analytics-data
 caldav
 vobject
 python-pptx
+yfinance
+tavily-python
+pandas
+numpy
