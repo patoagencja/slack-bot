@@ -53,7 +53,7 @@ from jobs.onboarding import (
 )
 from jobs.industry_news import weekly_industry_news
 from jobs.cost_report import weekly_cost_report
-from jobs.stock_digest import send_stock_digest, run_stock_digest, analyze_ticker, format_ticker_slack, WATCHLIST
+from jobs.stock_digest import send_stock_digest, run_stock_digest, analyze_ticker, format_ticker_slack, format_ticker_attachment, WATCHLIST
 # jobs.reminders removed — reminders now use Slack chat.scheduleMessage
 from tools.campaign_creator import (
     download_slack_files, upload_creative_to_meta, parse_campaign_request,
@@ -491,7 +491,8 @@ def handle_mention(event, say):
         def _ticker_worker(_ticker=ticker, _ts=_captured_thread_ts):
             try:
                 data = analyze_ticker(_ticker)
-                say(text=format_ticker_slack(_ticker, data), thread_ts=_ts)
+                att = format_ticker_attachment(_ticker, data)
+                say(text=f"📊 {_ticker}", attachments=[att], thread_ts=_ts)
             except Exception as _e:
                 say(text=f"❌ Błąd analizy {_ticker}: {_e}", thread_ts=_ts)
 
@@ -1443,7 +1444,8 @@ def handle_analiza_slash(ack, respond, command):
     def _worker():
         try:
             data = analyze_ticker(ticker)
-            respond(format_ticker_slack(ticker, data))
+            att = format_ticker_attachment(ticker, data)
+            respond({"text": f"📊 {ticker}", "attachments": [att]})
         except Exception as e:
             respond(f"❌ Błąd: {e}")
 

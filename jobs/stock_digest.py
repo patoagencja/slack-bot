@@ -331,8 +331,41 @@ def analyze_ticker(ticker: str, qqq_30d: float | None = None) -> dict:
     return {**fin, "news": news, "analysis": analysis}
 
 
-def format_ticker_slack(ticker: str, data: dict) -> str:
-    """Format one ticker's full analysis as a Slack plain-text block."""
+def _ticker_ma_str(tech: dict) -> str:
+    parts = []
+    if tech.get("above_ma50") is not None:
+        parts.append("✅MA50" if tech["above_ma50"] else "❌MA50")
+    if tech.get("above_ma200") is not None:
+        parts.append("✅MA200" if tech["above_ma200"] else "❌MA200")
+    if tech.get("golden_cross"):
+        parts.append("🌟GoldenX")
+    if tech.get("death_cross"):
+        parts.append("💀DeathX")
+    return " ".join(parts) if parts else "–"
+
+
+def _ticker_flags(data: dict) -> list[str]:
+    flags = []
+    if data.get("near_ath"):
+        flags.append(f"⚠️ Blisko ATH ({data.get('pct_from_high', '?')}%)")
+    if data.get("earnings_days") is not None:
+        flags.append(f"📅 Earnings za {data['earnings_days']} dni")
+    short = data.get("shortPercentOfFloat")
+    if short and short > 15:
+        flags.append(f"⚠️ Short {short}%")
+    rs = data.get("rs_vs_qqq")
+    if rs and rs > 20:
+        flags.append(f"🔥 RS vs QQQ: +{rs}%")
+    elif rs and rs < -20:
+        flags.append(f"📉 RS vs QQQ: {rs}%")
+    season = data.get("seasonality")
+    if season:
+        flags.append(f"📅 {season}")
+    return flags
+
+
+def format_ticker_attachment(ticker: str, data: dict) -> dict:
+    """Format one ticker as a Slack attachment (colored sidebar + Block Kit fields)."""
     try:
         price = data.get("price", "N/A")
         cp = data.get("change_pct", 0)
@@ -340,55 +373,74 @@ def format_ticker_slack(ticker: str, data: dict) -> str:
         tpe = data.get("trailingPE")
         fpe = data.get("forwardPE")
         tech = data.get("technicals", {})
-
         analysis = data.get("analysis") or dict(_FALLBACK_ANALYSIS)
         verdict = analysis.get("verdict", "CZEKAJ")
         verdict_emoji = {"KUP": "🟢", "CZEKAJ": "🟡", "OMIJAJ": "🔴"}.get(verdict, "⚪")
+        color = {"KUP": "#2eb886", "CZEKAJ": "#e6b833", "OMIJAJ": "#e01e5a"}.get(verdict, "#aaaaaa")
 
         sign = "+" if cp >= 0 else ""
-        lines = [
-            f"*{ticker}* ${price} ({sign}{cp}%)"
-            f" | RSI: {rsi if rsi else 'N/A'}"
-            f" | PE: {round(tpe,1) if tpe else 'N/A'}"
-            f" | Fwd PE: {round(fpe,1) if fpe else 'N/A'}",
+        ma_str = _ticker_ma_str(tech)
+        flags = _ticker_flags(data)
+
+        blocks = [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*{ticker}* ${price} ({sign}{cp}%)  {verdict_emoji} *{verdict}*",
+                },
+                "fields": [
+                    {"type": "mrkdwn", "text": f"*RSI*\n{rsi if rsi else 'N/A'}"},
+                    {"type": "mrkdwn", "text": f"*PE / Fwd PE*\n{round(tpe,1) if tpe else 'N/A'} / {round(fpe,1) if fpe else 'N/A'}"},
+                    {"type": "mrkdwn", "text": f"*Fundamenty*\n{analysis.get('fundamentals_score','?')}/5"},
+                    {"type": "mrkdwn", "text": f"*Timing*\n{analysis.get('timing_score','?')}/5"},
+                    {"type": "mrkdwn", "text": f"*Ryzyko makro*\n{analysis.get('macro_risk','?')}"},
+                    {"type": "mrkdwn", "text": f"*Technikalia*\n{ma_str}"},
+                ],
+            }
         ]
 
-        # Technical line
-        ma_parts = []
-        if tech.get("above_ma50") is not None:
-            ma_parts.append("✅MA50" if tech["above_ma50"] else "❌MA50")
-        if tech.get("above_ma200") is not None:
-            ma_parts.append("✅MA200" if tech["above_ma200"] else "❌MA200")
-        if tech.get("golden_cross"):
-            ma_parts.append("🌟GoldenX")
-        if tech.get("death_cross"):
-            ma_parts.append("💀DeathX")
-        if ma_parts:
-            lines.append(" | ".join(ma_parts))
-
-        # Flags
-        flags = []
-        if data.get("near_ath"):
-            flags.append(f"⚠️ Blisko ATH ({data.get('pct_from_high', '?')}%)")
-        if data.get("earnings_days") is not None:
-            flags.append(f"⚠️ Earnings za {data['earnings_days']} dni — podwyższone ryzyko")
-        short = data.get("shortPercentOfFloat")
-        if short and short > 15:
-            flags.append(f"⚠️ Short interest {short}% — ryzyko/szansa short squeeze")
-        rs = data.get("rs_vs_qqq")
-        if rs and rs > 20:
-            flags.append(f"⚠️ RS vs QQQ: +{rs}% — prawdopodobnie przegrzana")
-        elif rs and rs < -20:
-            flags.append(f"📉 RS vs QQQ: {rs}% — underperformuje rynek")
         if flags:
-            lines.extend(flags)
+            blocks.append({
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": "  ·  ".join(flags)}],
+            })
 
-        # Seasonality
-        season = data.get("seasonality")
-        if season:
-            lines.append(f"📅 {season}")
+        reasoning = analysis.get("reasoning", "")
+        if reasoning:
+            blocks.append({
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": f"_{reasoning[:300]}_"}],
+            })
 
-        # Analysis scores
+        return {"color": color, "blocks": blocks}
+    except Exception as e:
+        logger.warning("format_ticker_attachment error for %s: %s", ticker, e)
+        return {"color": "#aaaaaa", "text": f"{ticker} — błąd formatowania: {e}"}
+
+
+def format_ticker_slack(ticker: str, data: dict) -> str:
+    """Plain-text fallback (used by /watchlist respond)."""
+    try:
+        price = data.get("price", "N/A")
+        cp = data.get("change_pct", 0)
+        rsi = data.get("rsi")
+        tpe = data.get("trailingPE")
+        fpe = data.get("forwardPE")
+        tech = data.get("technicals", {})
+        analysis = data.get("analysis") or dict(_FALLBACK_ANALYSIS)
+        verdict = analysis.get("verdict", "CZEKAJ")
+        verdict_emoji = {"KUP": "🟢", "CZEKAJ": "🟡", "OMIJAJ": "🔴"}.get(verdict, "⚪")
+        sign = "+" if cp >= 0 else ""
+
+        lines = [
+            f"*{ticker}* ${price} ({sign}{cp}%) | RSI: {rsi if rsi else 'N/A'}"
+            f" | PE: {round(tpe,1) if tpe else 'N/A'} | Fwd PE: {round(fpe,1) if fpe else 'N/A'}",
+        ]
+        ma_str = _ticker_ma_str(tech)
+        if ma_str != "–":
+            lines.append(ma_str)
+        lines.extend(_ticker_flags(data))
         lines.append(
             f"Fundamenty: {analysis.get('fundamentals_score','?')}/5"
             f" | Timing: {analysis.get('timing_score','?')}/5"
@@ -396,7 +448,6 @@ def format_ticker_slack(ticker: str, data: dict) -> str:
         )
         lines.append(f"_{analysis.get('reasoning', 'Brak analizy.')}_")
         lines.append(f"→ {verdict_emoji} *{verdict}*")
-
         return "\n".join(lines)
     except Exception as e:
         logger.warning("format_ticker_slack error for %s: %s", ticker, e)
@@ -474,16 +525,62 @@ def run_stock_digest(tickers: list = None) -> str:
 STOCK_CHANNEL_ID = os.environ.get("SLACK_STOCK_CHANNEL", "C0B5LA4Q064")
 
 
-def send_stock_digest():
-    """Scheduled job: runs digest and posts to #inwestowanie. Mon-Fri 13:00 UTC."""
+def send_stock_digest(tickers: list = None):
+    """Scheduled job: posts rich Block Kit cards to #inwestowanie. Mon-Fri 13:00 UTC."""
+    if tickers is None:
+        tickers = WATCHLIST
     try:
-        msg = run_stock_digest()
-        chunk_size = 3900
-        for i in range(0, len(msg), chunk_size):
+        today = datetime.datetime.now().strftime("%d.%m.%Y")
+        qqq_30d = _fetch_qqq_30d()
+        season = _seasonality_note()
+
+        header = f"📊 *Stock Digest — {today}*"
+        if qqq_30d is not None:
+            header += f"  |  QQQ 30d: {'+' if qqq_30d >= 0 else ''}{qqq_30d}%"
+        if season:
+            header += f"  |  📅 {season}"
+
+        _ctx.app.client.chat_postMessage(channel=STOCK_CHANNEL_ID, text=header)
+
+        batch: list[dict] = []
+        results: list[tuple] = []
+        near_ath_tickers: list[str] = []
+
+        def _flush(b):
+            if b:
+                _ctx.app.client.chat_postMessage(
+                    channel=STOCK_CHANNEL_ID,
+                    text=" ",
+                    attachments=b,
+                )
+
+        for ticker in tickers:
+            try:
+                data = analyze_ticker(ticker, qqq_30d=qqq_30d)
+                batch.append(format_ticker_attachment(ticker, data))
+                results.append((ticker, data))
+                if data.get("near_ath"):
+                    near_ath_tickers.append(ticker)
+                if len(batch) >= 8:
+                    _flush(batch)
+                    batch = []
+            except Exception as e:
+                logger.warning("Skipping %s: %s", ticker, e)
+
+        _flush(batch)
+
+        # Summary
+        summary_lines = []
+        if near_ath_tickers:
+            summary_lines.append(f"⚠️ *Blisko ATH (<5%):* {', '.join(near_ath_tickers)}")
+        if results:
+            summary_lines.append(_concentration_risk_section(results))
+        if summary_lines:
             _ctx.app.client.chat_postMessage(
                 channel=STOCK_CHANNEL_ID,
-                text=msg[i:i + chunk_size],
+                text="\n".join(summary_lines),
             )
-        logger.info("send_stock_digest: done")
+
+        logger.info("send_stock_digest: done, %d tickers posted", len(results))
     except Exception as e:
         logger.error("send_stock_digest failed: %s", e)
