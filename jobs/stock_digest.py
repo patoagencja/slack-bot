@@ -1,15 +1,17 @@
 """
 jobs/stock_digest.py — Full stock analysis digest for Sebol bot.
 
-Fetches price/fundamentals via yfinance, news via Tavily, analysis via Claude.
-Scheduled Mon-Fri at 13:00 to post to SLACK_STOCK_CHANNEL.
+Fetches price/fundamentals via yfinance, news + insider via Tavily, analysis via Claude.
+Scheduled Mon-Fri at 13:00 UTC to post to #inwestowanie (C0B5LA4Q064).
 """
 
 import os
 import json
 import re
 import logging
-from datetime import datetime
+import datetime
+import time as _time
+from collections import Counter
 
 import pandas as pd
 import numpy as np
@@ -38,30 +40,151 @@ WATCHLIST = [
     "SYNA", "GFS", "PRM", "PSIX", "BA",
 ]
 
-# ── RSI calculation ───────────────────────────────────────────────────────────
+# ── Sector mapping ────────────────────────────────────────────────────────────
+TICKER_SECTORS = {
+    "NVDA": "AI/Semis", "AMD": "AI/Semis", "AVGO": "AI/Semis", "ALAB": "AI/Semis",
+    "ASML": "AI/Semis", "MU": "AI/Semis", "SNPS": "AI/Semis", "GFS": "AI/Semis",
+    "LITE": "AI/Semis", "SYNA": "AI/Semis", "APH": "AI/Semis",
+    "MSFT": "Tech/Cloud", "CRM": "Tech/Cloud", "NOW": "Tech/Cloud", "ORCL": "Tech/Cloud",
+    "ADBE": "Tech/Cloud", "SNOW": "Tech/Cloud", "IBM": "Tech/Cloud", "PATH": "Tech/Cloud",
+    "RBRK": "Tech/Cloud", "S": "Tech/Cloud",
+    "CRWD": "Cybersecurity", "FTNT": "Cybersecurity",
+    "ANET": "Networking",
+    "META": "Social/Ads", "SNAP": "Social/Ads", "TTD": "Social/Ads",
+    "AMZN": "E-commerce", "MELI": "E-commerce", "SE": "E-commerce",
+    "BABA": "E-commerce", "GRAB": "E-commerce",
+    "APP": "AI Apps", "TEM": "AI Apps", "SPOT": "AI Apps",
+    "MSTR": "Crypto", "MARA": "Crypto", "HOOD": "Crypto",
+    "NKE": "Consumer", "LULU": "Consumer", "RACE": "Consumer",
+    "CMG": "Consumer", "DECK": "Consumer", "UBER": "Consumer",
+    "ISRG": "Healthcare", "UNH": "Healthcare", "TDOC": "Healthcare", "NVO": "Healthcare",
+    "MCO": "Financial", "NU": "Financial", "DLO": "Financial", "PGY": "Financial",
+    "NOC": "Defense", "TDG": "Defense", "AXON": "Defense",
+    "CCJ": "Nuclear/Energy", "UEC": "Nuclear/Energy", "DNN": "Nuclear/Energy",
+    "UUUU": "Nuclear/Energy", "EOSE": "Nuclear/Energy",
+    "RYCEY": "Aerospace", "BA": "Aerospace",
+    "USAR": "Other", "PRM": "Other", "PSIX": "Other",
+}
+
+
+# ── RSI ───────────────────────────────────────────────────────────────────────
 def _calc_rsi(closes, period=14):
     deltas = pd.Series(closes).diff().dropna()
     gains = deltas.clip(lower=0).rolling(period).mean()
     losses = (-deltas.clip(upper=0)).rolling(period).mean()
-    rs = gains / losses.replace(0, float('nan'))
+    rs = gains / losses.replace(0, float("nan"))
     return float(100 - 100 / (1 + rs.iloc[-1]))
 
 
-# ── Tavily news fetch ─────────────────────────────────────────────────────────
+# ── Technical levels (MA50/MA200, golden/death cross, support) ────────────────
+def _calc_technicals(closes: list) -> dict:
+    s = pd.Series(closes)
+    price = s.iloc[-1]
+
+    ma50 = ma200 = None
+    above_ma50 = above_ma200 = None
+    if len(s) >= 50:
+        ma50 = float(s.rolling(50).mean().iloc[-1])
+        above_ma50 = bool(price > ma50)
+    if len(s) >= 200:
+        ma200 = float(s.rolling(200).mean().iloc[-1])
+        above_ma200 = bool(price > ma200)
+
+    golden_cross = death_cross = False
+    if len(s) >= 205:
+        ma50_s = s.rolling(50).mean()
+        ma200_s = s.rolling(200).mean()
+        for i in range(-5, -1):
+            if (ma50_s.iloc[i - 1] <= ma200_s.iloc[i - 1] and
+                    ma50_s.iloc[i] > ma200_s.iloc[i]):
+                golden_cross = True
+            elif (ma50_s.iloc[i - 1] >= ma200_s.iloc[i - 1] and
+                    ma50_s.iloc[i] < ma200_s.iloc[i]):
+                death_cross = True
+
+    support_30d = float(s.iloc[-30:].min()) if len(s) >= 30 else None
+    pct_from_support = round((price - support_30d) / support_30d * 100, 1) if support_30d else None
+
+    return {
+        "ma50": round(ma50, 2) if ma50 else None,
+        "ma200": round(ma200, 2) if ma200 else None,
+        "above_ma50": above_ma50,
+        "above_ma200": above_ma200,
+        "golden_cross": golden_cross,
+        "death_cross": death_cross,
+        "support_30d": round(support_30d, 2) if support_30d else None,
+        "pct_from_support": pct_from_support,
+    }
+
+
+# ── Earnings proximity ────────────────────────────────────────────────────────
+def _check_earnings_soon(ticker_obj) -> int | None:
+    """Returns days until next earnings if within 14 days, else None."""
+    try:
+        cal = ticker_obj.calendar
+        if cal is None:
+            return None
+        today = datetime.date.today()
+        # yfinance returns calendar as a DataFrame or dict depending on version
+        if hasattr(cal, "columns"):
+            if "Earnings Date" in cal.columns:
+                ed = cal["Earnings Date"].iloc[0]
+            else:
+                return None
+        elif isinstance(cal, dict):
+            ed = cal.get("Earnings Date")
+            if isinstance(ed, (list, tuple)) and ed:
+                ed = ed[0]
+        else:
+            return None
+        if ed is None:
+            return None
+        ts = pd.Timestamp(ed)
+        days = (ts.date() - today).days
+        return days if 0 <= days <= 14 else None
+    except Exception:
+        return None
+
+
+# ── Seasonality ───────────────────────────────────────────────────────────────
+def _seasonality_note() -> str | None:
+    month = datetime.datetime.now().month
+    if month in (5, 6, 7, 8, 9):
+        return "Sell in May — maj-wrzesień historycznie słabszy dla tech"
+    if month in (10, 11, 12):
+        return "Q4 rally — październik-grudzień sprzyja akcjom"
+    if month == 1:
+        return "Efekt stycznia — sprzyja small caps"
+    return None
+
+
+# ── QQQ 30-day return (cached per digest run) ─────────────────────────────────
+def _fetch_qqq_30d() -> float | None:
+    try:
+        hist = yf.Ticker("QQQ").history(period="35d")
+        if len(hist) >= 30:
+            return round((float(hist["Close"].iloc[-1]) / float(hist["Close"].iloc[-30]) - 1) * 100, 2)
+    except Exception as e:
+        logger.warning("QQQ fetch error: %s", e)
+    return None
+
+
+# ── Tavily: news + insider + revenue surprise in one search ───────────────────
 def _fetch_news(ticker: str) -> list:
-    """Fetch top 3 news snippets for a ticker via Tavily. Returns [] on error."""
+    """One Tavily call per ticker covering news, insider activity, earnings surprises."""
     if _tavily is None:
         return []
     try:
         results = _tavily.search(
-            query=f"{ticker} stock news analysis 2026",
+            query=f"{ticker} stock news insider SEC Form 4 earnings beat miss 2026",
             max_results=3,
         )
         snippets = []
         for r in (results.get("results") or [])[:3]:
-            title = r.get("title", "")
-            content = (r.get("content") or "")[:200]
-            snippets.append({"title": title, "content": content})
+            snippets.append({
+                "title": r.get("title", ""),
+                "content": (r.get("content") or "")[:200],
+            })
         return snippets
     except Exception as e:
         logger.warning("Tavily error for %s: %s", ticker, e)
@@ -71,10 +194,12 @@ def _fetch_news(ticker: str) -> list:
 # ── Claude analysis ───────────────────────────────────────────────────────────
 _SYSTEM_PROMPT = (
     "Jesteś analitykiem inwestycyjnym. Analizujesz spółki pod kątem:\n"
-    "1) Fundamentów (wycena vs sektor, wzrost, marże)\n"
-    "2) Timingu (nie wchodzisz w spółki na ATH przez wiele tygodni z rzędu, RSI > 75 = przegrzana)\n"
-    "3) Ryzyka makro (Fed policy, VIX, ekspozycja na bańkę AI)\n"
-    'Odpowiadasz TYLKO w JSON bez żadnego tekstu przed/po: '
+    "1) Fundamentów (wycena vs sektor, wzrost, marże, EV/EBITDA)\n"
+    "2) Timingu (RSI > 75 = przegrzana, MA50/MA200 status, golden/death cross, blisko ATH)\n"
+    "3) Ryzyka makro (Fed policy, VIX, sezonowość, short interest, insider activity)\n"
+    "4) Relative strength vs QQQ (spółka bije rynek o > 20% w 30 dni = prawdopodobnie przegrzana)\n"
+    "Uwzględnij też czy spółka ma earnings w ciągu 14 dni — to podnosi ryzyko.\n"
+    "Odpowiadasz TYLKO w JSON bez żadnego tekstu przed/po: "
     '{"fundamentals_score": 1-5, "timing_score": 1-5, "macro_risk": "low"/"medium"/"high", '
     '"reasoning": "max 2 zdania po polsku", "verdict": "KUP"/"CZEKAJ"/"OMIJAJ"}'
 )
@@ -89,28 +214,34 @@ _FALLBACK_ANALYSIS = {
 
 
 def _claude_analyze(ticker: str, fin: dict, news: list) -> dict:
-    """Call Claude to analyze a ticker. Returns analysis dict."""
-    news_text = ""
-    if news:
-        news_text = "\n\nNewsy:\n" + "\n".join(
-            f"- {n['title']}: {n['content']}" for n in news
-        )
-    else:
-        news_text = "\n\n(brak newsów)"
+    tech = fin.get("technicals", {})
+    news_text = ("\n\nNewsy/insider/earnings surprises:\n" +
+                 "\n".join(f"- {n['title']}: {n['content']}" for n in news)
+                 ) if news else "\n\n(brak newsów)"
+
+    ma_status = []
+    if tech.get("above_ma50") is not None:
+        ma_status.append("powyżej MA50" if tech["above_ma50"] else "poniżej MA50")
+    if tech.get("above_ma200") is not None:
+        ma_status.append("powyżej MA200" if tech["above_ma200"] else "poniżej MA200")
+    if tech.get("golden_cross"):
+        ma_status.append("GOLDEN CROSS (bullish)")
+    if tech.get("death_cross"):
+        ma_status.append("DEATH CROSS (bearish)")
 
     user_msg = (
         f"Ticker: {ticker}\n"
-        f"Cena: {fin.get('price', 'N/A')} USD\n"
-        f"Zmiana dzienna: {fin.get('change_pct', 'N/A')}%\n"
-        f"52w High: {fin.get('high52w', 'N/A')}\n"
-        f"% od 52w High: {fin.get('pct_from_high', 'N/A')}%\n"
-        f"RSI (14): {fin.get('rsi', 'N/A')}\n"
-        f"Trailing PE: {fin.get('trailingPE', 'N/A')}\n"
-        f"Forward PE: {fin.get('forwardPE', 'N/A')}\n"
-        f"EV/EBITDA: {fin.get('enterpriseToEbitda', 'N/A')}\n"
-        f"Marża zysku: {fin.get('profitMargins', 'N/A')}\n"
-        f"Wzrost przychodów: {fin.get('revenueGrowth', 'N/A')}\n"
-        f"Blisko ATH: {fin.get('near_ath', False)}"
+        f"Cena: ${fin.get('price', 'N/A')} ({fin.get('change_pct', 'N/A'):+}%)\n"
+        f"52w High: ${fin.get('high52w', 'N/A')} | % od ATH: {fin.get('pct_from_high', 'N/A')}%\n"
+        f"Blisko ATH (<5%): {fin.get('near_ath', False)}\n"
+        f"RSI-14: {fin.get('rsi', 'N/A')}\n"
+        f"MA: {', '.join(ma_status) or 'N/A'} | Wsparcie 30d: ${tech.get('support_30d', 'N/A')}\n"
+        f"Trailing PE: {fin.get('trailingPE', 'N/A')} | Fwd PE: {fin.get('forwardPE', 'N/A')} | EV/EBITDA: {fin.get('enterpriseToEbitda', 'N/A')}\n"
+        f"Marża netto: {fin.get('profitMargins', 'N/A')} | Revenue growth YoY: {fin.get('revenueGrowth', 'N/A')}\n"
+        f"Short interest: {fin.get('shortPercentOfFloat', 'N/A')}\n"
+        f"RS vs QQQ (30d): {fin.get('rs_vs_qqq', 'N/A')}%\n"
+        f"Earnings za {fin.get('earnings_days', 'N/A')} dni\n"
+        f"Sezonowość: {fin.get('seasonality', 'brak')}"
         f"{news_text}"
     )
 
@@ -122,11 +253,8 @@ def _claude_analyze(ticker: str, fin: dict, news: list) -> dict:
             messages=[{"role": "user", "content": user_msg}],
         )
         raw = response.content[0].text.strip()
-        # Extract JSON — handle cases where model wraps in markdown
-        json_match = re.search(r'\{.*\}', raw, re.DOTALL)
-        if json_match:
-            return json.loads(json_match.group())
-        return json.loads(raw)
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        return json.loads(m.group() if m else raw)
     except Exception as e:
         logger.warning("Claude analysis error for %s: %s", ticker, e)
         return dict(_FALLBACK_ANALYSIS)
@@ -134,28 +262,49 @@ def _claude_analyze(ticker: str, fin: dict, news: list) -> dict:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def analyze_ticker(ticker: str) -> dict:
+def analyze_ticker(ticker: str, qqq_30d: float | None = None) -> dict:
     """Fetch data + news + Claude analysis for one ticker. Returns dict with all fields."""
     ticker_obj = yf.Ticker(ticker)
     info = ticker_obj.info
 
-    # Price data
+    # ── Price ──
     price = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("ask") or 0.0
-    prev_close = info.get("previousClose") or info.get("regularMarketPreviousClose") or price
-    change_pct = round((price - prev_close) / prev_close * 100, 2) if prev_close else 0.0
+    prev = info.get("previousClose") or info.get("regularMarketPreviousClose") or price
+    change_pct = round((price - prev) / prev * 100, 2) if prev else 0.0
 
     high52w = info.get("fiftyTwoWeekHigh") or 0.0
     pct_from_high = round((price - high52w) / high52w * 100, 2) if high52w else None
     near_ath = bool(price >= 0.95 * high52w) if high52w else False
 
-    # RSI from 1y history (needs at least 15 closes)
+    # ── History-based indicators ──
     rsi = None
+    technicals = {}
+    hist_30d_return = None
     try:
         hist = ticker_obj.history(period="1y")
-        if len(hist) >= 15:
-            rsi = round(_calc_rsi(hist["Close"].tolist()), 1)
+        closes = hist["Close"].tolist()
+        if len(closes) >= 15:
+            rsi = round(_calc_rsi(closes), 1)
+        technicals = _calc_technicals(closes)
+        if len(closes) >= 30:
+            hist_30d_return = round((closes[-1] / closes[-30] - 1) * 100, 2)
     except Exception as e:
-        logger.warning("RSI calc error for %s: %s", ticker, e)
+        logger.warning("History error for %s: %s", ticker, e)
+
+    # ── RS vs QQQ ──
+    rs_vs_qqq = None
+    if hist_30d_return is not None and qqq_30d is not None:
+        rs_vs_qqq = round(hist_30d_return - qqq_30d, 2)
+
+    # ── Short interest ──
+    short_pct = info.get("shortPercentOfFloat")
+    if short_pct and short_pct < 1:
+        short_pct = round(short_pct * 100, 1)
+    elif short_pct:
+        short_pct = round(short_pct, 1)
+
+    # ── Earnings ──
+    earnings_days = _check_earnings_soon(ticker_obj)
 
     fin = {
         "price": round(price, 2),
@@ -164,97 +313,177 @@ def analyze_ticker(ticker: str) -> dict:
         "pct_from_high": pct_from_high,
         "near_ath": near_ath,
         "rsi": rsi,
+        "technicals": technicals,
+        "rs_vs_qqq": rs_vs_qqq,
+        "shortPercentOfFloat": short_pct,
+        "earnings_days": earnings_days,
+        "seasonality": _seasonality_note(),
         "trailingPE": info.get("trailingPE"),
         "forwardPE": info.get("forwardPE"),
         "enterpriseToEbitda": info.get("enterpriseToEbitda"),
         "profitMargins": info.get("profitMargins"),
         "revenueGrowth": info.get("revenueGrowth"),
+        "sector": TICKER_SECTORS.get(ticker, "Other"),
     }
 
     news = _fetch_news(ticker)
     analysis = _claude_analyze(ticker, fin, news)
-
     return {**fin, "news": news, "analysis": analysis}
 
 
 def format_ticker_slack(ticker: str, data: dict) -> str:
-    """Format one ticker's analysis as a Slack message block (plain text)."""
+    """Format one ticker's full analysis as a Slack plain-text block."""
     try:
         price = data.get("price", "N/A")
-        change_pct = data.get("change_pct", 0)
+        cp = data.get("change_pct", 0)
         rsi = data.get("rsi")
-        trailing_pe = data.get("trailingPE")
-        forward_pe = data.get("forwardPE")
+        tpe = data.get("trailingPE")
+        fpe = data.get("forwardPE")
+        tech = data.get("technicals", {})
 
         analysis = data.get("analysis") or dict(_FALLBACK_ANALYSIS)
-        fund_score = analysis.get("fundamentals_score", "?")
-        timing_score = analysis.get("timing_score", "?")
-        macro_risk = analysis.get("macro_risk", "?")
-        reasoning = analysis.get("reasoning", "Brak analizy.")
         verdict = analysis.get("verdict", "CZEKAJ")
+        verdict_emoji = {"KUP": "🟢", "CZEKAJ": "🟡", "OMIJAJ": "🔴"}.get(verdict, "⚪")
 
-        sign = "+" if change_pct >= 0 else ""
-        rsi_str = f"{rsi}" if rsi is not None else "N/A"
-        pe_str = f"{round(trailing_pe, 1)}" if trailing_pe is not None else "N/A"
-        fwd_pe_str = f"{round(forward_pe, 1)}" if forward_pe is not None else "N/A"
-
+        sign = "+" if cp >= 0 else ""
         lines = [
-            f"{ticker} ${price} ({sign}{change_pct}%) | RSI: {rsi_str} | PE: {pe_str} | Fwd PE: {fwd_pe_str}",
-            f"Fundamenty: {fund_score}/5 | Timing: {timing_score}/5 | Ryzyko: {macro_risk}",
-            f"_{reasoning}_",
-            f"→ *{verdict}*",
+            f"*{ticker}* ${price} ({sign}{cp}%)"
+            f" | RSI: {rsi if rsi else 'N/A'}"
+            f" | PE: {round(tpe,1) if tpe else 'N/A'}"
+            f" | Fwd PE: {round(fpe,1) if fpe else 'N/A'}",
         ]
+
+        # Technical line
+        ma_parts = []
+        if tech.get("above_ma50") is not None:
+            ma_parts.append("✅MA50" if tech["above_ma50"] else "❌MA50")
+        if tech.get("above_ma200") is not None:
+            ma_parts.append("✅MA200" if tech["above_ma200"] else "❌MA200")
+        if tech.get("golden_cross"):
+            ma_parts.append("🌟GoldenX")
+        if tech.get("death_cross"):
+            ma_parts.append("💀DeathX")
+        if ma_parts:
+            lines.append(" | ".join(ma_parts))
+
+        # Flags
+        flags = []
+        if data.get("near_ath"):
+            flags.append(f"⚠️ Blisko ATH ({data.get('pct_from_high', '?')}%)")
+        if data.get("earnings_days") is not None:
+            flags.append(f"⚠️ Earnings za {data['earnings_days']} dni — podwyższone ryzyko")
+        short = data.get("shortPercentOfFloat")
+        if short and short > 15:
+            flags.append(f"⚠️ Short interest {short}% — ryzyko/szansa short squeeze")
+        rs = data.get("rs_vs_qqq")
+        if rs and rs > 20:
+            flags.append(f"⚠️ RS vs QQQ: +{rs}% — prawdopodobnie przegrzana")
+        elif rs and rs < -20:
+            flags.append(f"📉 RS vs QQQ: {rs}% — underperformuje rynek")
+        if flags:
+            lines.extend(flags)
+
+        # Seasonality
+        season = data.get("seasonality")
+        if season:
+            lines.append(f"📅 {season}")
+
+        # Analysis scores
+        lines.append(
+            f"Fundamenty: {analysis.get('fundamentals_score','?')}/5"
+            f" | Timing: {analysis.get('timing_score','?')}/5"
+            f" | Ryzyko: {analysis.get('macro_risk','?')}"
+        )
+        lines.append(f"_{analysis.get('reasoning', 'Brak analizy.')}_")
+        lines.append(f"→ {verdict_emoji} *{verdict}*")
+
         return "\n".join(lines)
     except Exception as e:
         logger.warning("format_ticker_slack error for %s: %s", ticker, e)
         return f"{ticker} — błąd formatowania: {e}"
 
 
+def _concentration_risk_section(results: list[tuple]) -> str:
+    """Build concentration risk section from list of (ticker, data) tuples."""
+    verdicts = Counter()
+    sectors = Counter()
+    for ticker, data in results:
+        v = (data.get("analysis") or {}).get("verdict", "CZEKAJ")
+        verdicts[v] += 1
+        sectors[data.get("sector", "Other")] += 1
+
+    total = sum(verdicts.values())
+    lines = ["", "📊 *Watchlist breakdown:*"]
+    lines.append(
+        f"🟢 KUP: {verdicts['KUP']} | 🟡 CZEKAJ: {verdicts['CZEKAJ']} | 🔴 OMIJAJ: {verdicts['OMIJAJ']}"
+    )
+
+    top_sectors = sectors.most_common(3)
+    sector_parts = [f"{s}: {c}" for s, c in top_sectors]
+    lines.append(f"Sektory: {' | '.join(sector_parts)}")
+
+    # Concentration warning
+    for sector, count in sectors.most_common(1):
+        pct = count / total * 100 if total else 0
+        if pct > 40:
+            lines.append(f"⚠️ *{sector}* stanowi {pct:.0f}% watchlisty — wysokie ryzyko koncentracji")
+
+    return "\n".join(lines)
+
+
 def run_stock_digest(tickers: list = None) -> str:
-    """Run full digest for tickers list (default: WATCHLIST). Returns full Slack message."""
+    """Run full digest. Returns full Slack message string."""
     if tickers is None:
         tickers = WATCHLIST
 
-    today = datetime.now().strftime("%d.%m.%Y")
-    lines = [f"📊 *Stock Digest — {today}*", ""]
+    today = datetime.datetime.now().strftime("%d.%m.%Y")
+    qqq_30d = _fetch_qqq_30d()
+    season = _seasonality_note()
+
+    header_parts = [f"📊 *Stock Digest — {today}*"]
+    if qqq_30d is not None:
+        header_parts.append(f"QQQ 30d: {'+' if qqq_30d >= 0 else ''}{qqq_30d}%")
+    if season:
+        header_parts.append(f"📅 {season}")
+    lines = [" | ".join(header_parts), ""]
 
     near_ath_tickers = []
+    results = []
 
     for ticker in tickers:
         try:
-            data = analyze_ticker(ticker)
+            data = analyze_ticker(ticker, qqq_30d=qqq_30d)
             lines.append(format_ticker_slack(ticker, data))
             lines.append("---")
             if data.get("near_ath"):
                 near_ath_tickers.append(ticker)
+            results.append((ticker, data))
         except Exception as e:
             logger.warning("Skipping %s due to error: %s", ticker, e)
 
     if near_ath_tickers:
         lines.append(f"⚠️ *Blisko ATH (< 5%):* {', '.join(near_ath_tickers)}")
 
+    if results:
+        lines.append(_concentration_risk_section(results))
+
     return "\n".join(lines)
 
 
+# ── Channel & scheduler entry point ──────────────────────────────────────────
 STOCK_CHANNEL_ID = os.environ.get("SLACK_STOCK_CHANNEL", "C0B5LA4Q064")
 
 
 def send_stock_digest():
     """Scheduled job: runs digest and posts to #inwestowanie. Mon-Fri 13:00 UTC."""
     try:
-        channel = STOCK_CHANNEL_ID
-        if not channel:
-            logger.warning("send_stock_digest: no channel configured (SLACK_STOCK_CHANNEL / GENERAL_CHANNEL_ID)")
-            return
-
         msg = run_stock_digest()
-
-        # Slack message limit is 40000 chars; split if needed
         chunk_size = 3900
-        chunks = [msg[i:i + chunk_size] for i in range(0, len(msg), chunk_size)]
-        for chunk in chunks:
-            _ctx.app.client.chat_postMessage(channel=channel, text=chunk)
-
-        logger.info("send_stock_digest: posted %d chunk(s) to %s", len(chunks), channel)
+        for i in range(0, len(msg), chunk_size):
+            _ctx.app.client.chat_postMessage(
+                channel=STOCK_CHANNEL_ID,
+                text=msg[i:i + chunk_size],
+            )
+        logger.info("send_stock_digest: done")
     except Exception as e:
         logger.error("send_stock_digest failed: %s", e)

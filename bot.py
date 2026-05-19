@@ -483,13 +483,19 @@ def handle_mention(event, say):
     _words = set(re.findall(r'\b[A-Z]{1,5}\b', user_message.upper()))
     _matched_tickers = [t for t in WATCHLIST if t in _words]
     if _matched_tickers:
+        import threading as _th
         ticker = _matched_tickers[0]
-        say(text=f"📊 Analizuję *{ticker}*...", thread_ts=thread_ts)
-        try:
-            data = analyze_ticker(ticker)
-            say(text=format_ticker_slack(ticker, data), thread_ts=thread_ts)
-        except Exception as _e:
-            say(text=f"❌ Błąd analizy {ticker}: {_e}", thread_ts=thread_ts)
+        _captured_thread_ts = thread_ts
+        say(text=f"📊 Analizuję *{ticker}*... chwilę.", thread_ts=_captured_thread_ts)
+
+        def _ticker_worker(_ticker=ticker, _ts=_captured_thread_ts):
+            try:
+                data = analyze_ticker(_ticker)
+                say(text=format_ticker_slack(_ticker, data), thread_ts=_ts)
+            except Exception as _e:
+                say(text=f"❌ Błąd analizy {_ticker}: {_e}", thread_ts=_ts)
+
+        _th.Thread(target=_ticker_worker, daemon=True).start()
         return
 
     # === NIEOBECNOŚCI / PROŚBY via @mention ===
@@ -1426,39 +1432,56 @@ def handle_koszty_slash(ack, respond, command):
 
 @app.command("/analiza")
 def handle_analiza_slash(ack, respond, command):
+    import threading as _th
     ack()
     ticker = (command.get("text") or "").strip().upper()
     if not ticker:
         respond("Użycie: `/analiza TICKER` np. `/analiza NVDA`")
         return
-    respond(f"📊 Analizuję *{ticker}*...")
-    try:
-        data = analyze_ticker(ticker)
-        respond(format_ticker_slack(ticker, data))
-    except Exception as e:
-        respond(f"❌ Błąd: {e}")
+    respond(f"📊 Analizuję *{ticker}*... chwilę.")
+
+    def _worker():
+        try:
+            data = analyze_ticker(ticker)
+            respond(format_ticker_slack(ticker, data))
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
 
 
 @app.command("/watchlist")
 def handle_watchlist_slash(ack, respond, command):
+    import threading as _th
     ack()
-    respond("⏳ Generuję watchlistę... (może chwilę potrwać)")
-    try:
-        msg = run_stock_digest()
-        respond(msg[:3000])  # Slack limit
-    except Exception as e:
-        respond(f"❌ Błąd: {e}")
+    respond("⏳ Generuję watchlistę... może potrwać kilka minut, poczekaj.")
+
+    def _worker():
+        try:
+            msg = run_stock_digest()
+            # respond() supports up to 30 min after ack
+            for i in range(0, min(len(msg), 12000), 3000):
+                respond(msg[i:i + 3000])
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
 
 
 @app.command("/digest")
 def handle_digest_slash(ack, respond, command):
+    import threading as _th
     ack()
-    respond("⏳ Uruchamiam digest... (może potrwać 2-3 minuty)")
-    try:
-        send_stock_digest()
-        respond("✅ Digest wysłany na kanał!")
-    except Exception as e:
-        respond(f"❌ Błąd: {e}")
+    respond("⏳ Uruchamiam pełny digest (65 tickerów) — wyślę na #inwestowanie gdy skończy. Może potrwać kilka minut.")
+
+    def _worker():
+        try:
+            send_stock_digest()
+            respond("✅ Digest wysłany na #inwestowanie!")
+        except Exception as e:
+            respond(f"❌ Digest zakończył się błędem: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
 
 
 # ── /cleanup slash command ────────────────────────────────────────────────────
