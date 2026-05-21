@@ -169,20 +169,76 @@ def _fetch_qqq_30d() -> float | None:
     return None
 
 
-# ── Tavily: news + insider + revenue surprise in one search ───────────────────
-def _fetch_news(ticker: str) -> list:
-    """One Tavily call per ticker covering news, insider activity, earnings surprises."""
+# ── Asset category mapping ────────────────────────────────────────────────────
+_CATEGORY_MAP = {
+    "CRYPTO_PROXY":     ["MSTR", "MARA", "HOOD"],
+    "URANIUM":          ["UEC", "DNN", "UUUU", "CCJ"],
+    "DEFENSE":          ["NOC", "BA", "TDG"],
+    "BIOTECH_HEALTH":   ["TEM", "ISRG", "UNH", "NVO", "TDOC"],
+    "EMERGING_MARKETS": ["BABA", "SE", "GRAB", "MELI", "NU", "DLO"],
+}
+ASSET_CATEGORY: dict[str, str] = {}
+for _cat, _tickers in _CATEGORY_MAP.items():
+    for _t in _tickers:
+        ASSET_CATEGORY[_t] = _cat
+
+CATEGORY_LABELS = {
+    "CRYPTO_PROXY":     "₿ Crypto Proxy",
+    "URANIUM":          "☢️ Uranium",
+    "DEFENSE":          "🛡 Defense",
+    "BIOTECH_HEALTH":   "💊 Biotech/Health",
+    "EMERGING_MARKETS": "🌍 Emerging Markets",
+    "STANDARD_TECH":    "💻 Tech",
+}
+
+
+def get_category(ticker: str) -> str:
+    return ASSET_CATEGORY.get(ticker, "STANDARD_TECH")
+
+
+# ── BTC data (for CRYPTO_PROXY) ───────────────────────────────────────────────
+def _fetch_btc_data() -> dict:
+    try:
+        btc = yf.Ticker("BTC-USD")
+        info = btc.info
+        price = info.get("regularMarketPrice") or info.get("currentPrice") or 0.0
+        hist  = btc.history(period="1y")
+        closes = hist["Close"].tolist()
+        rsi    = round(_calc_rsi(closes), 1) if len(closes) >= 15 else None
+        ma200  = round(float(pd.Series(closes).rolling(200).mean().iloc[-1]), 0) if len(closes) >= 200 else None
+        above_ma200 = (closes[-1] > ma200) if (closes and ma200) else None
+        bullish = bool(above_ma200 and (rsi is None or rsi < 70))
+        return {
+            "price":        round(price, 0),
+            "rsi":          rsi,
+            "ma200":        ma200,
+            "above_ma200":  above_ma200,
+            "bullish":      bullish,
+        }
+    except Exception as e:
+        logger.warning("BTC data error: %s", e)
+        return {}
+
+
+# ── Tavily: category-aware queries ────────────────────────────────────────────
+def _fetch_news(ticker: str, category: str = "STANDARD_TECH") -> list:
     if _tavily is None:
         return []
+    _queries = {
+        "CRYPTO_PROXY":     f"{ticker} bitcoin holdings NAV premium discount 2026",
+        "URANIUM":          f"uranium spot price 2026 {ticker} nuclear SMR contracts production",
+        "DEFENSE":          f"{ticker} defense contracts NATO budget 2026 backlog",
+        "BIOTECH_HEALTH":   f"{ticker} FDA pipeline GLP-1 approval clinical trial 2026",
+        "EMERGING_MARKETS": f"{ticker} regulatory risk USD currency geopolitical 2026",
+        "STANDARD_TECH":    f"{ticker} stock news insider SEC Form 4 earnings beat miss 2026",
+    }
+    query = _queries.get(category, _queries["STANDARD_TECH"])
     try:
-        results = _tavily.search(
-            query=f"{ticker} stock news insider SEC Form 4 earnings beat miss 2026",
-            max_results=3,
-        )
+        results  = _tavily.search(query=query, max_results=3)
         snippets = []
         for r in (results.get("results") or [])[:3]:
             snippets.append({
-                "title": r.get("title", ""),
+                "title":   r.get("title", ""),
                 "content": (r.get("content") or "")[:200],
             })
         return snippets
@@ -191,18 +247,85 @@ def _fetch_news(ticker: str) -> list:
         return []
 
 
-# ── Claude analysis ───────────────────────────────────────────────────────────
-_SYSTEM_PROMPT = (
-    "Jesteś analitykiem inwestycyjnym. Analizujesz spółki pod kątem:\n"
-    "1) Fundamentów (wycena vs sektor, wzrost, marże, EV/EBITDA)\n"
-    "2) Timingu (RSI > 75 = przegrzana, MA50/MA200 status, golden/death cross, blisko ATH)\n"
-    "3) Ryzyka makro (Fed policy, VIX, sezonowość, short interest, insider activity)\n"
-    "4) Relative strength vs QQQ (spółka bije rynek o > 20% w 30 dni = prawdopodobnie przegrzana)\n"
-    "Uwzględnij też czy spółka ma earnings w ciągu 14 dni — to podnosi ryzyko.\n"
-    "Odpowiadasz TYLKO w JSON bez żadnego tekstu przed/po: "
+# ── Claude system prompts per category ───────────────────────────────────────
+_BASE_JSON_SCHEMA = (
+    'Odpowiadasz TYLKO w JSON bez żadnego tekstu przed/po: '
     '{"fundamentals_score": 1-5, "timing_score": 1-5, "macro_risk": "low"/"medium"/"high", '
     '"reasoning": "max 2 zdania po polsku", "verdict": "KUP"/"CZEKAJ"/"OMIJAJ"}'
 )
+
+_SYSTEM_PROMPTS = {
+    "CRYPTO_PROXY": (
+        "Jesteś analitykiem krypto i crypto-equity. Ta spółka to CRYPTO PROXY — "
+        "jej wycena jest zdeterminowana przez Bitcoina, NIE przez P/E ani marże.\n"
+        "Oceń wyłącznie:\n"
+        "1) Trend BTC: czy BTC > MA200? RSI BTC < 70 = nie przegrzany\n"
+        "2) Lewar: ile BTC na akcję (NAV), premium/discount do NAV — wysoki premium = ryzyko\n"
+        "3) Scenario: historycznie MSTR rośnie 3-4x gdy BTC x2\n"
+        "4) Timing RSI spółki + short interest\n"
+        "KUP = BTC bullish (>MA200) + RSI BTC < 70 + rozsądny premium do NAV\n"
+        "CZEKAJ = BTC sideways lub wysoki premium do NAV\n"
+        "OMIJAJ = BTC poniżej MA200 lub RSI BTC > 80\n"
+        "W reasoning ZAWSZE podaj aktualny kurs BTC i czy jest bullish/bearish.\n"
+        + _BASE_JSON_SCHEMA
+    ),
+    "URANIUM": (
+        "Jesteś analitykiem surowcowym specjalizującym się w uranie i energetyce jądrowej.\n"
+        "NIE oceniaj przez standardowe P/E — uranium miners mają cykliczną rentowność.\n"
+        "Oceń przez:\n"
+        "1) Spot price uranu (trend wzrostowy = tailwind)\n"
+        "2) Pipeline kontraktów długoterminowych spółki\n"
+        "3) Ekspozycja na nuclear renaissance / SMR (Small Modular Reactors)\n"
+        "4) Polityczne tailwindy: dekarbonizacja, AI data centers = wzrost popytu na prąd\n"
+        "5) Koszty produkcji vs spot price (czy spółka jest profitable przy aktualnych cenach)\n"
+        "Geopolityka = TAILWIND dla nuclear, nie ryzyko.\n"
+        + _BASE_JSON_SCHEMA
+    ),
+    "DEFENSE": (
+        "Jesteś analitykiem sektora obronnego.\n"
+        "Oceń przez:\n"
+        "1) Cykl obronny: budżety NATO, wydatki rządowe (rosnące = tailwind)\n"
+        "2) Backlog kontraktów i visibility przychodów\n"
+        "3) Geopolityka jako TAILWIND — nie ryzyko\n"
+        "4) Wycena vs peers (P/E w defense zwykle 15-25x = normalne)\n"
+        "5) Dywidenda i buybacki jako element zwrotu\n"
+        "Nie karz spółki za 'wysokie' P/E jeśli backlog i cykl uzasadniają premię.\n"
+        + _BASE_JSON_SCHEMA
+    ),
+    "BIOTECH_HEALTH": (
+        "Jesteś analitykiem sektora healthcare i biotech.\n"
+        "Oceń przez:\n"
+        "1) Pipeline produktowy i FDA approvals (catalyst risk/opportunity)\n"
+        "2) Dla NVO: ekspozycja na GLP-1 market share, competition from LLY\n"
+        "3) Dla insurerów (UNH): medical loss ratio, regulatory risk\n"
+        "4) Dla telehealth (TDOC): unit economics, customer retention\n"
+        "5) Generics risk dla spółek patentowych\n"
+        "6) Standardowe fundamenty tam gdzie mają sens\n"
+        + _BASE_JSON_SCHEMA
+    ),
+    "EMERGING_MARKETS": (
+        "Jesteś analitykiem rynków wschodzących.\n"
+        "Oceń przez:\n"
+        "1) Fundamenty spółki (wzrost, marże, wycena)\n"
+        "2) Ryzyko walutowe USD (silny USD = headwind dla EM)\n"
+        "3) Ryzyko regulacyjne kraju:\n"
+        "   - Chiny (BABA, inne): ryzyko regulacyjne CCP, delisting risk = osobna flaga\n"
+        "   - Azja SEA (SE, GRAB): ryzyko niższe, ale polityka lokalna\n"
+        "   - LATAM (MELI, NU, DLO): ryzyko walutowe, inflation\n"
+        "4) Geopolityka (de-coupling USA-Chiny = dodatkowe ryzyko dla spółek chińskich)\n"
+        "W reasoning zaznacz zawsze ryzyko kraju jako osobną wzmiankę.\n"
+        + _BASE_JSON_SCHEMA
+    ),
+    "STANDARD_TECH": (
+        "Jesteś analitykiem inwestycyjnym. Analizujesz spółki pod kątem:\n"
+        "1) Fundamentów (wycena vs sektor, wzrost, marże, EV/EBITDA)\n"
+        "2) Timingu (RSI > 75 = przegrzana, MA50/MA200, golden/death cross, blisko ATH)\n"
+        "3) Ryzyka makro (Fed, VIX, sezonowość, short interest, insider activity)\n"
+        "4) Relative strength vs QQQ (>20% w 30d = prawdopodobnie przegrzana)\n"
+        "Uwzględnij czy spółka ma earnings w ciągu 14 dni.\n"
+        + _BASE_JSON_SCHEMA
+    ),
+}
 
 _FALLBACK_ANALYSIS = {
     "fundamentals_score": 3,
@@ -213,43 +336,67 @@ _FALLBACK_ANALYSIS = {
 }
 
 
-def _claude_analyze(ticker: str, fin: dict, news: list) -> dict:
+def _build_user_msg(ticker: str, fin: dict, news: list, category: str) -> str:
     tech = fin.get("technicals", {})
-    news_text = ("\n\nNewsy/insider/earnings surprises:\n" +
-                 "\n".join(f"- {n['title']}: {n['content']}" for n in news)
-                 ) if news else "\n\n(brak newsów)"
+    news_text = (
+        "\n\nNewsy/kontekst:\n" + "\n".join(f"- {n['title']}: {n['content']}" for n in news)
+    ) if news else "\n\n(brak newsów)"
 
     ma_status = []
-    if tech.get("above_ma50") is not None:
-        ma_status.append("powyżej MA50" if tech["above_ma50"] else "poniżej MA50")
-    if tech.get("above_ma200") is not None:
-        ma_status.append("powyżej MA200" if tech["above_ma200"] else "poniżej MA200")
-    if tech.get("golden_cross"):
-        ma_status.append("GOLDEN CROSS (bullish)")
-    if tech.get("death_cross"):
-        ma_status.append("DEATH CROSS (bearish)")
+    if tech.get("above_ma50")  is not None: ma_status.append("powyżej MA50"  if tech["above_ma50"]  else "poniżej MA50")
+    if tech.get("above_ma200") is not None: ma_status.append("powyżej MA200" if tech["above_ma200"] else "poniżej MA200")
+    if tech.get("golden_cross"): ma_status.append("GOLDEN CROSS")
+    if tech.get("death_cross"):  ma_status.append("DEATH CROSS")
 
-    user_msg = (
-        f"Ticker: {ticker}\n"
-        f"Cena: ${fin.get('price', 'N/A')} ({fin.get('change_pct', 'N/A'):+}%)\n"
-        f"52w High: ${fin.get('high52w', 'N/A')} | % od ATH: {fin.get('pct_from_high', 'N/A')}%\n"
-        f"Blisko ATH (<5%): {fin.get('near_ath', False)}\n"
-        f"RSI-14: {fin.get('rsi', 'N/A')}\n"
-        f"MA: {', '.join(ma_status) or 'N/A'} | Wsparcie 30d: ${tech.get('support_30d', 'N/A')}\n"
-        f"Trailing PE: {fin.get('trailingPE', 'N/A')} | Fwd PE: {fin.get('forwardPE', 'N/A')} | EV/EBITDA: {fin.get('enterpriseToEbitda', 'N/A')}\n"
-        f"Marża netto: {fin.get('profitMargins', 'N/A')} | Revenue growth YoY: {fin.get('revenueGrowth', 'N/A')}\n"
-        f"Short interest: {fin.get('shortPercentOfFloat', 'N/A')}\n"
-        f"RS vs QQQ (30d): {fin.get('rs_vs_qqq', 'N/A')}%\n"
-        f"Earnings za {fin.get('earnings_days', 'N/A')} dni\n"
-        f"Sezonowość: {fin.get('seasonality', 'brak')}"
-        f"{news_text}"
+    base = (
+        f"Ticker: {ticker} | Kategoria: {category}\n"
+        f"Cena: ${fin.get('price','N/A')} ({fin.get('change_pct','N/A'):+}%) | "
+        f"52w ATH: ${fin.get('high52w','N/A')} ({fin.get('pct_from_high','N/A')}% od ATH)\n"
+        f"RSI-14: {fin.get('rsi','N/A')} | MA: {', '.join(ma_status) or 'N/A'}\n"
+        f"Short interest: {fin.get('shortPercentOfFloat','N/A')} | "
+        f"RS vs QQQ 30d: {fin.get('rs_vs_qqq','N/A')}% | "
+        f"Earnings za: {fin.get('earnings_days','N/A')} dni\n"
+        f"Sezonowość: {fin.get('seasonality','brak')}\n"
     )
 
+    if category == "CRYPTO_PROXY":
+        btc = fin.get("btc_data", {})
+        base += (
+            f"\n--- BTC DATA ---\n"
+            f"BTC cena: ${btc.get('price','N/A')} | RSI BTC: {btc.get('rsi','N/A')} | "
+            f"BTC > MA200: {btc.get('above_ma200','N/A')} | BTC bullish: {btc.get('bullish','N/A')}\n"
+        )
+        if fin.get("mstr_nav"):
+            nav = fin["mstr_nav"]
+            base += (
+                f"MSTR BTC/akcję (approx): {nav.get('btc_per_share_approx','N/A')} | "
+                f"NAV/akcję (approx): ${nav.get('nav_per_share_approx','N/A')}\n"
+                f"Kontekst NAV z Tavily: {nav.get('tavily_context','brak')}\n"
+            )
+    elif category in ("URANIUM", "DEFENSE", "BIOTECH_HEALTH", "EMERGING_MARKETS"):
+        base += (
+            f"\nPE: {fin.get('trailingPE','N/A')} | Fwd PE: {fin.get('forwardPE','N/A')} | "
+            f"EV/EBITDA: {fin.get('enterpriseToEbitda','N/A')}\n"
+            f"Marża: {fin.get('profitMargins','N/A')} | Rev growth: {fin.get('revenueGrowth','N/A')}\n"
+        )
+    else:
+        base += (
+            f"PE: {fin.get('trailingPE','N/A')} | Fwd PE: {fin.get('forwardPE','N/A')} | "
+            f"EV/EBITDA: {fin.get('enterpriseToEbitda','N/A')}\n"
+            f"Marża: {fin.get('profitMargins','N/A')} | Rev growth: {fin.get('revenueGrowth','N/A')}\n"
+        )
+
+    return base + news_text
+
+
+def _claude_analyze(ticker: str, fin: dict, news: list, category: str = "STANDARD_TECH") -> dict:
+    system = _SYSTEM_PROMPTS.get(category, _SYSTEM_PROMPTS["STANDARD_TECH"])
+    user_msg = _build_user_msg(ticker, fin, news, category)
     try:
         response = _ctx.claude.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=300,
-            system=_SYSTEM_PROMPT,
+            max_tokens=350,
+            system=system,
             messages=[{"role": "user", "content": user_msg}],
         )
         raw = response.content[0].text.strip()
@@ -262,10 +409,11 @@ def _claude_analyze(ticker: str, fin: dict, news: list) -> dict:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def analyze_ticker(ticker: str, qqq_30d: float | None = None) -> dict:
+def analyze_ticker(ticker: str, qqq_30d: float | None = None, btc_data: dict | None = None) -> dict:
     """Fetch data + news + Claude analysis for one ticker. Returns dict with all fields."""
+    category   = get_category(ticker)
     ticker_obj = yf.Ticker(ticker)
-    info = ticker_obj.info
+    info       = ticker_obj.info
 
     # ── Price ──
     price = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("ask") or 0.0
@@ -326,10 +474,33 @@ def analyze_ticker(ticker: str, qqq_30d: float | None = None) -> dict:
         "profitMargins": info.get("profitMargins"),
         "revenueGrowth": info.get("revenueGrowth"),
         "sector": TICKER_SECTORS.get(ticker, "Other"),
+        "category": category,
     }
 
-    news = _fetch_news(ticker)
-    analysis = _claude_analyze(ticker, fin, news)
+    # ── Category-specific extras ──
+    if category == "CRYPTO_PROXY":
+        fin["btc_data"] = btc_data if btc_data is not None else _fetch_btc_data()
+        if ticker == "MSTR" and _tavily:
+            try:
+                r = _tavily.search(
+                    f"MicroStrategy MSTR bitcoin holdings BTC per share NAV 2026",
+                    max_results=3,
+                )
+                ctx = " ".join((x.get("content") or "")[:200] for x in (r.get("results") or []))[:500]
+                shares = info.get("sharesOutstanding") or 0
+                btc_price = fin["btc_data"].get("price") or 0
+                # rough static estimate — Tavily context gives Claude the real number
+                btc_held_approx = 214_400
+                fin["mstr_nav"] = {
+                    "btc_per_share_approx": round(btc_held_approx / shares, 4) if shares else None,
+                    "nav_per_share_approx": round(btc_held_approx * btc_price / shares, 2) if shares and btc_price else None,
+                    "tavily_context": ctx,
+                }
+            except Exception as e:
+                logger.warning("MSTR NAV fetch error: %s", e)
+
+    news     = _fetch_news(ticker, category)
+    analysis = _claude_analyze(ticker, fin, news, category)
     return {**fin, "news": news, "analysis": analysis}
 
 
@@ -369,36 +540,64 @@ def _ticker_flags(data: dict) -> list[str]:
 def format_ticker_attachment(ticker: str, data: dict) -> dict:
     """Format one ticker as a Slack attachment (colored sidebar + Block Kit fields)."""
     try:
-        price = data.get("price", "N/A")
-        cp = data.get("change_pct", 0)
-        rsi = data.get("rsi")
-        tpe = data.get("trailingPE")
-        fpe = data.get("forwardPE")
-        tech = data.get("technicals", {})
+        price    = data.get("price", "N/A")
+        cp       = data.get("change_pct", 0)
+        rsi      = data.get("rsi")
+        tpe      = data.get("trailingPE")
+        fpe      = data.get("forwardPE")
+        tech     = data.get("technicals", {})
+        category = data.get("category", "STANDARD_TECH")
+        cat_label = CATEGORY_LABELS.get(category, category)
         analysis = data.get("analysis") or dict(_FALLBACK_ANALYSIS)
-        verdict = analysis.get("verdict", "CZEKAJ")
+        verdict  = analysis.get("verdict", "CZEKAJ")
         verdict_emoji = {"KUP": "🟢", "CZEKAJ": "🟡", "OMIJAJ": "🔴"}.get(verdict, "⚪")
-        color = {"KUP": "#2eb886", "CZEKAJ": "#e6b833", "OMIJAJ": "#e01e5a"}.get(verdict, "#aaaaaa")
+        color    = {"KUP": "#2eb886", "CZEKAJ": "#e6b833", "OMIJAJ": "#e01e5a"}.get(verdict, "#aaaaaa")
 
-        sign = "+" if cp >= 0 else ""
+        sign   = "+" if cp >= 0 else ""
         ma_str = _ticker_ma_str(tech)
-        flags = _ticker_flags(data)
+        flags  = _ticker_flags(data)
+
+        # ── Build fields depending on category ──
+        if category == "CRYPTO_PROXY":
+            btc = data.get("btc_data", {})
+            btc_str  = f"${btc.get('price','N/A')} RSI={btc.get('rsi','?')} {'🟢BTC bullish' if btc.get('bullish') else '🔴BTC bearish'}"
+            nav  = data.get("mstr_nav", {})
+            nav_str  = f"~${nav.get('nav_per_share_approx','N/A')}/akcję" if nav else "N/A"
+            fields = [
+                {"type": "mrkdwn", "text": f"*RSI spółki*\n{rsi if rsi else 'N/A'}"},
+                {"type": "mrkdwn", "text": f"*Bitcoin*\n{btc_str}"},
+                {"type": "mrkdwn", "text": f"*NAV (approx)*\n{nav_str}"},
+                {"type": "mrkdwn", "text": f"*Technikalia*\n{ma_str}"},
+                {"type": "mrkdwn", "text": f"*Fundamenty*\n{analysis.get('fundamentals_score','?')}/5"},
+                {"type": "mrkdwn", "text": f"*Ryzyko*\n{analysis.get('macro_risk','?')}"},
+            ]
+        elif category == "URANIUM":
+            fields = [
+                {"type": "mrkdwn", "text": f"*RSI*\n{rsi if rsi else 'N/A'}"},
+                {"type": "mrkdwn", "text": f"*PE / Fwd PE*\n{round(tpe,1) if tpe else 'N/A'} / {round(fpe,1) if fpe else 'N/A'}"},
+                {"type": "mrkdwn", "text": f"*Technikalia*\n{ma_str}"},
+                {"type": "mrkdwn", "text": f"*Timing*\n{analysis.get('timing_score','?')}/5"},
+                {"type": "mrkdwn", "text": f"*Ryzyko*\n{analysis.get('macro_risk','?')}"},
+                {"type": "mrkdwn", "text": f"*Fundamenty*\n{analysis.get('fundamentals_score','?')}/5"},
+            ]
+        else:
+            fields = [
+                {"type": "mrkdwn", "text": f"*RSI*\n{rsi if rsi else 'N/A'}"},
+                {"type": "mrkdwn", "text": f"*PE / Fwd PE*\n{round(tpe,1) if tpe else 'N/A'} / {round(fpe,1) if fpe else 'N/A'}"},
+                {"type": "mrkdwn", "text": f"*Fundamenty*\n{analysis.get('fundamentals_score','?')}/5"},
+                {"type": "mrkdwn", "text": f"*Timing*\n{analysis.get('timing_score','?')}/5"},
+                {"type": "mrkdwn", "text": f"*Ryzyko makro*\n{analysis.get('macro_risk','?')}"},
+                {"type": "mrkdwn", "text": f"*Technikalia*\n{ma_str}"},
+            ]
 
         blocks = [
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*{ticker}* ${price} ({sign}{cp}%)  {verdict_emoji} *{verdict}*",
+                    "text": f"*{ticker}* ${price} ({sign}{cp}%)  {verdict_emoji} *{verdict}*  `{cat_label}`",
                 },
-                "fields": [
-                    {"type": "mrkdwn", "text": f"*RSI*\n{rsi if rsi else 'N/A'}"},
-                    {"type": "mrkdwn", "text": f"*PE / Fwd PE*\n{round(tpe,1) if tpe else 'N/A'} / {round(fpe,1) if fpe else 'N/A'}"},
-                    {"type": "mrkdwn", "text": f"*Fundamenty*\n{analysis.get('fundamentals_score','?')}/5"},
-                    {"type": "mrkdwn", "text": f"*Timing*\n{analysis.get('timing_score','?')}/5"},
-                    {"type": "mrkdwn", "text": f"*Ryzyko makro*\n{analysis.get('macro_risk','?')}"},
-                    {"type": "mrkdwn", "text": f"*Technikalia*\n{ma_str}"},
-                ],
+                "fields": fields,
             }
         ]
 
@@ -407,6 +606,21 @@ def format_ticker_attachment(ticker: str, data: dict) -> dict:
                 "type": "context",
                 "elements": [{"type": "mrkdwn", "text": "  ·  ".join(flags)}],
             })
+
+        # MSTR: BTC scenario block
+        if ticker == "MSTR" and data.get("btc_data", {}).get("price"):
+            btc_p = data["btc_data"]["price"]
+            nav   = data.get("mstr_nav", {})
+            nav_ps = nav.get("nav_per_share_approx") if nav else None
+            if nav_ps:
+                scenario_150k = round(nav_ps * (150_000 / btc_p) * 1.0, 0)
+                blocks.append({
+                    "type": "context",
+                    "elements": [{"type": "mrkdwn", "text":
+                        f"📐 *Scenariusz:* przy BTC $150k → NAV/akcję ~${scenario_150k:.0f} "
+                        f"(historycznie MSTR handluje z 1.5-2x premią do NAV)"
+                    }],
+                })
 
         reasoning = analysis.get("reasoning", "")
         if reasoning:
@@ -528,17 +742,21 @@ STOCK_CHANNEL_ID = os.environ.get("SLACK_STOCK_CHANNEL", "C0B5LA4Q064")
 
 
 def send_stock_digest(tickers: list = None):
-    """Scheduled job: posts rich Block Kit cards to #inwestowanie. Mon-Fri 13:00 UTC."""
+    """Posts rich Block Kit cards to #inwestowanie (detailed per-ticker view)."""
     if tickers is None:
         tickers = WATCHLIST
     try:
         today = datetime.datetime.now().strftime("%d.%m.%Y")
         qqq_30d = _fetch_qqq_30d()
-        season = _seasonality_note()
+        season  = _seasonality_note()
+        # Fetch BTC once — shared across all CRYPTO_PROXY tickers
+        btc_data = _fetch_btc_data()
 
         header = f"📊 *Stock Digest — {today}*"
         if qqq_30d is not None:
             header += f"  |  QQQ 30d: {'+' if qqq_30d >= 0 else ''}{qqq_30d}%"
+        if btc_data.get("price"):
+            header += f"  |  ₿ ${btc_data['price']:,.0f} {'🟢' if btc_data.get('bullish') else '🔴'}"
         if season:
             header += f"  |  📅 {season}"
 
@@ -558,7 +776,7 @@ def send_stock_digest(tickers: list = None):
 
         for ticker in tickers:
             try:
-                data = analyze_ticker(ticker, qqq_30d=qqq_30d)
+                data = analyze_ticker(ticker, qqq_30d=qqq_30d, btc_data=btc_data)
                 batch.append(format_ticker_attachment(ticker, data))
                 results.append((ticker, data))
                 if data.get("near_ath"):
@@ -599,21 +817,23 @@ def run_summary_digest(tickers: list = None) -> str:
     qqq_30d = _fetch_qqq_30d()
     season = _seasonality_note()
 
-    lines_data = []
-    near_ath = []
+    btc_data    = _fetch_btc_data()
+    lines_data  = []
+    near_ath    = []
 
     for ticker in tickers:
         try:
-            t = yf.Ticker(ticker)
+            category = get_category(ticker)
+            t    = yf.Ticker(ticker)
             info = t.info
             price = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("ask") or 0.0
             if not price:
                 continue
-            prev  = info.get("previousClose") or price
-            chg   = round((price - prev) / prev * 100, 2) if prev else 0.0
-            pe    = info.get("trailingPE")
-            fpe   = info.get("forwardPE")
-            rev_g = info.get("revenueGrowth")
+            prev   = info.get("previousClose") or price
+            chg    = round((price - prev) / prev * 100, 2) if prev else 0.0
+            pe     = info.get("trailingPE")
+            fpe    = info.get("forwardPE")
+            rev_g  = info.get("revenueGrowth")
             margin = info.get("profitMargins")
             high52 = info.get("fiftyTwoWeekHigh") or 0
             pct_ath = round((price - high52) / high52 * 100, 2) if high52 else None
@@ -624,7 +844,7 @@ def run_summary_digest(tickers: list = None) -> str:
                 closes = hist["Close"].tolist()
                 if len(closes) >= 15:
                     rsi = round(_calc_rsi(closes), 1)
-                tech   = _calc_technicals(closes)
+                tech     = _calc_technicals(closes)
                 above50  = tech.get("above_ma50")
                 above200 = tech.get("above_ma200")
                 golden   = tech.get("golden_cross")
@@ -632,7 +852,7 @@ def run_summary_digest(tickers: list = None) -> str:
             except Exception:
                 pass
 
-            parts = [f"{ticker}: ${price} ({chg:+.1f}%)"]
+            parts = [f"{ticker}[{category}]: ${price} ({chg:+.1f}%)"]
             if rsi     is not None: parts.append(f"RSI={rsi}")
             if pe      is not None: parts.append(f"PE={round(pe,0):.0f}")
             if fpe     is not None: parts.append(f"FwdPE={round(fpe,0):.0f}")
@@ -646,6 +866,10 @@ def run_summary_digest(tickers: list = None) -> str:
                 parts.append(f"odATH={pct_ath}%")
                 if pct_ath > -5:
                     near_ath.append(ticker)
+
+            # Category extras inline
+            if category == "CRYPTO_PROXY" and btc_data.get("price"):
+                parts.append(f"BTC=${btc_data['price']:,.0f} RSI_BTC={btc_data.get('rsi','?')} BTC_bullish={btc_data.get('bullish','?')}")
             lines_data.append(" | ".join(parts))
         except Exception as e:
             logger.warning("Summary fetch %s: %s", ticker, e)
@@ -653,36 +877,40 @@ def run_summary_digest(tickers: list = None) -> str:
     if not lines_data:
         return "⚠️ Brak danych — sprawdź połączenie z yfinance."
 
-    qqq_info = f"QQQ 30d: {'+' if (qqq_30d or 0) >= 0 else ''}{qqq_30d}%" if qqq_30d is not None else ""
+    qqq_info    = f"QQQ 30d: {'+' if (qqq_30d or 0) >= 0 else ''}{qqq_30d}%" if qqq_30d is not None else ""
     season_info = f"Sezonowość: {season}" if season else ""
+    btc_info    = f"BTC: ${btc_data.get('price','N/A'):,} RSI={btc_data.get('rsi','?')} {'BULLISH' if btc_data.get('bullish') else 'BEARISH'}" if btc_data.get("price") else ""
 
     prompt = (
-        f"Dzisiaj: {today}. {qqq_info}. {season_info}\n\n"
-        f"Dane dla {len(lines_data)} spółek z watchlisty:\n"
+        f"Dzisiaj: {today}. {qqq_info}. {btc_info}. {season_info}\n\n"
+        f"Dane dla {len(lines_data)} spółek (format: TICKER[KATEGORIA]: dane):\n"
         + "\n".join(lines_data)
         + """
 
-Napisz JEDEN zwięzły raport inwestycyjny w formacie Slack markdown. Pogrupuj wszystkie spółki w trzy sekcje:
+Napisz JEDEN raport inwestycyjny w formacie Slack markdown. Pogrupuj wszystkie spółki w trzy sekcje:
 
 🟢 *WARTE UWAGI — dobre wejście teraz:*
-• *TICKER* $cena — 1 zdanie: dlaczego warto (RSI, wycena, momentum, technicals)
+• *TICKER* $cena — 1 zdanie uzasadnienia
 
-🟡 *CZEKAJ — dobra spółka, ale zły timing lub za drogo:*
-• *TICKER* $cena — 1 zdanie: co konkretnie hamuje (RSI wysoki, blisko ATH, za drogie PE)
+🟡 *CZEKAJ — dobra spółka, zły timing lub za drogo:*
+• *TICKER* $cena — 1 zdanie uzasadnienia
 
-🔴 *OMIJAJ — słabe fundamenty lub ekstremalnie przewartościowane:*
-• *TICKER* $cena — 1 zdanie: konkretny powód
+🔴 *OMIJAJ:*
+• *TICKER* $cena — 1 zdanie uzasadnienia
 
-Zasady grupowania:
-- WARTE UWAGI: RSI < 65, nie w top 5% ATH, przyzwoite fundamenty LUB wyraźny techniczny sygnał wejścia
-- CZEKAJ: dobre fundamenty ale RSI > 68 lub < 3% od ATH lub brak danych cenowych
-- OMIJAJ: ujemna rentowność bez wzrostu, crypto-proxy bez fundamentów, PE > 200 bez uzasadnienia wzrostem
+ZASADY GRUPOWANIA PER KATEGORIA:
+- STANDARD_TECH: RSI<65 + nie blisko ATH + fundamenty OK = WARTE UWAGI
+- CRYPTO_PROXY (MSTR, MARA, HOOD): oceniaj TYLKO przez BTC trend (nie PE/marże). BTC bullish+RSI_BTC<70=KUP. Zaznacz aktualny kurs BTC w reasoning.
+- URANIUM (UEC,DNN,UUUU,CCJ): oceniaj przez spot uranu i nuclear renaissance, nie przez PE. Tailwind = rosnący popyt AI/data centers.
+- DEFENSE (NOC,BA,TDG): geopolityka=TAILWIND, backlog kontraktów, budżety NATO rosnące.
+- BIOTECH_HEALTH (TEM,ISRG,UNH,NVO,TDOC): pipeline/FDA/GLP-1 market share. NVO przez ekspozycję na GLP-1.
+- EMERGING_MARKETS (BABA,SE,GRAB,MELI,NU,DLO): uwzględnij ryzyko USD i kraju. Chiny=osobna flaga ryzyka regulacyjnego.
 
-Na końcu ZAWSZE dodaj:
+Na końcu ZAWSZE:
 ⚠️ *Blisko ATH (<5%):* [lista lub "brak"]
 📊 *Watchlist:* X warte uwagi | Y czekaj | Z omijaj
 
-Pisz po polsku. Uzasadnienia krótkie i konkretne — używaj liczb z danych."""
+Pisz po polsku. Krótko, konkretnie, liczby z danych."""
     )
 
     try:
@@ -699,6 +927,8 @@ Pisz po polsku. Uzasadnienia krótkie i konkretne — używaj liczb z danych."""
     header = f"📊 *Stock Digest — {today}*"
     if qqq_30d is not None:
         header += f"  |  QQQ 30d: {'+' if qqq_30d >= 0 else ''}{qqq_30d}%"
+    if btc_data.get("price"):
+        header += f"  |  ₿ ${btc_data['price']:,.0f} {'🟢' if btc_data.get('bullish') else '🔴'}"
     if season:
         header += f"  |  📅 {season}"
 
