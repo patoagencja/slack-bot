@@ -171,24 +171,29 @@ def _fetch_qqq_30d() -> float | None:
 
 # ── Asset category mapping ────────────────────────────────────────────────────
 _CATEGORY_MAP = {
-    "CRYPTO_PROXY":     ["MSTR", "MARA", "HOOD"],
-    "URANIUM":          ["UEC", "DNN", "UUUU", "CCJ"],
-    "DEFENSE":          ["NOC", "BA", "TDG"],
-    "BIOTECH_HEALTH":   ["TEM", "ISRG", "UNH", "NVO", "TDOC"],
-    "EMERGING_MARKETS": ["BABA", "SE", "GRAB", "MELI", "NU", "DLO"],
+    "CRYPTO_PROXY":          ["MSTR", "MARA", "HOOD"],
+    "URANIUM":               ["UEC", "DNN", "UUUU", "CCJ"],
+    "DEFENSE":               ["NOC", "BA", "TDG"],
+    "BIOTECH_HEALTH":        ["TEM", "ISRG", "UNH", "NVO", "TDOC"],
+    "EMERGING_MARKETS":      ["BABA", "SE", "GRAB", "MELI", "NU", "DLO"],
+    "CONSUMER_DISCRETIONARY":["LULU", "NKE", "DECK", "CMG", "RACE"],
 }
+# Tickers with tariff/supply-chain risk beyond CONSUMER_DISCRETIONARY
+_TARIFF_RISK_TICKERS = {"LULU", "NKE", "DECK", "RACE", "SNAP", "AAPL", "CMG"}
+
 ASSET_CATEGORY: dict[str, str] = {}
 for _cat, _tickers in _CATEGORY_MAP.items():
     for _t in _tickers:
         ASSET_CATEGORY[_t] = _cat
 
 CATEGORY_LABELS = {
-    "CRYPTO_PROXY":     "₿ Crypto Proxy",
-    "URANIUM":          "☢️ Uranium",
-    "DEFENSE":          "🛡 Defense",
-    "BIOTECH_HEALTH":   "💊 Biotech/Health",
-    "EMERGING_MARKETS": "🌍 Emerging Markets",
-    "STANDARD_TECH":    "💻 Tech",
+    "CRYPTO_PROXY":          "₿ Crypto Proxy",
+    "URANIUM":               "☢️ Uranium",
+    "DEFENSE":               "🛡 Defense",
+    "BIOTECH_HEALTH":        "💊 Biotech/Health",
+    "EMERGING_MARKETS":      "🌍 Emerging Markets",
+    "CONSUMER_DISCRETIONARY":"🛍 Consumer",
+    "STANDARD_TECH":         "💻 Tech",
 }
 
 
@@ -220,17 +225,117 @@ def _fetch_btc_data() -> dict:
         return {}
 
 
+# ── Quarterly fundamental trends ─────────────────────────────────────────────
+def _fetch_quarterly_trends(ticker_obj) -> dict:
+    """
+    Returns revenue deceleration, margin decline, and deterioration flag.
+    All from yfinance quarterly financials — no extra API calls.
+    """
+    result = {
+        "revenue_decelerating": False,
+        "margin_declining":     False,
+        "deteriorating":        False,
+        "revenue_growth_qtrs":  [],
+        "gross_margin_qtrs":    [],
+        "details":              "",
+    }
+    try:
+        try:
+            q = ticker_obj.quarterly_income_stmt
+        except Exception:
+            q = getattr(ticker_obj, "quarterly_financials", None)
+        if q is None or q.empty:
+            return result
+
+        # ── Revenue deceleration (QoQ growth rate trend) ──
+        rev_row = None
+        for lbl in ("Total Revenue", "TotalRevenue", "Revenue"):
+            if lbl in q.index:
+                rev_row = q.loc[lbl].dropna().sort_index()
+                break
+        if rev_row is not None and len(rev_row) >= 3:
+            vals = rev_row.iloc[-4:].values if len(rev_row) >= 4 else rev_row.values
+            growth = [
+                round((vals[i] - vals[i - 1]) / abs(vals[i - 1]) * 100, 1)
+                for i in range(1, len(vals))
+                if vals[i - 1] != 0
+            ]
+            result["revenue_growth_qtrs"] = growth
+            if len(growth) >= 2:
+                result["revenue_decelerating"] = all(
+                    growth[i] < growth[i - 1] for i in range(1, len(growth))
+                )
+
+        # ── Gross margin decline (2+ consecutive quarters falling) ──
+        gp_row = rev_match = None
+        for lbl in ("Gross Profit", "GrossProfit"):
+            if lbl in q.index:
+                gp_row = q.loc[lbl].dropna().sort_index()
+                break
+        for lbl in ("Total Revenue", "TotalRevenue", "Revenue"):
+            if lbl in q.index:
+                rev_match = q.loc[lbl].dropna().sort_index()
+                break
+        if gp_row is not None and rev_match is not None:
+            common = gp_row.index.intersection(rev_match.index)[-4:]
+            if len(common) >= 3:
+                margins = [
+                    round(float(gp_row[c]) / float(rev_match[c]) * 100, 1)
+                    for c in common if rev_match[c] != 0
+                ]
+                result["gross_margin_qtrs"] = margins
+                declines = sum(1 for i in range(1, len(margins)) if margins[i] < margins[i - 1])
+                result["margin_declining"] = declines >= 2
+
+        signals = sum([result["revenue_decelerating"], result["margin_declining"]])
+        result["deteriorating"] = signals >= 2
+        if result["deteriorating"]:
+            result["details"] = (
+                f"Revenue zwalnia {result['revenue_growth_qtrs']} + "
+                f"marże brutto {result['gross_margin_qtrs']}"
+            )
+        elif result["revenue_decelerating"]:
+            result["details"] = f"Revenue QoQ: {result['revenue_growth_qtrs']}"
+        elif result["margin_declining"]:
+            result["details"] = f"Marże brutto: {result['gross_margin_qtrs']}"
+
+    except Exception as e:
+        logger.warning("Quarterly trends error: %s", e)
+    return result
+
+
+# ── Sector context cache (one call per sector per digest run) ─────────────────
+_sector_cache: dict[str, str] = {}
+
+
+def _fetch_sector_context(sector: str) -> str:
+    if _tavily is None or not sector:
+        return ""
+    if sector in _sector_cache:
+        return _sector_cache[sector]
+    try:
+        r = _tavily.search(f"{sector} sector outlook headwinds tailwinds 2026", max_results=2)
+        ctx = " ".join((x.get("content") or "")[:150] for x in (r.get("results") or []))[:300]
+        _sector_cache[sector] = ctx
+        return ctx
+    except Exception as e:
+        logger.warning("Sector context error for %s: %s", sector, e)
+        return ""
+
+
 # ── Tavily: category-aware queries ────────────────────────────────────────────
 def _fetch_news(ticker: str, category: str = "STANDARD_TECH") -> list:
+    """Primary Tavily call — category-aware, includes guidance signal."""
     if _tavily is None:
         return []
     _queries = {
-        "CRYPTO_PROXY":     f"{ticker} bitcoin holdings NAV premium discount 2026",
-        "URANIUM":          f"uranium spot price 2026 {ticker} nuclear SMR contracts production",
-        "DEFENSE":          f"{ticker} defense contracts NATO budget 2026 backlog",
-        "BIOTECH_HEALTH":   f"{ticker} FDA pipeline GLP-1 approval clinical trial 2026",
-        "EMERGING_MARKETS": f"{ticker} regulatory risk USD currency geopolitical 2026",
-        "STANDARD_TECH":    f"{ticker} stock news insider SEC Form 4 earnings beat miss 2026",
+        "CRYPTO_PROXY":          f"{ticker} bitcoin holdings NAV premium discount 2026",
+        "URANIUM":               f"uranium spot price 2026 {ticker} nuclear SMR contracts production",
+        "DEFENSE":               f"{ticker} defense contracts NATO budget 2026 backlog",
+        "BIOTECH_HEALTH":        f"{ticker} FDA pipeline GLP-1 approval clinical trial 2026",
+        "EMERGING_MARKETS":      f"{ticker} regulatory risk USD currency geopolitical 2026",
+        "CONSUMER_DISCRETIONARY":f"{ticker} same store sales inventory comparable sales 2026",
+        "STANDARD_TECH":         f"{ticker} stock news insider guidance earnings beat miss 2026",
     }
     query = _queries.get(category, _queries["STANDARD_TECH"])
     try:
@@ -247,11 +352,46 @@ def _fetch_news(ticker: str, category: str = "STANDARD_TECH") -> list:
         return []
 
 
+def _fetch_extra_signals(ticker: str, category: str) -> dict:
+    """Additional targeted Tavily calls for guidance, tariffs, US sales."""
+    if _tavily is None:
+        return {}
+    out = {}
+
+    def _search(key: str, query: str, chars: int = 300):
+        try:
+            r = _tavily.search(query, max_results=2)
+            out[key] = " ".join((x.get("content") or "")[:150] for x in (r.get("results") or []))[:chars]
+        except Exception as e:
+            logger.warning("Extra signal %s for %s: %s", key, ticker, e)
+
+    # Guidance — all tickers
+    _search("guidance", f"{ticker} guidance lowered raised outlook forecast 2026")
+
+    # Tariffs — consumer & other exposed tickers
+    if category == "CONSUMER_DISCRETIONARY" or ticker in _TARIFF_RISK_TICKERS:
+        _search("tariffs", f"{ticker} tariffs supply chain China import costs 2026")
+
+    # US domestic sales — consumer focused
+    if category == "CONSUMER_DISCRETIONARY":
+        _search("us_sales", f"{ticker} US domestic sales revenue decline slowdown 2026")
+
+    return out
+
+
 # ── Claude system prompts per category ───────────────────────────────────────
 _BASE_JSON_SCHEMA = (
-    'Odpowiadasz TYLKO w JSON bez żadnego tekstu przed/po: '
-    '{"fundamentals_score": 1-5, "timing_score": 1-5, "macro_risk": "low"/"medium"/"high", '
-    '"reasoning": "max 2 zdania po polsku", "verdict": "KUP"/"CZEKAJ"/"OMIJAJ"}'
+    'Odpowiadasz TYLKO w JSON bez żadnego tekstu przed/po:\n'
+    '{"fundamentals_score": 1-5, "timing_score": 1-5, "macro_risk": "low"/"medium"/"high",\n'
+    ' "reasoning": "max 2 zdania po polsku",\n'
+    ' "verdict": "KUP"/"CZEKAJ"/"OMIJAJ",\n'
+    ' "confidence": "LOW"/"MEDIUM"/"HIGH",\n'
+    ' "bull_case": "1 zdanie — co musi się wydarzyć żeby spółka urosła",\n'
+    ' "bear_case": "1 zdanie — co może pójść źle"\n'
+    '}\n'
+    'confidence=HIGH gdy wszystkie sygnały zgodne; MEDIUM gdy większość zgodna; '
+    'LOW gdy sprzeczne sygnały lub brak kluczowych danych.\n'
+    'bull_case i bear_case ZAWSZE wymagane — wymuszają myślenie w obu kierunkach.'
 )
 
 _SYSTEM_PROMPTS = {
@@ -316,6 +456,19 @@ _SYSTEM_PROMPTS = {
         "W reasoning zaznacz zawsze ryzyko kraju jako osobną wzmiankę.\n"
         + _BASE_JSON_SCHEMA
     ),
+    "CONSUMER_DISCRETIONARY": (
+        "Jesteś analitykiem sektora consumer discretionary.\n"
+        "Oceniaj przez:\n"
+        "1) Same-store/comparable sales growth — to ważniejszy wskaźnik niż YoY revenue\n"
+        "2) Average selling price trend — czy obniżają ceny żeby sprzedać? (zły znak)\n"
+        "3) Poziom zapasów — wysokie zapasy = zła sprzedaż, przyszłe wyprzedaże\n"
+        "4) Cła i supply chain (szczególnie produkcja w Chinach/Azji)\n"
+        "5) Siła konsumenta USA (core target market)\n"
+        "6) Czy problemy są firmowe czy sektorowe (cały retail słaby = inny kontekst)\n"
+        "Dla RACE (Ferrari): oceniaj przez order book, waitlist, pricing power (inna liga niż NKE/LULU)\n"
+        "Dla CMG: comparable restaurant sales, traffic vs ticket size\n"
+        + _BASE_JSON_SCHEMA
+    ),
     "STANDARD_TECH": (
         "Jesteś analitykiem inwestycyjnym. Analizujesz spółki pod kątem:\n"
         "1) Fundamentów (wycena vs sektor, wzrost, marże, EV/EBITDA)\n"
@@ -333,11 +486,18 @@ _FALLBACK_ANALYSIS = {
     "macro_risk": "medium",
     "reasoning": "Brak analizy.",
     "verdict": "CZEKAJ",
+    "confidence": "LOW",
+    "bull_case": "Brak danych.",
+    "bear_case": "Brak danych.",
 }
 
 
 def _build_user_msg(ticker: str, fin: dict, news: list, category: str) -> str:
-    tech = fin.get("technicals", {})
+    tech    = fin.get("technicals", {})
+    qtrd    = fin.get("quarterly_trends", {})
+    extras  = fin.get("extra_signals", {})
+    sector  = fin.get("sector", "")
+
     news_text = (
         "\n\nNewsy/kontekst:\n" + "\n".join(f"- {n['title']}: {n['content']}" for n in news)
     ) if news else "\n\n(brak newsów)"
@@ -349,7 +509,7 @@ def _build_user_msg(ticker: str, fin: dict, news: list, category: str) -> str:
     if tech.get("death_cross"):  ma_status.append("DEATH CROSS")
 
     base = (
-        f"Ticker: {ticker} | Kategoria: {category}\n"
+        f"Ticker: {ticker} | Kategoria: {category} | Sektor: {sector}\n"
         f"Cena: ${fin.get('price','N/A')} ({fin.get('change_pct','N/A'):+}%) | "
         f"52w ATH: ${fin.get('high52w','N/A')} ({fin.get('pct_from_high','N/A')}% od ATH)\n"
         f"RSI-14: {fin.get('rsi','N/A')} | MA: {', '.join(ma_status) or 'N/A'}\n"
@@ -359,49 +519,75 @@ def _build_user_msg(ticker: str, fin: dict, news: list, category: str) -> str:
         f"Sezonowość: {fin.get('seasonality','brak')}\n"
     )
 
+    # ── Fundamentals by category ──
     if category == "CRYPTO_PROXY":
         btc = fin.get("btc_data", {})
         base += (
             f"\n--- BTC DATA ---\n"
-            f"BTC cena: ${btc.get('price','N/A')} | RSI BTC: {btc.get('rsi','N/A')} | "
-            f"BTC > MA200: {btc.get('above_ma200','N/A')} | BTC bullish: {btc.get('bullish','N/A')}\n"
+            f"BTC: ${btc.get('price','N/A')} | RSI_BTC: {btc.get('rsi','N/A')} | "
+            f"BTC>MA200: {btc.get('above_ma200','N/A')} | Bullish: {btc.get('bullish','N/A')}\n"
         )
         if fin.get("mstr_nav"):
             nav = fin["mstr_nav"]
             base += (
-                f"MSTR BTC/akcję (approx): {nav.get('btc_per_share_approx','N/A')} | "
-                f"NAV/akcję (approx): ${nav.get('nav_per_share_approx','N/A')}\n"
-                f"Kontekst NAV z Tavily: {nav.get('tavily_context','brak')}\n"
+                f"MSTR BTC/akcję≈{nav.get('btc_per_share_approx','N/A')} | "
+                f"NAV/akcję≈${nav.get('nav_per_share_approx','N/A')}\n"
+                f"NAV kontekst: {nav.get('tavily_context','brak')}\n"
             )
-    elif category in ("URANIUM", "DEFENSE", "BIOTECH_HEALTH", "EMERGING_MARKETS"):
-        base += (
-            f"\nPE: {fin.get('trailingPE','N/A')} | Fwd PE: {fin.get('forwardPE','N/A')} | "
-            f"EV/EBITDA: {fin.get('enterpriseToEbitda','N/A')}\n"
-            f"Marża: {fin.get('profitMargins','N/A')} | Rev growth: {fin.get('revenueGrowth','N/A')}\n"
-        )
     else:
         base += (
             f"PE: {fin.get('trailingPE','N/A')} | Fwd PE: {fin.get('forwardPE','N/A')} | "
             f"EV/EBITDA: {fin.get('enterpriseToEbitda','N/A')}\n"
-            f"Marża: {fin.get('profitMargins','N/A')} | Rev growth: {fin.get('revenueGrowth','N/A')}\n"
+            f"Marża netto: {fin.get('profitMargins','N/A')} | Rev growth YoY: {fin.get('revenueGrowth','N/A')}\n"
         )
+
+    # ── Quarterly trend data ──
+    if qtrd.get("details"):
+        deteriorating_label = "⚠️ DETERIORATING FUNDAMENTALS" if qtrd.get("deteriorating") else ""
+        base += (
+            f"\n--- QUARTERLY TRENDS ---\n"
+            f"Revenue deceleration: {qtrd.get('revenue_decelerating')} | "
+            f"Margin decline 2+ qtrs: {qtrd.get('margin_declining')}\n"
+            f"Rev growth Q/Q: {qtrd.get('revenue_growth_qtrs')} | "
+            f"Gross margins: {qtrd.get('gross_margin_qtrs')}\n"
+        )
+        if deteriorating_label:
+            base += f"{deteriorating_label}\n"
+
+    # ── Extra signals: guidance, tariffs, US sales ──
+    if extras.get("guidance"):
+        base += f"\nGuidance/outlook: {extras['guidance'][:250]}\n"
+    if extras.get("tariffs"):
+        base += f"Tariff/supply chain risk: {extras['tariffs'][:200]}\n"
+    if extras.get("us_sales"):
+        base += f"US domestic sales: {extras['us_sales'][:200]}\n"
+
+    # ── Sector context ──
+    sector_ctx = fin.get("sector_context", "")
+    if sector_ctx:
+        base += f"\nKontekst sektora ({sector}): {sector_ctx[:200]}\n"
 
     return base + news_text
 
 
 def _claude_analyze(ticker: str, fin: dict, news: list, category: str = "STANDARD_TECH") -> dict:
-    system = _SYSTEM_PROMPTS.get(category, _SYSTEM_PROMPTS["STANDARD_TECH"])
+    system   = _SYSTEM_PROMPTS.get(category, _SYSTEM_PROMPTS["STANDARD_TECH"])
     user_msg = _build_user_msg(ticker, fin, news, category)
     try:
         response = _ctx.claude.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=350,
+            max_tokens=450,
             system=system,
             messages=[{"role": "user", "content": user_msg}],
         )
         raw = response.content[0].text.strip()
-        m = re.search(r"\{.*\}", raw, re.DOTALL)
-        return json.loads(m.group() if m else raw)
+        m   = re.search(r"\{.*\}", raw, re.DOTALL)
+        result = json.loads(m.group() if m else raw)
+        # Ensure new fields exist even if model skipped them
+        result.setdefault("confidence", "MEDIUM")
+        result.setdefault("bull_case",  "Brak danych.")
+        result.setdefault("bear_case",  "Brak danych.")
+        return result
     except Exception as e:
         logger.warning("Claude analysis error for %s: %s", ticker, e)
         return dict(_FALLBACK_ANALYSIS)
@@ -477,20 +663,25 @@ def analyze_ticker(ticker: str, qqq_30d: float | None = None, btc_data: dict | N
         "category": category,
     }
 
+    # ── Quarterly fundamental trends (yfinance, no extra API cost) ──
+    fin["quarterly_trends"] = _fetch_quarterly_trends(ticker_obj)
+
+    # ── Sector context (cached per sector) ──
+    fin["sector_context"] = _fetch_sector_context(fin["sector"])
+
     # ── Category-specific extras ──
     if category == "CRYPTO_PROXY":
         fin["btc_data"] = btc_data if btc_data is not None else _fetch_btc_data()
         if ticker == "MSTR" and _tavily:
             try:
                 r = _tavily.search(
-                    f"MicroStrategy MSTR bitcoin holdings BTC per share NAV 2026",
+                    "MicroStrategy MSTR bitcoin holdings BTC per share NAV 2026",
                     max_results=3,
                 )
                 ctx = " ".join((x.get("content") or "")[:200] for x in (r.get("results") or []))[:500]
-                shares = info.get("sharesOutstanding") or 0
+                shares    = info.get("sharesOutstanding") or 0
                 btc_price = fin["btc_data"].get("price") or 0
-                # rough static estimate — Tavily context gives Claude the real number
-                btc_held_approx = 214_400
+                btc_held_approx = 214_400  # static estimate; Tavily context corrects Claude
                 fin["mstr_nav"] = {
                     "btc_per_share_approx": round(btc_held_approx / shares, 4) if shares else None,
                     "nav_per_share_approx": round(btc_held_approx * btc_price / shares, 2) if shares and btc_price else None,
@@ -499,8 +690,32 @@ def analyze_ticker(ticker: str, qqq_30d: float | None = None, btc_data: dict | N
             except Exception as e:
                 logger.warning("MSTR NAV fetch error: %s", e)
 
+    # ── Extra signals: guidance + tariffs + US sales ──
+    fin["extra_signals"] = _fetch_extra_signals(ticker, category)
+
     news     = _fetch_news(ticker, category)
     analysis = _claude_analyze(ticker, fin, news, category)
+
+    # ── Automatic score adjustments ──
+    qtrd = fin["quarterly_trends"]
+    if qtrd.get("deteriorating"):
+        old = analysis.get("fundamentals_score", 3)
+        analysis["fundamentals_score"] = max(1, old - 2)
+        analysis["flags"] = analysis.get("flags", []) + ["⚠️ DETERIORATING FUNDAMENTALS"]
+        logger.info("%s: fundamentals_score auto-reduced %d→%d (deteriorating qtrs)", ticker, old, analysis["fundamentals_score"])
+
+    guidance_text = (fin["extra_signals"].get("guidance") or "").lower()
+    if any(w in guidance_text for w in ("lowered", "cut", "reduced", "below", "obniżono", "obniżył")):
+        analysis["flags"] = analysis.get("flags", []) + ["🔴 GUIDANCE OBNIŻONY"]
+        old_v = analysis.get("verdict", "CZEKAJ")
+        if old_v == "KUP":
+            analysis["verdict"] = "CZEKAJ"
+            logger.info("%s: verdict KUP→CZEKAJ due to lowered guidance", ticker)
+
+    tariff_text = (fin["extra_signals"].get("tariffs") or "").lower()
+    if any(w in tariff_text for w in ("tariff", "cło", "supply chain disruption", "higher costs", "import costs")):
+        analysis["flags"] = analysis.get("flags", []) + ["⚠️ RYZYKO CEŁ/SUPPLY CHAIN"]
+
     return {**fin, "news": news, "analysis": analysis}
 
 
@@ -601,32 +816,53 @@ def format_ticker_attachment(ticker: str, data: dict) -> dict:
             }
         ]
 
-        if flags:
+        # ── Auto-flags from score adjustments ──
+        auto_flags = analysis.get("flags", [])
+        all_flags  = flags + auto_flags
+        if all_flags:
             blocks.append({
                 "type": "context",
-                "elements": [{"type": "mrkdwn", "text": "  ·  ".join(flags)}],
+                "elements": [{"type": "mrkdwn", "text": "  ·  ".join(all_flags)}],
             })
 
         # MSTR: BTC scenario block
         if ticker == "MSTR" and data.get("btc_data", {}).get("price"):
-            btc_p = data["btc_data"]["price"]
-            nav   = data.get("mstr_nav", {})
+            btc_p  = data["btc_data"]["price"]
+            nav    = data.get("mstr_nav", {})
             nav_ps = nav.get("nav_per_share_approx") if nav else None
             if nav_ps:
-                scenario_150k = round(nav_ps * (150_000 / btc_p) * 1.0, 0)
+                scenario_150k = round(nav_ps * (150_000 / btc_p), 0)
                 blocks.append({
                     "type": "context",
                     "elements": [{"type": "mrkdwn", "text":
-                        f"📐 *Scenariusz:* przy BTC $150k → NAV/akcję ~${scenario_150k:.0f} "
-                        f"(historycznie MSTR handluje z 1.5-2x premią do NAV)"
+                        f"📐 *BTC $150k scenario:* NAV/akcję ~${scenario_150k:.0f} "
+                        f"(MSTR historycznie handluje z 1.5-2x premią do NAV)"
                     }],
                 })
 
-        reasoning = analysis.get("reasoning", "")
+        # ── Reasoning + confidence ──
+        reasoning  = analysis.get("reasoning", "")
+        confidence = analysis.get("confidence", "MEDIUM")
+        conf_emoji = {"HIGH": "🟢", "MEDIUM": "🟡", "LOW": "🔴"}.get(confidence, "🟡")
         if reasoning:
+            conf_note = f"  ·  {conf_emoji} Pewność: {confidence}" + (
+                "  ·  ⚠️ Zrób własny research" if confidence == "LOW" else ""
+            )
             blocks.append({
                 "type": "context",
-                "elements": [{"type": "mrkdwn", "text": f"_{reasoning[:300]}_"}],
+                "elements": [{"type": "mrkdwn", "text": f"_{reasoning[:280]}_{conf_note}"}],
+            })
+
+        # ── Bull / Bear case ──
+        bull = analysis.get("bull_case", "")
+        bear = analysis.get("bear_case", "")
+        if bull or bear:
+            bull_bear_text = ""
+            if bull: bull_bear_text += f"🐂 {bull}"
+            if bear: bull_bear_text += f"  ·  🐻 {bear}" if bull else f"🐻 {bear}"
+            blocks.append({
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": bull_bear_text[:300]}],
             })
 
         return {"color": color, "blocks": blocks}
@@ -905,6 +1141,8 @@ ZASADY GRUPOWANIA PER KATEGORIA:
 - DEFENSE (NOC,BA,TDG): geopolityka=TAILWIND, backlog kontraktów, budżety NATO rosnące.
 - BIOTECH_HEALTH (TEM,ISRG,UNH,NVO,TDOC): pipeline/FDA/GLP-1 market share. NVO przez ekspozycję na GLP-1.
 - EMERGING_MARKETS (BABA,SE,GRAB,MELI,NU,DLO): uwzględnij ryzyko USD i kraju. Chiny=osobna flaga ryzyka regulacyjnego.
+- CONSUMER_DISCRETIONARY (LULU,NKE,DECK,CMG,RACE): comparable sales, zapasy, cła Chiny. RACE=osobna liga (pricing power, order book). Jeśli cały sektor consumer słabo — kontekstualizuj.
+FLAGI AUTOMATYCZNE (jeśli widoczne w danych): ⚠️ DETERIORATING FUNDAMENTALS, 🔴 GUIDANCE OBNIŻONY, ⚠️ RYZYKO CEŁ — uwzględnij je w uzasadnieniu.
 
 Na końcu ZAWSZE:
 ⚠️ *Blisko ATH (<5%):* [lista lub "brak"]
