@@ -1454,16 +1454,15 @@ def handle_analiza_slash(ack, respond, command):
 
 @app.command("/watchlist")
 def handle_watchlist_slash(ack, respond, command):
+    """Szczegółowy digest — kolorowe karty per ticker → #inwestowanie."""
     import threading as _th
     ack()
-    respond("⏳ Generuję watchlistę... może potrwać kilka minut, poczekaj.")
+    respond("⏳ Uruchamiam szczegółowy digest z kartami... wyślę na #inwestowanie. Może potrwać kilka minut.")
 
     def _worker():
         try:
-            msg = run_stock_digest()
-            # respond() supports up to 30 min after ack
-            for i in range(0, min(len(msg), 12000), 3000):
-                respond(msg[i:i + 3000])
+            send_stock_digest()
+            respond("✅ Karty wysłane na #inwestowanie!")
         except Exception as e:
             respond(f"❌ Błąd: {e}")
 
