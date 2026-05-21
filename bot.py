@@ -4305,7 +4305,7 @@ scheduler.add_job(check_stale_onboardings,   'cron', hour=9, minute=30, id='stal
 # scheduler.add_job(post_standup_summary,      'cron', day_of_week='mon-fri', hour=9, minute=30, id='standup_summary')
 scheduler.add_job(weekly_industry_news,      'cron', day_of_week='mon',     hour=9, minute=0,  id='industry_news')
 scheduler.add_job(weekly_cost_report,        'cron', day_of_week='mon',     hour=9, minute=5,  id='weekly_cost_report')
-scheduler.add_job(send_stock_digest,         'cron', day_of_week='mon-fri', hour=13, minute=0, id='stock_digest')
+# stock_digest disabled — uruchamiać ręcznie przez /digest
 scheduler.add_job(sync_calendar_from_email,  'cron', minute=0,                                id='email_calendar_sync')
 # reminders job removed — Slack chat.scheduleMessage handles delivery natively
 scheduler.start()
