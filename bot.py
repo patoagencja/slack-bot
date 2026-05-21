@@ -53,7 +53,7 @@ from jobs.onboarding import (
 )
 from jobs.industry_news import weekly_industry_news
 from jobs.cost_report import weekly_cost_report
-from jobs.stock_digest import send_stock_digest, run_stock_digest, analyze_ticker, format_ticker_slack, format_ticker_attachment, WATCHLIST
+from jobs.stock_digest import send_stock_digest, send_summary_digest, run_stock_digest, run_summary_digest, analyze_ticker, format_ticker_slack, format_ticker_attachment, WATCHLIST
 # jobs.reminders removed — reminders now use Slack chat.scheduleMessage
 from tools.campaign_creator import (
     download_slack_files, upload_creative_to_meta, parse_campaign_request,
@@ -1474,11 +1474,11 @@ def handle_watchlist_slash(ack, respond, command):
 def handle_digest_slash(ack, respond, command):
     import threading as _th
     ack()
-    respond("⏳ Uruchamiam pełny digest (65 tickerów) — wyślę na #inwestowanie gdy skończy. Może potrwać kilka minut.")
+    respond("⏳ Pobieram dane i analizuję watchlistę... wyślę na #inwestowanie za ~2 minuty.")
 
     def _worker():
         try:
-            send_stock_digest()
+            send_summary_digest()
             respond("✅ Digest wysłany na #inwestowanie!")
         except Exception as e:
             respond(f"❌ Digest zakończył się błędem: {e}")

@@ -586,3 +586,132 @@ def send_stock_digest(tickers: list = None):
         logger.info("send_stock_digest: done, %d tickers posted", len(results))
     except Exception as e:
         logger.error("send_stock_digest failed: %s", e)
+
+
+# ── Summary digest (one message) ─────────────────────────────────────────────
+
+def run_summary_digest(tickers: list = None) -> str:
+    """Fetch yfinance for all tickers, one Claude call → single grouped summary."""
+    if tickers is None:
+        tickers = WATCHLIST
+
+    today = datetime.datetime.now().strftime("%d.%m.%Y")
+    qqq_30d = _fetch_qqq_30d()
+    season = _seasonality_note()
+
+    lines_data = []
+    near_ath = []
+
+    for ticker in tickers:
+        try:
+            t = yf.Ticker(ticker)
+            info = t.info
+            price = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("ask") or 0.0
+            if not price:
+                continue
+            prev  = info.get("previousClose") or price
+            chg   = round((price - prev) / prev * 100, 2) if prev else 0.0
+            pe    = info.get("trailingPE")
+            fpe   = info.get("forwardPE")
+            rev_g = info.get("revenueGrowth")
+            margin = info.get("profitMargins")
+            high52 = info.get("fiftyTwoWeekHigh") or 0
+            pct_ath = round((price - high52) / high52 * 100, 2) if high52 else None
+
+            rsi = above50 = above200 = golden = death = None
+            try:
+                hist   = t.history(period="200d")
+                closes = hist["Close"].tolist()
+                if len(closes) >= 15:
+                    rsi = round(_calc_rsi(closes), 1)
+                tech   = _calc_technicals(closes)
+                above50  = tech.get("above_ma50")
+                above200 = tech.get("above_ma200")
+                golden   = tech.get("golden_cross")
+                death    = tech.get("death_cross")
+            except Exception:
+                pass
+
+            parts = [f"{ticker}: ${price} ({chg:+.1f}%)"]
+            if rsi     is not None: parts.append(f"RSI={rsi}")
+            if pe      is not None: parts.append(f"PE={round(pe,0):.0f}")
+            if fpe     is not None: parts.append(f"FwdPE={round(fpe,0):.0f}")
+            if rev_g   is not None: parts.append(f"RevGrowth={round(rev_g*100,0):.0f}%")
+            if margin  is not None: parts.append(f"Margin={round(margin*100,0):.0f}%")
+            if above50  is not None: parts.append("MA50=" + ("✅" if above50  else "❌"))
+            if above200 is not None: parts.append("MA200=" + ("✅" if above200 else "❌"))
+            if golden:  parts.append("GoldenCross")
+            if death:   parts.append("DeathCross")
+            if pct_ath is not None:
+                parts.append(f"odATH={pct_ath}%")
+                if pct_ath > -5:
+                    near_ath.append(ticker)
+            lines_data.append(" | ".join(parts))
+        except Exception as e:
+            logger.warning("Summary fetch %s: %s", ticker, e)
+
+    if not lines_data:
+        return "⚠️ Brak danych — sprawdź połączenie z yfinance."
+
+    qqq_info = f"QQQ 30d: {'+' if (qqq_30d or 0) >= 0 else ''}{qqq_30d}%" if qqq_30d is not None else ""
+    season_info = f"Sezonowość: {season}" if season else ""
+
+    prompt = (
+        f"Dzisiaj: {today}. {qqq_info}. {season_info}\n\n"
+        f"Dane dla {len(lines_data)} spółek z watchlisty:\n"
+        + "\n".join(lines_data)
+        + """
+
+Napisz JEDEN zwięzły raport inwestycyjny w formacie Slack markdown. Pogrupuj wszystkie spółki w trzy sekcje:
+
+🟢 *WARTE UWAGI — dobre wejście teraz:*
+• *TICKER* $cena — 1 zdanie: dlaczego warto (RSI, wycena, momentum, technicals)
+
+🟡 *CZEKAJ — dobra spółka, ale zły timing lub za drogo:*
+• *TICKER* $cena — 1 zdanie: co konkretnie hamuje (RSI wysoki, blisko ATH, za drogie PE)
+
+🔴 *OMIJAJ — słabe fundamenty lub ekstremalnie przewartościowane:*
+• *TICKER* $cena — 1 zdanie: konkretny powód
+
+Zasady grupowania:
+- WARTE UWAGI: RSI < 65, nie w top 5% ATH, przyzwoite fundamenty LUB wyraźny techniczny sygnał wejścia
+- CZEKAJ: dobre fundamenty ale RSI > 68 lub < 3% od ATH lub brak danych cenowych
+- OMIJAJ: ujemna rentowność bez wzrostu, crypto-proxy bez fundamentów, PE > 200 bez uzasadnienia wzrostem
+
+Na końcu ZAWSZE dodaj:
+⚠️ *Blisko ATH (<5%):* [lista lub "brak"]
+📊 *Watchlist:* X warte uwagi | Y czekaj | Z omijaj
+
+Pisz po polsku. Uzasadnienia krótkie i konkretne — używaj liczb z danych."""
+    )
+
+    try:
+        resp = _ctx.claude.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=2500,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        body = resp.content[0].text.strip()
+    except Exception as e:
+        logger.error("Claude summary digest error: %s", e)
+        body = "❌ Błąd analizy Claude — spróbuj ponownie."
+
+    header = f"📊 *Stock Digest — {today}*"
+    if qqq_30d is not None:
+        header += f"  |  QQQ 30d: {'+' if qqq_30d >= 0 else ''}{qqq_30d}%"
+    if season:
+        header += f"  |  📅 {season}"
+
+    return f"{header}\n\n{body}"
+
+
+def send_summary_digest(tickers: list = None):
+    """Post one-message summary digest to #inwestowanie."""
+    try:
+        msg = run_summary_digest(tickers)
+        chunks = [msg[i:i+3900] for i in range(0, len(msg), 3900)]
+        for chunk in chunks:
+            _ctx.app.client.chat_postMessage(channel=STOCK_CHANNEL_ID, text=chunk)
+        logger.info("send_summary_digest: done")
+    except Exception as e:
+        logger.error("send_summary_digest failed: %s", e)
