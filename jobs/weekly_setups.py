@@ -504,14 +504,28 @@ def send_scan_setups():
         logger.error("send_scan_setups failed: %s", e)
 
 
+_DEEP_SWING_SYSTEM = (
+    "Jesteś doświadczonym swing traderem i analitykiem rynkowym. "
+    "Piszesz po polsku, zwięźle ale konkretnie. "
+    "Twoja analiza ma pomóc zdecydować: czy wchodzić w to zagranie TERAZ, CZEKAĆ, czy je OMIJAĆ. "
+    "Format odpowiedzi (Markdown/Slack mrkdwn):\n"
+    "1. *Kontekst makro* — jak makro wpływa na ten ticker\n"
+    "2. *Setup techniczny* — dlaczego ten pattern jest lub nie jest przekonujący\n"
+    "3. *Katalizatory* — co może ruszyć cenę w górę w ciągu 1-2 tygodni\n"
+    "4. *Ryzyka* — co może zniszczyć setup\n"
+    "5. *Werdykt* — WCHODZĘ / CZEKAM / OMIJAM + 1 zdanie uzasadnienia\n"
+    "Maksymalnie 250 słów. Pisz jak do kolegi tradera, nie jak raport."
+)
+
+
 def analyze_single_swing(ticker: str) -> str:
     """
-    Quick swing analysis for one ticker (stocks or crypto symbol).
+    Deep swing analysis for one ticker with macro context, technicals, news, and Claude verdict.
     Returns formatted Slack text.
     """
     ticker = ticker.upper().strip()
 
-    # Try crypto first if looks like a coin symbol
+    # ── Crypto path ──────────────────────────────────────────────────────────
     coin_data = None
     coins = _fetch_top_coins(50)
     for c in coins:
@@ -521,47 +535,118 @@ def analyze_single_swing(ticker: str) -> str:
 
     if coin_data:
         btc_dom = _fetch_btc_dominance()
-        s = _analyze_setup_coin(coin_data, btc_dom)
-        if s is None:
-            chg7d = coin_data.get("price_change_percentage_7d_in_currency") or 0
-            if chg7d > 20:
-                return f"🚫 *{ticker}* — anty-pump: wzrost +{chg7d:.0f}% w 7d. Poczekaj na cofkę."
-            return f"🟡 *{ticker}* — brak wyraźnego setupu swing w tym tygodniu."
-        rr = s.get("rr") or {}
-        return (
-            f"🎯 *{ticker}* ({s['name']}) #{s['rank']}\n"
-            f"Cena: ${s['price']} | 7d: {s['chg7d']:+.1f}% | od ATH: {s['pct_ath']}%\n"
-            f"Stop: -4.5% | Cel: +9% | R/R: ~2:1\n"
-            + (f"Katalizator: {s['catalyst'][:100]}" if s.get("catalyst") else "Katalizator: brak")
+        macro   = fetch_macro_briefing()
+        chg7d   = coin_data.get("price_change_percentage_7d_in_currency") or 0
+        price   = coin_data.get("current_price", 0)
+        name    = coin_data.get("name", ticker)
+        rank    = coin_data.get("market_cap_rank", "?")
+        pct_ath = round((price / coin_data["ath"] - 1) * 100, 1) if coin_data.get("ath") else "?"
+
+        if chg7d > 20:
+            return f"🚫 *{ticker}* — anty-pump: wzrost +{chg7d:.0f}% w 7d. Poczekaj na cofkę."
+
+        # Tavily news
+        news = ""
+        if _tavily:
+            try:
+                r = _tavily.search(f"{name} {ticker} crypto price catalyst news 2026", max_results=3)
+                news = " | ".join((x.get("content") or "")[:150] for x in (r.get("results") or []))[:400]
+            except Exception:
+                pass
+
+        dom_str = f"{btc_dom}%" if btc_dom is not None else "N/A"
+        user_msg = (
+            f"Ticker: {ticker} ({name})  Rank: #{rank}\n"
+            f"Cena: ${price}  |  7d: {chg7d:+.1f}%  |  od ATH: {pct_ath}%\n"
+            f"BTC Dominance: {dom_str}\n"
+            f"Makro: {macro.get('sentiment','?')} — {macro.get('summary','')[:200]}\n"
+            f"Główne ryzyko makro: {macro.get('main_risk','')}\n"
+            f"Newsy/katalizatory: {news or 'brak'}\n"
         )
 
-    # Stock analysis
-    setup = _analyze_setup_ticker(ticker)
-    if not setup:
-        # Try to get basic data for a friendlier message
         try:
-            import yfinance as _yf
-            _h = _yf.Ticker(ticker).history(period="3mo", interval="1d")
-            if not _h.empty:
-                _closes = _h["Close"].tolist()
-                _rsi = round(_calc_rsi(_closes), 1)
-                _tech = _calc_technicals(_closes)
-                _above = "✅" if _tech.get("above_ma50") else "❌"
-                return (f"🟡 *{ticker}* — brak setupu\n"
-                        f"RSI: {_rsi} (potrzeba 35-72) | MA50: {_above}\n"
-                        f"Spróbuj kiedy warunki będą lepsze.")
+            resp = _ctx.claude.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=500,
+                system=_DEEP_SWING_SYSTEM,
+                messages=[{"role": "user", "content": user_msg}],
+            )
+            analysis = resp.content[0].text.strip()
+        except Exception as e:
+            analysis = f"_(błąd Claude: {e})_"
+
+        header = (
+            f"🎯 *{ticker}* ({name})  #{rank}  "
+            f"${price}  7d:{chg7d:+.1f}%  odATH:{pct_ath}%"
+        )
+        return f"{header}\n\n{analysis}"
+
+    # ── Stock path ────────────────────────────────────────────────────────────
+    try:
+        hist = yf.Ticker(ticker).history(period="6mo", interval="1d")
+    except Exception:
+        hist = None
+
+    if hist is None or hist.empty:
+        return f"❌ *{ticker}* — nie znaleziono danych. Sprawdź symbol."
+
+    closes = hist["Close"].tolist()
+    if len(closes) < 22:
+        return f"❌ *{ticker}* — za mało danych historycznych."
+
+    rsi     = round(_calc_rsi(closes), 1)
+    tech    = _calc_technicals(closes)
+    pattern = _detect_pattern(closes, ticker)
+    rr      = _calc_rr(closes)
+    price   = round(closes[-1], 2)
+    chg1m   = round((closes[-1] / closes[-22] - 1) * 100, 1) if len(closes) >= 22 else "?"
+    chg3m   = round((closes[-1] / closes[0] - 1) * 100, 1)
+
+    macro = fetch_macro_briefing()
+
+    # Tavily: news + catalyst
+    news = ""
+    if _tavily:
+        try:
+            r = _tavily.search(
+                f"{ticker} stock earnings catalyst news week 2026", max_results=4
+            )
+            news = " | ".join((x.get("content") or "")[:180] for x in (r.get("results") or []))[:500]
         except Exception:
             pass
-        return f"🟡 *{ticker}* — brak setupu: RSI poza zakresem 35-72, poniżej MA50, lub niewystarczające dane."
 
-    pat = setup.get("pattern", {})
-    rr  = setup.get("rr", {})
-    lines = [
-        f"🎯 *{ticker}* — Setup: _{pat.get('pattern','?')}_",
-        f"RSI: {setup['rsi']} | MA50: {'✅' if pat.get('above_ma50') else '❌'} | MA200: {'✅' if pat.get('above_ma200') else '❌'}",
-        f"Wejście: ${rr.get('entry','?')} | Cel: ${rr.get('target','?')} (+{rr.get('target_pct','?')}%) | Stop: ${rr.get('stop','?')} ({rr.get('stop_pct','?')}%)",
-        f"R/R: {rr.get('rr_ratio','?')}:1 | Okno: 5 dni",
-    ]
-    if setup.get("catalyst"):
-        lines.append(f"Katalizator: {setup['catalyst'][:120]}")
-    return "\n".join(lines)
+    above_ma50  = "✅" if tech.get("above_ma50") else "❌"
+    above_ma200 = "✅" if tech.get("above_ma200") else "❌"
+    golden      = "🟡 Golden cross" if tech.get("golden_cross") else ("💀 Death cross" if tech.get("death_cross") else "brak krzyża")
+
+    user_msg = (
+        f"Ticker: {ticker}\n"
+        f"Cena: ${price}  |  1m: {chg1m:+}%  |  3m: {chg3m:+}%\n"
+        f"RSI-14: {rsi}  |  MA50: {above_ma50}  |  MA200: {above_ma200}  |  {golden}\n"
+        f"Pattern: {pattern.get('pattern','?')}  (quality={pattern.get('quality',0)})\n"
+        f"Wejście: ${rr.get('entry','?')}  Cel: ${rr.get('target','?')} (+{rr.get('target_pct','?')}%)  "
+        f"Stop: ${rr.get('stop','?')} ({rr.get('stop_pct','?')}%)  R/R: {rr.get('rr_ratio','?')}:1\n"
+        f"Makro: {macro.get('sentiment','?')} — {macro.get('summary','')[:200]}\n"
+        f"Główne ryzyko makro: {macro.get('main_risk','')}\n"
+        f"Newsy/katalizatory: {news or 'brak'}\n"
+    )
+
+    try:
+        resp = _ctx.claude.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=500,
+            system=_DEEP_SWING_SYSTEM,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        analysis = resp.content[0].text.strip()
+    except Exception as e:
+        analysis = f"_(błąd Claude: {e})_"
+
+    header = (
+        f"🎯 *{ticker}*  ${price}  "
+        f"RSI:{rsi}  MA50:{above_ma50}  MA200:{above_ma200}\n"
+        f"_{pattern.get('pattern','?')}_  |  "
+        f"Wejście:${rr.get('entry','?')}  Cel:+{rr.get('target_pct','?')}%  "
+        f"Stop:{rr.get('stop_pct','?')}%  R/R:{rr.get('rr_ratio','?')}:1"
+    )
+    return f"{header}\n\n{analysis}"
