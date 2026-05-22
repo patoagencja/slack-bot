@@ -443,42 +443,56 @@ def send_scan_setups():
 
         sorted_c = sorted(candidates, key=lambda x: x.get("score", 0), reverse=True)
 
-        _ctx.app.client.chat_postMessage(
-            channel=STOCK_CHANNEL_ID,
-            text=(
-                f"🔍 *Swing Scan — {today}*  ({len(sorted_c)} kandydatów)\n"
-                f"{s_emoji} Makro: {macro.get('sentiment','?')}  |  ₿ Dominance: {dom_str}\n"
-                f"_Brak filtra Claude — wszystkie setupy spełniające kryteria techniczne_"
-            ),
+        # Split into stocks and crypto
+        stocks = [c for c in sorted_c if not c.get("is_crypto")]
+        cryptos = [c for c in sorted_c if c.get("is_crypto")]
+
+        def _score_emoji(score):
+            if score >= 5: return "🟢"
+            if score >= 3: return "🟡"
+            return "🔴"
+
+        def _stock_line(i, c):
+            rr  = c.get("rr", {})
+            pat = c.get("pattern", {})
+            em  = _score_emoji(c.get("score", 0))
+            return (
+                f"{em} *{i}. {c['ticker']}*  RSI:{c['rsi']}  "
+                f"_{pat.get('pattern','?')}_  "
+                f"Wejście:${rr.get('entry','?')}  Cel:+{rr.get('target_pct','?')}%  "
+                f"R/R:{rr.get('rr_ratio','?')}:1"
+            )
+
+        def _crypto_line(i, c):
+            em = _score_emoji(c.get("score", 0))
+            return (
+                f"{em} *{i}. {c['ticker']}*  #{c['rank']}  "
+                f"${c['price']}  7d:{c['chg7d']:+.1f}%  "
+                f"odATH:{c['pct_ath']}%"
+            )
+
+        stock_lines  = [_stock_line(i + 1, c) for i, c in enumerate(stocks)]
+        crypto_lines = [_crypto_line(i + 1, c) for i, c in enumerate(cryptos)]
+
+        header = (
+            f"🔍 *Swing Scan — {today}*\n"
+            f"{s_emoji} Makro: {macro.get('sentiment','?')}  |  "
+            f"₿ Dominance: {dom_str}  |  "
+            f"{len(sorted_c)} kandydatów\n"
+            f"🟢 score≥5  🟡 score 3-4  🔴 score<3  |  "
+            f"_`/swing TICKER` po szczegóły_"
         )
+        _ctx.app.client.chat_postMessage(channel=STOCK_CHANNEL_ID, text=header)
 
-        lines = []
-        for i, c in enumerate(sorted_c, 1):
-            if c.get("is_crypto"):
-                line = (
-                    f"*{i}. {c['ticker']}* [CRYPTO #{c['rank']}]  score={c.get('score',0)}\n"
-                    f"   ${c['price']} | 7d: {c['chg7d']:+.1f}% | od ATH: {c['pct_ath']}%\n"
-                    f"   {c.get('catalyst','brak katalizatora')[:100]}"
-                )
-            else:
-                rr  = c.get("rr", {})
-                pat = c.get("pattern", {})
-                line = (
-                    f"*{i}. {c['ticker']}* [STOCK]  RSI={c['rsi']}  score={c.get('score',0)}\n"
-                    f"   Pattern: _{pat.get('pattern','?')}_  |  "
-                    f"Wejście: ${rr.get('entry','?')}  |  Cel: +{rr.get('target_pct','?')}%  |  "
-                    f"R/R: {rr.get('rr_ratio','?')}:1\n"
-                    f"   {c.get('catalyst','brak katalizatora')[:100]}"
-                )
-            lines.append(line)
-
-        # Post in chunks of 10 to avoid message size limits
-        chunk_size = 10
-        for chunk_start in range(0, len(lines), chunk_size):
-            chunk = lines[chunk_start:chunk_start + chunk_size]
+        if stock_lines:
             _ctx.app.client.chat_postMessage(
                 channel=STOCK_CHANNEL_ID,
-                text="\n\n".join(chunk),
+                text="*📈 Spółki:*\n" + "\n".join(stock_lines),
+            )
+        if crypto_lines:
+            _ctx.app.client.chat_postMessage(
+                channel=STOCK_CHANNEL_ID,
+                text="*₿ Krypto:*\n" + "\n".join(crypto_lines),
             )
 
         _ctx.app.client.chat_postMessage(
