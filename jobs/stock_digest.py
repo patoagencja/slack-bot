@@ -13,6 +13,7 @@ import datetime
 import time as _time
 from collections import Counter
 
+import requests as _requests
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -1171,6 +1172,278 @@ Pisz po polsku. Krótko, konkretnie, liczby z danych."""
         header += f"  |  📅 {season}"
 
     return f"{header}\n\n{body}"
+
+
+# ── CoinGecko ─────────────────────────────────────────────────────────────────
+
+def _fetch_top_coins(limit: int = 20) -> list[dict]:
+    """Top coins by market cap from CoinGecko free API (no key required)."""
+    try:
+        resp = _requests.get(
+            "https://api.coingecko.com/api/v3/coins/markets",
+            params={
+                "vs_currency": "usd",
+                "order": "market_cap_desc",
+                "per_page": limit,
+                "page": 1,
+                "sparkline": False,
+                "price_change_percentage": "24h,7d",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        logger.warning("CoinGecko coins/markets error: %s", e)
+        return []
+
+
+def _fetch_btc_dominance() -> float | None:
+    try:
+        resp = _requests.get("https://api.coingecko.com/api/v3/global", timeout=10)
+        resp.raise_for_status()
+        return round(resp.json()["data"]["market_cap_percentage"].get("btc", 0), 1)
+    except Exception as e:
+        logger.warning("CoinGecko global error: %s", e)
+        return None
+
+
+# ── Macro briefing ─────────────────────────────────────────────────────────────
+
+def fetch_macro_briefing() -> dict:
+    """7 Tavily searches → one Claude call → macro context dict."""
+    fallback = {"sentiment": "NEUTRALNY", "summary": "Brak danych makro.", "main_risk": ""}
+    if _tavily is None:
+        return fallback
+    _queries = [
+        "US stock market macro outlook this week 2026",
+        "Federal Reserve interest rates decision 2026",
+        "VIX volatility index level market fear 2026",
+        "US recession probability economic indicators 2026",
+        "geopolitical risk trade war tariffs market impact 2026",
+        "crypto market bitcoin institutional flow 2026",
+        "dollar index DXY trend 2026",
+    ]
+    snippets = []
+    for q in _queries:
+        try:
+            r = _tavily.search(q, max_results=1)
+            for item in (r.get("results") or [])[:1]:
+                snippets.append(f"• {(item.get('content') or '')[:160]}")
+        except Exception:
+            pass
+    if not snippets:
+        return fallback
+    try:
+        resp = _ctx.claude.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=350,
+            messages=[{"role": "user", "content": (
+                "Na podstawie poniższych informacji makroekonomicznych oceń aktualny sentyment rynku:\n\n"
+                + "\n".join(snippets)
+                + '\n\nOdpowiedz TYLKO w JSON:\n'
+                '{"sentiment": "RISK-ON"/"RISK-OFF"/"NEUTRALNY", '
+                '"summary": "2-3 zdania po polsku o najważniejszych czynnikach", '
+                '"main_risk": "1 zdanie o głównym ryzyku tygodnia"}'
+            )}],
+        )
+        raw = resp.content[0].text.strip()
+        m   = re.search(r"\{.*\}", raw, re.DOTALL)
+        return json.loads(m.group() if m else raw)
+    except Exception as e:
+        logger.warning("Macro briefing synthesis error: %s", e)
+        return {"sentiment": "NEUTRALNY", "summary": " ".join(snippets[:3])[:300], "main_risk": ""}
+
+
+def send_macro_briefing():
+    """Post standalone macro briefing to #inwestowanie (/makro command)."""
+    try:
+        today  = datetime.datetime.now().strftime("%d.%m.%Y")
+        macro  = fetch_macro_briefing()
+        btc    = _fetch_btc_data()
+        dom    = _fetch_btc_dominance()
+        qqq_30d = _fetch_qqq_30d()
+
+        s_emoji = {"RISK-ON": "🟢", "RISK-OFF": "🔴", "NEUTRALNY": "🟡"}.get(macro.get("sentiment",""), "🟡")
+        lines = [
+            f"🌍 *Makro Briefing — {today}*",
+            f"{s_emoji} Sentyment: *{macro.get('sentiment','NEUTRALNY')}*",
+        ]
+        if qqq_30d is not None:
+            lines.append(f"📈 QQQ 30d: {'+' if qqq_30d >= 0 else ''}{qqq_30d}%")
+        if btc.get("price"):
+            lines.append(f"₿ BTC: ${btc['price']:,.0f}  RSI={btc.get('rsi','?')}  {'🟢 Bullish' if btc.get('bullish') else '🔴 Bearish'}")
+        if dom is not None:
+            lines.append(f"₿ Dominance: {dom}%")
+        if macro.get("summary"):
+            lines.append(f"\n{macro['summary']}")
+        if macro.get("main_risk"):
+            lines.append(f"\n⚠️ *Główne ryzyko:* {macro['main_risk']}")
+
+        _ctx.app.client.chat_postMessage(channel=STOCK_CHANNEL_ID, text="\n".join(lines))
+        logger.info("send_macro_briefing: done")
+    except Exception as e:
+        logger.error("send_macro_briefing failed: %s", e)
+
+
+# ── Crypto analysis ────────────────────────────────────────────────────────────
+
+_CRYPTO_SYSTEM = (
+    "Jesteś analitykiem krypto. Filozofia:\n"
+    "- KUPUJ na cofce, nie po pompie (+20% w 7d = CZEKAJ)\n"
+    "- BTC dominance rośnie → altcoiny mają trudniej\n"
+    "- TIER1 (rank≤5): institutional flow > retail hype\n"
+    "- Blisko ATH (<10% od ATH) = CZEKAJ na korektę\n"
+    "- Unusual volume bez newsów = suspicious\n"
+    "Odpowiadasz TYLKO w JSON:\n"
+    '{"fundamentals_score":1-5,"timing_score":1-5,"macro_risk":"low"/"medium"/"high",'
+    '"confidence":"LOW"/"MEDIUM"/"HIGH","reasoning":"max 2 zdania po polsku",'
+    '"bull_case":"1 zdanie","bear_case":"1 zdanie","verdict":"KUP"/"CZEKAJ"/"OMIJAJ"}'
+)
+
+
+def analyze_coin(coin: dict, btc_dominance: float | None, macro: dict) -> dict:
+    """Full analysis for one CoinGecko coin dict. Returns enriched dict."""
+    symbol  = (coin.get("symbol") or "?").upper()
+    name    = coin.get("name", symbol)
+    price   = coin.get("current_price", 0)
+    chg24   = coin.get("price_change_percentage_24h") or 0
+    chg7d   = coin.get("price_change_percentage_7d_in_currency") or 0
+    mcap    = coin.get("market_cap", 0)
+    rank    = coin.get("market_cap_rank", 99)
+    vol24   = coin.get("total_volume", 0)
+    ath     = coin.get("ath") or 0
+    pct_ath = round((price - ath) / ath * 100, 1) if ath else None
+
+    is_tier1    = rank <= 5
+    pumped      = bool(chg7d > 20)
+    near_ath    = bool(pct_ath is not None and pct_ath > -10)
+    unusual_vol = bool(mcap and vol24 and vol24 > mcap * 0.1)
+
+    news_ctx = ""
+    if _tavily and is_tier1:
+        try:
+            r = _tavily.search(f"{symbol} {name} institutional inflows narrative 2026", max_results=2)
+            news_ctx = " ".join((x.get("content") or "")[:150] for x in (r.get("results") or []))[:300]
+        except Exception:
+            pass
+
+    prompt = (
+        f"Coin: {symbol} ({name}) | Rank: #{rank}\n"
+        f"Cena: ${price} | 24h: {chg24:+.1f}% | 7d: {chg7d:+.1f}%\n"
+        f"MCap: ${mcap:,.0f} | % od ATH: {pct_ath}%\n"
+        f"BTC dominance: {btc_dominance}% | Kategoria: {'TIER1' if is_tier1 else 'ALTCOIN'}\n"
+        f"Anti-pump: {pumped} | Near ATH: {near_ath} | Unusual vol: {unusual_vol}\n"
+        f"Makro: {macro.get('sentiment','?')}\n"
+    )
+    if news_ctx:
+        prompt += f"Kontekst: {news_ctx}\n"
+
+    try:
+        resp = _ctx.claude.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=350,
+            system=_CRYPTO_SYSTEM,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw    = resp.content[0].text.strip()
+        m      = re.search(r"\{.*\}", raw, re.DOTALL)
+        result = json.loads(m.group() if m else raw)
+        result.setdefault("confidence", "MEDIUM")
+        result.setdefault("bull_case", "")
+        result.setdefault("bear_case", "")
+        if pumped and result.get("verdict") == "KUP":
+            result["verdict"]   = "CZEKAJ"
+            result["reasoning"] = "[anti-pump] " + result.get("reasoning", "")
+        return {**coin, "analysis": result, "pct_ath": pct_ath, "pumped": pumped}
+    except Exception as e:
+        logger.warning("Crypto analysis error %s: %s", symbol, e)
+        return {**coin, "analysis": dict(_FALLBACK_ANALYSIS), "pct_ath": pct_ath, "pumped": pumped}
+
+
+def format_coin_attachment(coin_data: dict) -> dict:
+    """Format one coin as a Slack attachment."""
+    analysis = coin_data.get("analysis") or dict(_FALLBACK_ANALYSIS)
+    symbol   = (coin_data.get("symbol") or "?").upper()
+    name     = coin_data.get("name", symbol)
+    price    = coin_data.get("current_price", 0)
+    chg24    = coin_data.get("price_change_percentage_24h") or 0
+    chg7d    = coin_data.get("price_change_percentage_7d_in_currency") or 0
+    rank     = coin_data.get("market_cap_rank", "?")
+    pct_ath  = coin_data.get("pct_ath")
+    verdict  = analysis.get("verdict", "CZEKAJ")
+    v_emoji  = {"KUP": "🟢", "CZEKAJ": "🟡", "OMIJAJ": "🔴"}.get(verdict, "⚪")
+    color    = {"KUP": "#2eb886", "CZEKAJ": "#e6b833", "OMIJAJ": "#e01e5a"}.get(verdict, "#aaaaaa")
+    sign24   = "+" if chg24 >= 0 else ""
+    sign7    = "+" if chg7d  >= 0 else ""
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn",
+                     "text": f"*{symbol}* ({name}) #{rank}  ${price:,.4g}  {v_emoji} *{verdict}*"},
+            "fields": [
+                {"type": "mrkdwn", "text": f"*24h*\n{sign24}{chg24:.1f}%"},
+                {"type": "mrkdwn", "text": f"*7d*\n{sign7}{chg7d:.1f}%"},
+                {"type": "mrkdwn", "text": f"*Od ATH*\n{pct_ath}%" if pct_ath else "*Od ATH*\nN/A"},
+                {"type": "mrkdwn", "text": f"*Fundamenty*\n{analysis.get('fundamentals_score','?')}/5"},
+                {"type": "mrkdwn", "text": f"*Timing*\n{analysis.get('timing_score','?')}/5"},
+                {"type": "mrkdwn", "text": f"*Pewność*\n{analysis.get('confidence','?')}"},
+            ],
+        }
+    ]
+    flags = []
+    if coin_data.get("pumped"):
+        flags.append("⚠️ PUMP >20% w 7d")
+    if pct_ath and pct_ath > -10:
+        flags.append(f"⚠️ Blisko ATH ({pct_ath}%)")
+    if flags:
+        blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": "  ·  ".join(flags)}]})
+
+    reasoning = analysis.get("reasoning", "")
+    confidence = analysis.get("confidence", "MEDIUM")
+    conf_emoji = {"HIGH": "🟢", "MEDIUM": "🟡", "LOW": "🔴"}.get(confidence, "🟡")
+    if reasoning:
+        note = f"  ·  {conf_emoji} {confidence}" + ("  ·  ⚠️ Zrób własny research" if confidence == "LOW" else "")
+        blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": f"_{reasoning[:280]}_{note}"}]})
+
+    bull = analysis.get("bull_case", "")
+    bear = analysis.get("bear_case", "")
+    if bull or bear:
+        txt = (f"🐂 {bull}" if bull else "") + (f"  ·  🐻 {bear}" if bear and bull else f"🐻 {bear}" if bear else "")
+        blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": txt[:280]}]})
+
+    return {"color": color, "blocks": blocks}
+
+
+def send_crypto_digest(limit: int = 20):
+    """Post top-coin analysis to #inwestowanie."""
+    try:
+        btc_dom = _fetch_btc_dominance()
+        macro   = fetch_macro_briefing()
+        coins   = _fetch_top_coins(limit)
+        if not coins:
+            _ctx.app.client.chat_postMessage(channel=STOCK_CHANNEL_ID, text="⚠️ Brak danych z CoinGecko.")
+            return
+        today = datetime.datetime.now().strftime("%d.%m.%Y")
+        header = f"₿ *Crypto Digest — {today}*  |  BTC dom: {btc_dom}%  |  Makro: {macro.get('sentiment','?')}"
+        _ctx.app.client.chat_postMessage(channel=STOCK_CHANNEL_ID, text=header)
+
+        batch = []
+        for coin in coins:
+            try:
+                data = analyze_coin(coin, btc_dom, macro)
+                batch.append(format_coin_attachment(data))
+                if len(batch) >= 5:
+                    _ctx.app.client.chat_postMessage(channel=STOCK_CHANNEL_ID, text=" ", attachments=batch)
+                    batch = []
+            except Exception as e:
+                logger.warning("Skipping coin %s: %s", coin.get("symbol"), e)
+        if batch:
+            _ctx.app.client.chat_postMessage(channel=STOCK_CHANNEL_ID, text=" ", attachments=batch)
+        logger.info("send_crypto_digest: done")
+    except Exception as e:
+        logger.error("send_crypto_digest failed: %s", e)
 
 
 def send_summary_digest(tickers: list = None):

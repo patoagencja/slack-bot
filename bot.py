@@ -53,7 +53,8 @@ from jobs.onboarding import (
 )
 from jobs.industry_news import weekly_industry_news
 from jobs.cost_report import weekly_cost_report
-from jobs.stock_digest import send_stock_digest, send_summary_digest, run_stock_digest, run_summary_digest, analyze_ticker, format_ticker_slack, format_ticker_attachment, WATCHLIST
+from jobs.stock_digest import send_stock_digest, send_summary_digest, run_stock_digest, run_summary_digest, analyze_ticker, format_ticker_slack, format_ticker_attachment, WATCHLIST, send_macro_briefing, send_crypto_digest
+from jobs.weekly_setups import send_weekly_setups, analyze_single_swing
 # jobs.reminders removed — reminders now use Slack chat.scheduleMessage
 from tools.campaign_creator import (
     download_slack_files, upload_creative_to_meta, parse_campaign_request,
@@ -478,6 +479,25 @@ def handle_mention(event, say):
         _days = int(_days_m.group(1)) if _days_m else 30
         say(text=_format_user_token_report(_days), thread_ts=thread_ts)
         return
+
+    # Swing setup intent detection
+    _swing_keywords = ["swing", "setup na", "zagranie na", "short term", "wejście tygodniowe", "setup tygodniowy"]
+    if any(kw in msg_lower_m for kw in _swing_keywords):
+        import threading as _th
+        _swing_ticker_match = re.search(r'\b([A-Z]{2,5})\b', user_message.upper())
+        _swing_ticker = _swing_ticker_match.group(1) if _swing_ticker_match else None
+        if _swing_ticker and _swing_ticker not in {"NA", "OR", "IN", "IS", "BY", "AT"}:
+            _cap_ts = thread_ts
+            say(text=f"🎯 Szukam swing setupu dla *{_swing_ticker}*...", thread_ts=_cap_ts)
+
+            def _swing_worker(_t=_swing_ticker, _ts=_cap_ts):
+                try:
+                    say(text=analyze_single_swing(_t), thread_ts=_ts)
+                except Exception as _e:
+                    say(text=f"❌ Błąd: {_e}", thread_ts=_ts)
+
+            _th.Thread(target=_swing_worker, daemon=True).start()
+            return
 
     # Stock ticker detection
     _words = set(re.findall(r'\b[A-Z]{1,5}\b', user_message.upper()))
@@ -1486,6 +1506,54 @@ def handle_digest_slash(ack, respond, command):
 
 
 # ── /cleanup slash command ────────────────────────────────────────────────────
+
+@app.command("/makro")
+def handle_makro_slash(ack, respond, command):
+    """Makro briefing: sentyment, VIX, BTC, główne ryzyki."""
+    import threading as _th
+    ack()
+    respond("⏳ Pobierам dane makro... chwilę.")
+
+    def _worker():
+        try:
+            send_macro_briefing()
+            respond("✅ Makro briefing wysłany na #inwestowanie!")
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
+@app.command("/swing")
+def handle_swing_slash(ack, respond, command):
+    """Swing setups tygodniowe lub analiza konkretnego tickera."""
+    import threading as _th
+    ack()
+    ticker = (command.get("text") or "").strip().upper()
+
+    if ticker:
+        respond(f"🎯 Szukam swing setupu dla *{ticker}*...")
+
+        def _single():
+            try:
+                result = analyze_single_swing(ticker)
+                respond(result)
+            except Exception as e:
+                respond(f"❌ Błąd: {e}")
+
+        _th.Thread(target=_single, daemon=True).start()
+    else:
+        respond("🎯 Skanuję watchlistę i krypto... TOP 3-5 zagrań wyślę na #inwestowanie (~3 min).")
+
+        def _full():
+            try:
+                send_weekly_setups()
+                respond("✅ Swing setups wysłane na #inwestowanie!")
+            except Exception as e:
+                respond(f"❌ Błąd: {e}")
+
+        _th.Thread(target=_full, daemon=True).start()
+
 
 @app.command("/cleanup")
 def handle_cleanup_slash(ack, respond, command, client):
@@ -4303,7 +4371,8 @@ scheduler.add_job(check_stale_onboardings,   'cron', hour=9, minute=30, id='stal
 # scheduler.add_job(send_standup_questions,    'cron', day_of_week='mon-fri', hour=9, minute=0,  id='standup_send')
 # scheduler.add_job(post_standup_summary,      'cron', day_of_week='mon-fri', hour=9, minute=30, id='standup_summary')
 scheduler.add_job(weekly_industry_news,      'cron', day_of_week='mon',     hour=9, minute=0,  id='industry_news')
-scheduler.add_job(weekly_cost_report,        'cron', day_of_week='mon',     hour=9, minute=5,  id='weekly_cost_report')
+scheduler.add_job(weekly_cost_report,        'cron', day_of_week='mon',     hour=9,  minute=5,  id='weekly_cost_report')
+scheduler.add_job(send_weekly_setups,        'cron', day_of_week='fri',     hour=16, minute=0,  id='weekly_setups')
 # stock_digest disabled — uruchamiać ręcznie przez /digest
 scheduler.add_job(sync_calendar_from_email,  'cron', minute=0,                                id='email_calendar_sync')
 # reminders job removed — Slack chat.scheduleMessage handles delivery natively
