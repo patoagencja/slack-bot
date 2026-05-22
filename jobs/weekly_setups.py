@@ -247,7 +247,7 @@ _SWING_SYSTEM = (
 )
 
 
-def _pick_top_setups(candidates: list[dict], macro: dict) -> list[dict]:
+def _pick_top_setups(candidates: list[dict], macro: dict, limit: int = 5) -> list[dict]:
     if not candidates:
         return []
 
@@ -273,11 +273,12 @@ def _pick_top_setups(candidates: list[dict], macro: dict) -> list[dict]:
                 f"Catalyst: {c['catalyst'][:80] or 'brak'}"
             )
 
+    top_n = max(3, min(limit, 15))
     prompt = (
         f"Makro: {macro.get('sentiment','?')} — {macro.get('main_risk','')}\n\n"
         "Kandydaci na swing setupy tego tygodnia:\n"
         + "\n".join(lines)
-        + "\n\nWybierz TOP 3-5 najlepszych zagrań i zwróć JSON."
+        + f"\n\nWybierz TOP {top_n} najlepszych zagrań i zwróć JSON."
     )
 
     try:
@@ -357,15 +358,32 @@ def run_weekly_setups(include_crypto: bool = True) -> list[dict]:
     return _pick_top_setups(candidates, macro)
 
 
-def send_weekly_setups():
-    """Post weekly swing setups to #inwestowanie (Friday 16:00 UTC)."""
+def _scan_candidates() -> tuple[list[dict], dict, float | None]:
+    """Collect all passing candidates + macro + btc_dom. Shared by send_* functions."""
+    macro   = fetch_macro_briefing()
+    btc_dom = _fetch_btc_dominance()
+    candidates = []
+    for ticker in WATCHLIST:
+        s = _analyze_setup_ticker(ticker)
+        if s:
+            candidates.append(s)
+    coins = _fetch_top_coins(20)
+    for coin in coins:
+        s = _analyze_setup_coin(coin, btc_dom)
+        if s:
+            candidates.append(s)
+    return candidates, macro, btc_dom
+
+
+def send_weekly_setups(limit: int = 5):
+    """Post weekly swing setups to #inwestowanie."""
     try:
         today  = datetime.datetime.now().strftime("%d.%m.%Y")
         end_dt = (datetime.datetime.now() + datetime.timedelta(days=5)).strftime("%d.%m.%Y")
-        macro  = fetch_macro_briefing()
-        btc_dom = _fetch_btc_dominance()
-        s_emoji = {"RISK-ON": "🟢", "RISK-OFF": "🔴", "NEUTRALNY": "🟡"}.get(macro.get("sentiment",""), "🟡")
 
+        candidates, macro, btc_dom = _scan_candidates()
+
+        s_emoji = {"RISK-ON": "🟢", "RISK-OFF": "🔴", "NEUTRALNY": "🟡"}.get(macro.get("sentiment",""), "🟡")
         dom_str = f"{btc_dom}%" if btc_dom is not None else "N/A"
         header = (
             f"🎯 *Weekly Setups — {today} → {end_dt}*\n"
@@ -375,21 +393,7 @@ def send_weekly_setups():
         )
         _ctx.app.client.chat_postMessage(channel=STOCK_CHANNEL_ID, text=header)
 
-        # Scan in background (already called from background thread)
-        macro_cached = macro  # already fetched
-        btc_dom_cached = btc_dom
-        candidates = []
-        for ticker in WATCHLIST:
-            s = _analyze_setup_ticker(ticker)
-            if s:
-                candidates.append(s)
-        coins = _fetch_top_coins(20)
-        for coin in coins:
-            s = _analyze_setup_coin(coin, btc_dom_cached)
-            if s:
-                candidates.append(s)
-
-        setups = _pick_top_setups(candidates, macro_cached)
+        setups = _pick_top_setups(candidates, macro, limit=limit)
 
         if not setups:
             _ctx.app.client.chat_postMessage(
@@ -419,6 +423,71 @@ def send_weekly_setups():
         logger.info("send_weekly_setups: done, %d setups", len(setups))
     except Exception as e:
         logger.error("send_weekly_setups failed: %s", e)
+
+
+def send_scan_setups():
+    """Post ALL passing candidates sorted by score — no Claude filter."""
+    try:
+        today  = datetime.datetime.now().strftime("%d.%m.%Y")
+        candidates, macro, btc_dom = _scan_candidates()
+
+        s_emoji = {"RISK-ON": "🟢", "RISK-OFF": "🔴", "NEUTRALNY": "🟡"}.get(macro.get("sentiment",""), "🟡")
+        dom_str = f"{btc_dom}%" if btc_dom is not None else "N/A"
+
+        if not candidates:
+            _ctx.app.client.chat_postMessage(
+                channel=STOCK_CHANNEL_ID,
+                text="📭 Scan nie znalazł żadnych kandydatów (RSI 35-72, powyżej MA50).",
+            )
+            return
+
+        sorted_c = sorted(candidates, key=lambda x: x.get("score", 0), reverse=True)
+
+        _ctx.app.client.chat_postMessage(
+            channel=STOCK_CHANNEL_ID,
+            text=(
+                f"🔍 *Swing Scan — {today}*  ({len(sorted_c)} kandydatów)\n"
+                f"{s_emoji} Makro: {macro.get('sentiment','?')}  |  ₿ Dominance: {dom_str}\n"
+                f"_Brak filtra Claude — wszystkie setupy spełniające kryteria techniczne_"
+            ),
+        )
+
+        lines = []
+        for i, c in enumerate(sorted_c, 1):
+            if c.get("is_crypto"):
+                line = (
+                    f"*{i}. {c['ticker']}* [CRYPTO #{c['rank']}]  score={c.get('score',0)}\n"
+                    f"   ${c['price']} | 7d: {c['chg7d']:+.1f}% | od ATH: {c['pct_ath']}%\n"
+                    f"   {c.get('catalyst','brak katalizatora')[:100]}"
+                )
+            else:
+                rr  = c.get("rr", {})
+                pat = c.get("pattern", {})
+                line = (
+                    f"*{i}. {c['ticker']}* [STOCK]  RSI={c['rsi']}  score={c.get('score',0)}\n"
+                    f"   Pattern: _{pat.get('pattern','?')}_  |  "
+                    f"Wejście: ${rr.get('entry','?')}  |  Cel: +{rr.get('target_pct','?')}%  |  "
+                    f"R/R: {rr.get('rr_ratio','?')}:1\n"
+                    f"   {c.get('catalyst','brak katalizatora')[:100]}"
+                )
+            lines.append(line)
+
+        # Post in chunks of 10 to avoid message size limits
+        chunk_size = 10
+        for chunk_start in range(0, len(lines), chunk_size):
+            chunk = lines[chunk_start:chunk_start + chunk_size]
+            _ctx.app.client.chat_postMessage(
+                channel=STOCK_CHANNEL_ID,
+                text="\n\n".join(chunk),
+            )
+
+        _ctx.app.client.chat_postMessage(
+            channel=STOCK_CHANNEL_ID,
+            text="⚠️ _Scan surowy — brak oceny Claude. Nie inwestuj więcej niż możesz stracić._",
+        )
+        logger.info("send_scan_setups: done, %d candidates", len(sorted_c))
+    except Exception as e:
+        logger.error("send_scan_setups failed: %s", e)
 
 
 def analyze_single_swing(ticker: str) -> str:

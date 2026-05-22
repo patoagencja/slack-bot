@@ -54,7 +54,7 @@ from jobs.onboarding import (
 from jobs.industry_news import weekly_industry_news
 from jobs.cost_report import weekly_cost_report
 from jobs.stock_digest import send_stock_digest, send_summary_digest, run_stock_digest, run_summary_digest, analyze_ticker, format_ticker_slack, format_ticker_attachment, WATCHLIST, send_macro_briefing, send_crypto_digest
-from jobs.weekly_setups import send_weekly_setups, analyze_single_swing
+from jobs.weekly_setups import send_weekly_setups, analyze_single_swing, send_scan_setups
 # jobs.reminders removed — reminders now use Slack chat.scheduleMessage
 from tools.campaign_creator import (
     download_slack_files, upload_creative_to_meta, parse_campaign_request,
@@ -1526,33 +1526,66 @@ def handle_makro_slash(ack, respond, command):
 
 @app.command("/swing")
 def handle_swing_slash(ack, respond, command):
-    """Swing setups tygodniowe lub analiza konkretnego tickera."""
+    """Swing setups: /swing | /swing 10 | /swing scan | /swing TICKER"""
     import threading as _th
     ack()
-    ticker = (command.get("text") or "").strip().upper()
+    arg = (command.get("text") or "").strip()
 
-    if ticker:
+    # /swing scan — all candidates, no Claude filter
+    if arg.lower() == "scan":
+        respond("🔍 Skanuję całą watchlistę... wyślę wszystkich kandydatów na #inwestowanie (~3 min).")
+
+        def _scan():
+            try:
+                send_scan_setups()
+                respond("✅ Scan gotowy na #inwestowanie!")
+            except Exception as e:
+                respond(f"❌ Błąd: {e}")
+
+        _th.Thread(target=_scan, daemon=True).start()
+        return
+
+    # /swing 10 — custom limit
+    if arg.isdigit():
+        limit = max(1, min(int(arg), 15))
+        respond(f"🎯 Skanuję watchlistę i krypto... TOP {limit} zagrań wyślę na #inwestowanie (~3 min).")
+
+        def _full_limit(lim=limit):
+            try:
+                send_weekly_setups(limit=lim)
+                respond(f"✅ TOP {lim} swing setups wysłane na #inwestowanie!")
+            except Exception as e:
+                respond(f"❌ Błąd: {e}")
+
+        _th.Thread(target=_full_limit, daemon=True).start()
+        return
+
+    # /swing TICKER — single ticker analysis
+    if arg:
+        ticker = arg.upper()
         respond(f"🎯 Szukam swing setupu dla *{ticker}*...")
 
-        def _single():
+        def _single(t=ticker):
             try:
-                result = analyze_single_swing(ticker)
+                result = analyze_single_swing(t)
                 respond(result)
             except Exception as e:
                 respond(f"❌ Błąd: {e}")
 
         _th.Thread(target=_single, daemon=True).start()
-    else:
-        respond("🎯 Skanuję watchlistę i krypto... TOP 3-5 zagrań wyślę na #inwestowanie (~3 min).")
+        return
 
-        def _full():
-            try:
-                send_weekly_setups()
-                respond("✅ Swing setups wysłane na #inwestowanie!")
-            except Exception as e:
-                respond(f"❌ Błąd: {e}")
+    # /swing — default TOP 5
+    respond("🎯 Skanuję watchlistę i krypto... TOP 5 zagrań wyślę na #inwestowanie (~3 min).")
 
-        _th.Thread(target=_full, daemon=True).start()
+    def _full():
+        try:
+            send_weekly_setups()
+            respond("✅ Swing setups wysłane na #inwestowanie!")
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_full, daemon=True).start()
 
 
 @app.command("/cleanup")
