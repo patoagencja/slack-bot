@@ -146,12 +146,12 @@ def _analyze_setup_ticker(ticker: str) -> dict | None:
         pattern = _detect_pattern(closes, ticker)
         rr      = _calc_rr(closes)
 
-        # Hard filters: RSI 40-68, above MA50, quality >= 2
-        if not (40 <= rsi <= 68):
+        # Hard filters: RSI 35-72, above MA50, quality >= 1
+        if not (35 <= rsi <= 72):
             return None
         if not tech.get("above_ma50"):
             return None
-        if pattern["quality"] < 2:
+        if pattern["quality"] < 1:
             return None
 
         # Catalyst (Tavily)
@@ -237,10 +237,12 @@ def _analyze_setup_coin(coin: dict, btc_dominance: float | None) -> dict | None:
 
 _SWING_SYSTEM = (
     "Jesteś traderem swing. Wybierasz TOP 3-5 zagrań tygodniowych.\n"
-    "Kryteria: RSI 40-68, powyżej MA50, wyraźny pattern techniczny, R/R ≥ 2:1.\n"
+    "Kryteria: RSI 35-72, powyżej MA50, wyraźny pattern techniczny, R/R ≥ 2:1.\n"
     "Dla krypto: nie wchodzisz po pompie >20% w 7d.\n"
-    "ODPOWIADASZ TYLKO W JSON (tablica):\n"
-    '[{"ticker":"...","pattern":"...","entry":0,"target":0,"stop":0,"rr":0,'
+    "Jeśli kandydatów jest mało — wybierz najlepszych spośród dostępnych (nawet 1-2).\n"
+    "ODPOWIADASZ TYLKO W JSON (tablica, puste [] jeśli naprawdę brak setupów):\n"
+    '[{"ticker":"...","pattern":"...","entry":0.0,"target":0.0,"stop":0.0,'
+    '"target_pct":0.0,"stop_pct":0.0,"rr":0.0,'
     '"window_days":5,"catalyst":"...","reason":"1 zdanie po polsku"}]'
 )
 
@@ -364,10 +366,11 @@ def send_weekly_setups():
         btc_dom = _fetch_btc_dominance()
         s_emoji = {"RISK-ON": "🟢", "RISK-OFF": "🔴", "NEUTRALNY": "🟡"}.get(macro.get("sentiment",""), "🟡")
 
+        dom_str = f"{btc_dom}%" if btc_dom is not None else "N/A"
         header = (
             f"🎯 *Weekly Setups — {today} → {end_dt}*\n"
             f"{s_emoji} Makro: {macro.get('sentiment','?')}  |  "
-            f"₿ Dominance: {btc_dom}%\n"
+            f"₿ Dominance: {dom_str}\n"
             f"_{macro.get('main_risk','')}_"
         )
         _ctx.app.client.chat_postMessage(channel=STOCK_CHANNEL_ID, text=header)
@@ -391,13 +394,19 @@ def send_weekly_setups():
         if not setups:
             _ctx.app.client.chat_postMessage(
                 channel=STOCK_CHANNEL_ID,
-                text="📭 Brak wyraźnych setupów w tym tygodniu — rynek sideways lub za drogo.",
+                text=(
+                    f"📭 Brak wyraźnych setupów w tym tygodniu "
+                    f"({len(candidates)} kandydatów przeszło filtry, żaden nie wygrał).\n"
+                    f"Rynek może być zbyt zmienny lub wszystkie spółki poza MA50."
+                ),
             )
             return
 
         attachments = [_format_setup_attachment(i + 1, s) for i, s in enumerate(setups)]
         _ctx.app.client.chat_postMessage(
-            channel=STOCK_CHANNEL_ID, text=" ", attachments=attachments
+            channel=STOCK_CHANNEL_ID,
+            text=f"🎯 *TOP {len(setups)} zagrań na {today} → {end_dt}*",
+            attachments=attachments,
         )
         _ctx.app.client.chat_postMessage(
             channel=STOCK_CHANNEL_ID,
@@ -446,7 +455,21 @@ def analyze_single_swing(ticker: str) -> str:
     # Stock analysis
     setup = _analyze_setup_ticker(ticker)
     if not setup:
-        return f"🟡 *{ticker}* — brak setupu: RSI poza zakresem 40-68, poniżej MA50, lub niewystarczające dane."
+        # Try to get basic data for a friendlier message
+        try:
+            import yfinance as _yf
+            _h = _yf.Ticker(ticker).history(period="3mo", interval="1d")
+            if not _h.empty:
+                _closes = _h["Close"].tolist()
+                _rsi = round(_calc_rsi(_closes), 1)
+                _tech = _calc_technicals(_closes)
+                _above = "✅" if _tech.get("above_ma50") else "❌"
+                return (f"🟡 *{ticker}* — brak setupu\n"
+                        f"RSI: {_rsi} (potrzeba 35-72) | MA50: {_above}\n"
+                        f"Spróbuj kiedy warunki będą lepsze.")
+        except Exception:
+            pass
+        return f"🟡 *{ticker}* — brak setupu: RSI poza zakresem 35-72, poniżej MA50, lub niewystarczające dane."
 
     pat = setup.get("pattern", {})
     rr  = setup.get("rr", {})
