@@ -13,6 +13,18 @@ import datetime
 import time as _time
 from collections import Counter
 
+# Capital flow — imported lazily to avoid circular imports at module level
+_capital_flow = None
+
+def _get_capital_flow():
+    global _capital_flow
+    if _capital_flow is None:
+        try:
+            import jobs.capital_flow as _capital_flow
+        except Exception:
+            pass
+    return _capital_flow
+
 import requests as _requests
 import pandas as pd
 import numpy as np
@@ -591,6 +603,12 @@ def _build_user_msg(ticker: str, fin: dict, news: list, category: str) -> str:
     if sector_ctx:
         base += f"\nKontekst sektora ({sector}): {sector_ctx[:200]}\n"
 
+    # ── Capital flow signal ──
+    flow = fin.get("sector_flow", "NEUTRAL")
+    if flow != "NEUTRAL":
+        flow_label = "🟢 SECTOR_INFLOW — kapitał napływa do tego sektora" if flow == "INFLOW" else "🔴 SECTOR_OUTFLOW — kapitał odpływa z tego sektora"
+        base += f"\nCapital flow: {flow_label}\n"
+
     return base + news_text
 
 
@@ -693,6 +711,10 @@ def analyze_ticker(ticker: str, qqq_30d: float | None = None, btc_data: dict | N
     # ── Sector context (cached per sector) ──
     fin["sector_context"] = _fetch_sector_context(fin["sector"])
 
+    # ── Capital flow signal ──
+    cf = _get_capital_flow()
+    fin["sector_flow"] = cf.get_ticker_flow(ticker) if cf else "NEUTRAL"
+
     # ── Category-specific extras ──
     if category == "CRYPTO_PROXY":
         fin["btc_data"] = btc_data if btc_data is not None else _fetch_btc_data()
@@ -739,6 +761,17 @@ def analyze_ticker(ticker: str, qqq_30d: float | None = None, btc_data: dict | N
     tariff_text = (fin["extra_signals"].get("tariffs") or "").lower()
     if any(w in tariff_text for w in ("tariff", "cło", "supply chain disruption", "higher costs", "import costs")):
         analysis["flags"] = analysis.get("flags", []) + ["⚠️ RYZYKO CEŁ/SUPPLY CHAIN"]
+
+    # ── Capital flow timing adjustment ──
+    flow = fin.get("sector_flow", "NEUTRAL")
+    if flow == "INFLOW":
+        old_t = analysis.get("timing_score", 3)
+        analysis["timing_score"] = min(5, old_t + 1)
+        analysis["flags"] = analysis.get("flags", []) + ["🟢 SECTOR_INFLOW"]
+    elif flow == "OUTFLOW":
+        old_t = analysis.get("timing_score", 3)
+        analysis["timing_score"] = max(1, old_t - 1)
+        analysis["flags"] = analysis.get("flags", []) + ["🔴 SECTOR_OUTFLOW"]
 
     return {**fin, "news": news, "analysis": analysis}
 
@@ -1471,8 +1504,20 @@ def send_crypto_digest(limit: int = 20):
 
 
 def send_summary_digest(tickers: list = None):
-    """Post one-message summary digest to #inwestowanie."""
+    """Post capital flow snapshot + one-message summary digest to #inwestowanie."""
     try:
+        # ── Capital flow header ──
+        cf = _get_capital_flow()
+        if cf:
+            try:
+                snapshot = cf.build_capital_flow_snapshot()
+                flow_block = cf.format_capital_flow_block(snapshot)
+                if flow_block:
+                    _ctx.app.client.chat_postMessage(channel=STOCK_CHANNEL_ID, text=flow_block)
+            except Exception as e:
+                logger.warning("Capital flow header error: %s", e)
+
+        # ── Main digest ──
         msg = run_summary_digest(tickers)
         chunks = [msg[i:i+3900] for i in range(0, len(msg), 3900)]
         for chunk in chunks:

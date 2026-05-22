@@ -55,6 +55,7 @@ from jobs.industry_news import weekly_industry_news
 from jobs.cost_report import weekly_cost_report
 from jobs.stock_digest import send_stock_digest, send_summary_digest, run_stock_digest, run_summary_digest, analyze_ticker, format_ticker_slack, format_ticker_attachment, WATCHLIST, send_macro_briefing, send_crypto_digest
 from jobs.weekly_setups import send_weekly_setups, analyze_single_swing, send_scan_setups
+from jobs.capital_flow import send_capital_flow_snapshot
 # jobs.reminders removed — reminders now use Slack chat.scheduleMessage
 from tools.campaign_creator import (
     download_slack_files, upload_creative_to_meta, parse_campaign_request,
@@ -1518,6 +1519,24 @@ def handle_makro_slash(ack, respond, command):
         try:
             send_macro_briefing()
             respond("✅ Makro briefing wysłany na #inwestowanie!")
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
+@app.command("/kapital")
+def handle_kapital_slash(ack, respond, command):
+    """Sektor rotation snapshot — gdzie płynie kapitał."""
+    import threading as _th
+    ack()
+    force = (command.get("text") or "").strip().lower() == "refresh"
+    respond("💰 Pobieram dane o przepływach kapitału... chwilę (~2 min).")
+
+    def _worker():
+        try:
+            send_capital_flow_snapshot(force=force)
+            respond("✅ Capital flow snapshot wysłany na #inwestowanie!")
         except Exception as e:
             respond(f"❌ Błąd: {e}")
 
