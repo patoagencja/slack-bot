@@ -39,6 +39,8 @@ WATCHLIST = [
     "ALAB", "LITE", "UNH", "IBM", "APH", "NOC", "CCJ", "UEC", "DNN", "UUUU",
     "SE", "GRAB", "TDOC", "PGY", "DECK", "USAR", "EOSE", "S", "DLO", "RYCEY",
     "SYNA", "GFS", "PRM", "PSIX", "BA",
+    # Space & Defense
+    "RKLB", "ASTS", "LUNR", "PL", "RDW", "IRDM",
 ]
 
 # ── Sector mapping ────────────────────────────────────────────────────────────
@@ -61,6 +63,8 @@ TICKER_SECTORS = {
     "ISRG": "Healthcare", "UNH": "Healthcare", "TDOC": "Healthcare", "NVO": "Healthcare",
     "MCO": "Financial", "NU": "Financial", "DLO": "Financial", "PGY": "Financial",
     "NOC": "Defense", "TDG": "Defense", "AXON": "Defense",
+    "RKLB": "Space/Defense", "ASTS": "Space/Defense", "LUNR": "Space/Defense",
+    "PL": "Space/Defense", "RDW": "Space/Defense", "IRDM": "Space/Defense",
     "CCJ": "Nuclear/Energy", "UEC": "Nuclear/Energy", "DNN": "Nuclear/Energy",
     "UUUU": "Nuclear/Energy", "EOSE": "Nuclear/Energy",
     "RYCEY": "Aerospace", "BA": "Aerospace",
@@ -175,6 +179,7 @@ _CATEGORY_MAP = {
     "CRYPTO_PROXY":          ["MSTR", "MARA", "HOOD"],
     "URANIUM":               ["UEC", "DNN", "UUUU", "CCJ"],
     "DEFENSE":               ["NOC", "BA", "TDG"],
+    "SPACE_DEFENSE":         ["RKLB", "ASTS", "LUNR", "PL", "RDW", "IRDM"],
     "BIOTECH_HEALTH":        ["TEM", "ISRG", "UNH", "NVO", "TDOC"],
     "EMERGING_MARKETS":      ["BABA", "SE", "GRAB", "MELI", "NU", "DLO"],
     "CONSUMER_DISCRETIONARY":["LULU", "NKE", "DECK", "CMG", "RACE"],
@@ -191,6 +196,7 @@ CATEGORY_LABELS = {
     "CRYPTO_PROXY":          "₿ Crypto Proxy",
     "URANIUM":               "☢️ Uranium",
     "DEFENSE":               "🛡 Defense",
+    "SPACE_DEFENSE":         "🚀 Space/Defense",
     "BIOTECH_HEALTH":        "💊 Biotech/Health",
     "EMERGING_MARKETS":      "🌍 Emerging Markets",
     "CONSUMER_DISCRETIONARY":"🛍 Consumer",
@@ -333,6 +339,7 @@ def _fetch_news(ticker: str, category: str = "STANDARD_TECH") -> list:
         "CRYPTO_PROXY":          f"{ticker} bitcoin holdings NAV premium discount 2026",
         "URANIUM":               f"uranium spot price 2026 {ticker} nuclear SMR contracts production",
         "DEFENSE":               f"{ticker} defense contracts NATO budget 2026 backlog",
+        "SPACE_DEFENSE":         f"{ticker} launch manifest contracts NASA DoD 2026",
         "BIOTECH_HEALTH":        f"{ticker} FDA pipeline GLP-1 approval clinical trial 2026",
         "EMERGING_MARKETS":      f"{ticker} regulatory risk USD currency geopolitical 2026",
         "CONSUMER_DISCRETIONARY":f"{ticker} same store sales inventory comparable sales 2026",
@@ -431,6 +438,22 @@ _SYSTEM_PROMPTS = {
         "4) Wycena vs peers (P/E w defense zwykle 15-25x = normalne)\n"
         "5) Dywidenda i buybacki jako element zwrotu\n"
         "Nie karz spółki za 'wysokie' P/E jeśli backlog i cykl uzasadniają premię.\n"
+        + _BASE_JSON_SCHEMA
+    ),
+    "SPACE_DEFENSE": (
+        "Jesteś analitykiem sektora kosmicznego i new-space defense.\n"
+        "WIĘKSZOŚĆ tych spółek to pre-profit lub early-revenue — NIE oceniaj przez P/E.\n"
+        "Używaj EV/Revenue jako głównej metryki wyceny.\n"
+        "Oceń przez:\n"
+        "1) Launch manifest / backlog kontraktów (NASA, DoD, komercyjne) — kluczowy wskaźnik\n"
+        "2) Revenue mix: rządowe (stabilne, przewidywalne) vs komercyjne (wyższy potencjał)\n"
+        "3) Burn rate i runway gotówkowy — ile kwartałów bez dofinansowania\n"
+        "4) Kamienie milowe technologiczne (udane misje = re-rating w górę, awarie = w dół)\n"
+        "5) Konkurencja SpaceX jako benchmark — czy spółka ma realną niszę\n"
+        "6) Tailwindy: Low Earth Orbit economy, satellite broadband, DoD 'proliferated LEO'\n"
+        "KUP = rosnący backlog + rządowy kontrakt zakotwiczony + burn rate pod kontrolą\n"
+        "CZEKAJ = dobre perspektywy ale brak konkretnych kontraktów lub wysoki burn\n"
+        "OMIJAJ = burn rate > 4 kwartały runway lub brak realnej niszy vs SpaceX\n"
         + _BASE_JSON_SCHEMA
     ),
     "BIOTECH_HEALTH": (
@@ -1140,6 +1163,7 @@ ZASADY GRUPOWANIA PER KATEGORIA:
 - CRYPTO_PROXY (MSTR, MARA, HOOD): oceniaj TYLKO przez BTC trend (nie PE/marże). BTC bullish+RSI_BTC<70=KUP. Zaznacz aktualny kurs BTC w reasoning.
 - URANIUM (UEC,DNN,UUUU,CCJ): oceniaj przez spot uranu i nuclear renaissance, nie przez PE. Tailwind = rosnący popyt AI/data centers.
 - DEFENSE (NOC,BA,TDG): geopolityka=TAILWIND, backlog kontraktów, budżety NATO rosnące.
+- SPACE_DEFENSE (RKLB,ASTS,LUNR,PL,RDW,IRDM): pre-profit = oceniaj EV/Revenue nie PE. Kluczowe: backlog NASA/DoD, burn rate, kamienie milowe misji.
 - BIOTECH_HEALTH (TEM,ISRG,UNH,NVO,TDOC): pipeline/FDA/GLP-1 market share. NVO przez ekspozycję na GLP-1.
 - EMERGING_MARKETS (BABA,SE,GRAB,MELI,NU,DLO): uwzględnij ryzyko USD i kraju. Chiny=osobna flaga ryzyka regulacyjnego.
 - CONSUMER_DISCRETIONARY (LULU,NKE,DECK,CMG,RACE): comparable sales, zapasy, cła Chiny. RACE=osobna liga (pricing power, order book). Jeśli cały sektor consumer słabo — kontekstualizuj.
