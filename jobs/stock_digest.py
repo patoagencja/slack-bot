@@ -373,7 +373,7 @@ def _fetch_news(ticker: str, category: str = "STANDARD_TECH") -> list:
 
 
 def _fetch_extra_signals(ticker: str, category: str) -> dict:
-    """Additional targeted Tavily calls for guidance, tariffs, US sales."""
+    """Additional targeted Tavily calls for guidance, tariffs, US sales, EPS revisions."""
     if _tavily is None:
         return {}
     out = {}
@@ -388,6 +388,9 @@ def _fetch_extra_signals(ticker: str, category: str) -> dict:
     # Guidance — all tickers
     _search("guidance", f"{ticker} guidance lowered raised outlook forecast 2026")
 
+    # EPS revision trajectory — all tickers (DNA Rynków: rewizje ważniejsze niż snapshot)
+    _search("eps_revisions", f"{ticker} EPS estimates revision analysts upgrade downgrade 2026")
+
     # Tariffs — consumer & other exposed tickers
     if category == "CONSUMER_DISCRETIONARY" or ticker in _TARIFF_RISK_TICKERS:
         _search("tariffs", f"{ticker} tariffs supply chain China import costs 2026")
@@ -399,6 +402,27 @@ def _fetch_extra_signals(ticker: str, category: str) -> dict:
     return out
 
 
+# ── DNA Rynków investment philosophy ─────────────────────────────────────────
+_DNA_PHILOSOPHY = (
+    "FILOZOFIA INWESTYCYJNA (DNA Rynków):\n"
+    "1. REWIZJE EPS > SNAPSHOT: Kierunek zmian prognoz ważniejszy niż bezwzględna wartość PE. "
+    "Analitycy podnosili EPS = POZYTYWNY sygnał nawet przy wysokim PE. Obniżali = NEGATYWNY nawet przy niskim PE.\n"
+    "2. SIŁA NARRACJI: Spółki z aktywną narrację rynek nagradza premią — AI wdrożenia, agentic AI, nuclear renaissance, "
+    "space economy, GLP-1/obesity, fintech EM. Brak narracji = trudniej o re-rating w górę.\n"
+    "3. KOSZYK NARRACYJNY: Oceń czy spółka jest w koszyku który rynek TERAZ nagradza. "
+    "Zmiana koszyka (np. rotacja z AI na defensywne) = ważny sygnał timingowy.\n"
+    "4. JAKOŚĆ BIZNESU: Czy problemy są przejściowe (reinwestycje, sezonowość) czy fundamentalne "
+    "(utrata udziałów, shrinking TAM, commodityzacja)? Przejściowe = buy the dip. Fundamentalne = unikaj.\n"
+    "5. INSIDER BUYING: Zakupy insiderów = silny sygnał confidence w spółkę. "
+    "Sprzedaż insiderów po pompie — mniej istotna (może być planowa dywersyfikacja).\n"
+    "6. DYSKRECJONALNE vs SYSTEMATYCZNE: Szukaj spółek gdzie fundamenty poprawiają się szybciej "
+    "niż konsensus widzi — to przewaga dyskrecjonalnego podejścia nad pasywnym.\n"
+    "7. TIMING: Nie kupuj po pompie (RSI>75, near ATH <5%). "
+    "Najlepsze wejście = dobra spółka w chwilowym dołku bez fundamentalnego powodu.\n"
+    "8. KONCENTRACJA: Lepsze wyniki daje koncentracja na najlepszych ideach niż dywersyfikacja dla spokoju sumienia.\n"
+    "9. ZARZĄDZANIE RYZYKIEM: Każda pozycja ma bull i bear case — obie muszą być realistyczne.\n"
+)
+
 # ── Claude system prompts per category ───────────────────────────────────────
 _BASE_JSON_SCHEMA = (
     'Odpowiadasz TYLKO w JSON bez żadnego tekstu przed/po:\n'
@@ -407,22 +431,32 @@ _BASE_JSON_SCHEMA = (
     ' "verdict": "KUP"/"CZEKAJ"/"OMIJAJ",\n'
     ' "confidence": "LOW"/"MEDIUM"/"HIGH",\n'
     ' "bull_case": "1 zdanie — co musi się wydarzyć żeby spółka urosła",\n'
-    ' "bear_case": "1 zdanie — co może pójść źle"\n'
+    ' "bear_case": "1 zdanie — co może pójść źle",\n'
+    ' "revision_momentum": "POSITIVE"/"NEGATIVE"/"NEUTRAL",\n'
+    ' "narrative_strength": "STRONG"/"WEAK"/"NONE",\n'
+    ' "basket": "POZYTYWNY"/"NEGATYWNY"/"NEUTRALNY",\n'
+    ' "business_quality_intact": true/false\n'
     '}\n'
     'confidence=HIGH gdy wszystkie sygnały zgodne; MEDIUM gdy większość zgodna; '
     'LOW gdy sprzeczne sygnały lub brak kluczowych danych.\n'
-    'bull_case i bear_case ZAWSZE wymagane — wymuszają myślenie w obu kierunkach.'
+    'bull_case i bear_case ZAWSZE wymagane.\n'
+    'revision_momentum: POSITIVE = analitycy podnosili EPS w ostatnich tygodniach; NEGATIVE = obniżali.\n'
+    'narrative_strength: STRONG = spółka ma aktywną narrację (AI wdrożenia, agentic AI, nuclear, space, GLP-1, fintech EM); NONE = brak aktywnej narracji.\n'
+    'basket: POZYTYWNY = spółka w koszyku narracyjnym który rynek teraz nagradza; NEGATYWNY = w koszyku który rynek karze.\n'
+    'business_quality_intact: true jeśli problemy są przejściowe (reinwestycje, sezonowość) NIE fundamentalne.'
 )
 
 _SYSTEM_PROMPTS = {
     "CRYPTO_PROXY": (
-        "Jesteś analitykiem krypto i crypto-equity. Ta spółka to CRYPTO PROXY — "
+        _DNA_PHILOSOPHY
+        + "Jesteś analitykiem krypto i crypto-equity. Ta spółka to CRYPTO PROXY — "
         "jej wycena jest zdeterminowana przez Bitcoina, NIE przez P/E ani marże.\n"
         "Oceń wyłącznie:\n"
         "1) Trend BTC: czy BTC > MA200? RSI BTC < 70 = nie przegrzany\n"
         "2) Lewar: ile BTC na akcję (NAV), premium/discount do NAV — wysoki premium = ryzyko\n"
         "3) Scenario: historycznie MSTR rośnie 3-4x gdy BTC x2\n"
         "4) Timing RSI spółki + short interest\n"
+        "5) Rewizje EPS: analitycy podnosili prognozy? (revision_momentum)\n"
         "KUP = BTC bullish (>MA200) + RSI BTC < 70 + rozsądny premium do NAV\n"
         "CZEKAJ = BTC sideways lub wysoki premium do NAV\n"
         "OMIJAJ = BTC poniżej MA200 lub RSI BTC > 80\n"
@@ -430,7 +464,8 @@ _SYSTEM_PROMPTS = {
         + _BASE_JSON_SCHEMA
     ),
     "URANIUM": (
-        "Jesteś analitykiem surowcowym specjalizującym się w uranie i energetyce jądrowej.\n"
+        _DNA_PHILOSOPHY
+        + "Jesteś analitykiem surowcowym specjalizującym się w uranie i energetyce jądrowej.\n"
         "NIE oceniaj przez standardowe P/E — uranium miners mają cykliczną rentowność.\n"
         "Oceń przez:\n"
         "1) Spot price uranu (trend wzrostowy = tailwind)\n"
@@ -438,22 +473,26 @@ _SYSTEM_PROMPTS = {
         "3) Ekspozycja na nuclear renaissance / SMR (Small Modular Reactors)\n"
         "4) Polityczne tailwindy: dekarbonizacja, AI data centers = wzrost popytu na prąd\n"
         "5) Koszty produkcji vs spot price (czy spółka jest profitable przy aktualnych cenach)\n"
+        "6) Rewizje EPS i momentum narracyjne (nuclear koszyk aktywny?)\n"
         "Geopolityka = TAILWIND dla nuclear, nie ryzyko.\n"
         + _BASE_JSON_SCHEMA
     ),
     "DEFENSE": (
-        "Jesteś analitykiem sektora obronnego.\n"
+        _DNA_PHILOSOPHY
+        + "Jesteś analitykiem sektora obronnego.\n"
         "Oceń przez:\n"
         "1) Cykl obronny: budżety NATO, wydatki rządowe (rosnące = tailwind)\n"
         "2) Backlog kontraktów i visibility przychodów\n"
         "3) Geopolityka jako TAILWIND — nie ryzyko\n"
         "4) Wycena vs peers (P/E w defense zwykle 15-25x = normalne)\n"
         "5) Dywidenda i buybacki jako element zwrotu\n"
+        "6) Rewizje EPS: czy analitycy podnosili prognozy w kontekście rosnących budżetów?\n"
         "Nie karz spółki za 'wysokie' P/E jeśli backlog i cykl uzasadniają premię.\n"
         + _BASE_JSON_SCHEMA
     ),
     "SPACE_DEFENSE": (
-        "Jesteś analitykiem sektora kosmicznego i new-space defense.\n"
+        _DNA_PHILOSOPHY
+        + "Jesteś analitykiem sektora kosmicznego i new-space defense.\n"
         "WIĘKSZOŚĆ tych spółek to pre-profit lub early-revenue — NIE oceniaj przez P/E.\n"
         "Używaj EV/Revenue jako głównej metryki wyceny.\n"
         "Oceń przez:\n"
@@ -463,24 +502,29 @@ _SYSTEM_PROMPTS = {
         "4) Kamienie milowe technologiczne (udane misje = re-rating w górę, awarie = w dół)\n"
         "5) Konkurencja SpaceX jako benchmark — czy spółka ma realną niszę\n"
         "6) Tailwindy: Low Earth Orbit economy, satellite broadband, DoD 'proliferated LEO'\n"
+        "7) Narracja space economy aktywna? Insider buying przy niskich cenach?\n"
         "KUP = rosnący backlog + rządowy kontrakt zakotwiczony + burn rate pod kontrolą\n"
         "CZEKAJ = dobre perspektywy ale brak konkretnych kontraktów lub wysoki burn\n"
         "OMIJAJ = burn rate > 4 kwartały runway lub brak realnej niszy vs SpaceX\n"
         + _BASE_JSON_SCHEMA
     ),
     "BIOTECH_HEALTH": (
-        "Jesteś analitykiem sektora healthcare i biotech.\n"
+        _DNA_PHILOSOPHY
+        + "Jesteś analitykiem sektora healthcare i biotech.\n"
         "Oceń przez:\n"
         "1) Pipeline produktowy i FDA approvals (catalyst risk/opportunity)\n"
         "2) Dla NVO: ekspozycja na GLP-1 market share, competition from LLY\n"
         "3) Dla insurerów (UNH): medical loss ratio, regulatory risk\n"
         "4) Dla telehealth (TDOC): unit economics, customer retention\n"
         "5) Generics risk dla spółek patentowych\n"
-        "6) Standardowe fundamenty tam gdzie mają sens\n"
+        "6) Rewizje EPS: czy analitycy podnosili/obniżali prognozy po ostatnich danych klinicznych?\n"
+        "7) Czy narracja GLP-1/obesity/AI w medycynie aktywna i wspiera wycenę?\n"
+        "8) Standardowe fundamenty tam gdzie mają sens\n"
         + _BASE_JSON_SCHEMA
     ),
     "EMERGING_MARKETS": (
-        "Jesteś analitykiem rynków wschodzących.\n"
+        _DNA_PHILOSOPHY
+        + "Jesteś analitykiem rynków wschodzących.\n"
         "Oceń przez:\n"
         "1) Fundamenty spółki (wzrost, marże, wycena)\n"
         "2) Ryzyko walutowe USD (silny USD = headwind dla EM)\n"
@@ -489,11 +533,14 @@ _SYSTEM_PROMPTS = {
         "   - Azja SEA (SE, GRAB): ryzyko niższe, ale polityka lokalna\n"
         "   - LATAM (MELI, NU, DLO): ryzyko walutowe, inflation\n"
         "4) Geopolityka (de-coupling USA-Chiny = dodatkowe ryzyko dla spółek chińskich)\n"
+        "5) Rewizje EPS: czy kierunek zmian prognoz pozytywny mimo geopolitycznych headwindów?\n"
+        "6) Koszyk EM fintech/e-commerce aktywny czy rynek go karze?\n"
         "W reasoning zaznacz zawsze ryzyko kraju jako osobną wzmiankę.\n"
         + _BASE_JSON_SCHEMA
     ),
     "CONSUMER_DISCRETIONARY": (
-        "Jesteś analitykiem sektora consumer discretionary.\n"
+        _DNA_PHILOSOPHY
+        + "Jesteś analitykiem sektora consumer discretionary.\n"
         "Oceniaj przez:\n"
         "1) Same-store/comparable sales growth — to ważniejszy wskaźnik niż YoY revenue\n"
         "2) Average selling price trend — czy obniżają ceny żeby sprzedać? (zły znak)\n"
@@ -501,16 +548,21 @@ _SYSTEM_PROMPTS = {
         "4) Cła i supply chain (szczególnie produkcja w Chinach/Azji)\n"
         "5) Siła konsumenta USA (core target market)\n"
         "6) Czy problemy są firmowe czy sektorowe (cały retail słaby = inny kontekst)\n"
+        "7) Rewizje EPS: obniżki prognoz po słabych comp sales = NEGATYWNY sygnał\n"
+        "8) Czy problemy przejściowe (kurs USD, jednorazowe cło) czy fundamentalne (utrata klienta)?\n"
         "Dla RACE (Ferrari): oceniaj przez order book, waitlist, pricing power (inna liga niż NKE/LULU)\n"
         "Dla CMG: comparable restaurant sales, traffic vs ticket size\n"
         + _BASE_JSON_SCHEMA
     ),
     "STANDARD_TECH": (
-        "Jesteś analitykiem inwestycyjnym. Analizujesz spółki pod kątem:\n"
+        _DNA_PHILOSOPHY
+        + "Jesteś analitykiem inwestycyjnym. Analizujesz spółki pod kątem:\n"
         "1) Fundamentów (wycena vs sektor, wzrost, marże, EV/EBITDA)\n"
         "2) Timingu (RSI > 75 = przegrzana, MA50/MA200, golden/death cross, blisko ATH)\n"
         "3) Ryzyka makro (Fed, VIX, sezonowość, short interest, insider activity)\n"
         "4) Relative strength vs QQQ (>20% w 30d = prawdopodobnie przegrzana)\n"
+        "5) Rewizji EPS: kierunek zmian prognoz analityków jest ważniejszy niż bezwzględny PE\n"
+        "6) Siły narracji: AI wdrożenia, agentic AI — spółki w aktywnym koszyku dostają premię\n"
         "Uwzględnij czy spółka ma earnings w ciągu 14 dni.\n"
         + _BASE_JSON_SCHEMA
     ),
@@ -590,9 +642,11 @@ def _build_user_msg(ticker: str, fin: dict, news: list, category: str) -> str:
         if deteriorating_label:
             base += f"{deteriorating_label}\n"
 
-    # ── Extra signals: guidance, tariffs, US sales ──
+    # ── Extra signals: guidance, EPS revisions, tariffs, US sales ──
     if extras.get("guidance"):
         base += f"\nGuidance/outlook: {extras['guidance'][:250]}\n"
+    if extras.get("eps_revisions"):
+        base += f"EPS revision trajectory: {extras['eps_revisions'][:250]}\n"
     if extras.get("tariffs"):
         base += f"Tariff/supply chain risk: {extras['tariffs'][:200]}\n"
     if extras.get("us_sales"):
@@ -1180,10 +1234,17 @@ def run_summary_digest(tickers: list = None) -> str:
         + "\n".join(lines_data)
         + """
 
+FILOZOFIA DNA RYNKÓW (stosuj przy każdej spółce):
+- Rewizje EPS > snapshot: kierunek zmian prognoz ważniejszy niż bezwzględny PE
+- Siła narracji: AI, nuclear, space, GLP-1, fintech EM = rynek nagradza premią
+- Koszyk narracyjny: czy spółka w koszyku który rynek TERAZ nagradza?
+- Jakość biznesu: problemy przejściowe (reinwestycje) vs fundamentalne (utrata rynku)
+- Timing: RSI>75 lub near ATH = CZEKAJ nawet przy dobrych fundamentach
+
 Napisz JEDEN raport inwestycyjny w formacie Slack markdown. Pogrupuj wszystkie spółki w trzy sekcje:
 
 🟢 *WARTE UWAGI — dobre wejście teraz:*
-• *TICKER* $cena — 1 zdanie uzasadnienia
+• *TICKER* $cena — 1 zdanie uzasadnienia (uwzględnij rewizje EPS i narrację)
 
 🟡 *CZEKAJ — dobra spółka, zły timing lub za drogo:*
 • *TICKER* $cena — 1 zdanie uzasadnienia
@@ -1192,7 +1253,7 @@ Napisz JEDEN raport inwestycyjny w formacie Slack markdown. Pogrupuj wszystkie s
 • *TICKER* $cena — 1 zdanie uzasadnienia
 
 ZASADY GRUPOWANIA PER KATEGORIA:
-- STANDARD_TECH: RSI<65 + nie blisko ATH + fundamenty OK = WARTE UWAGI
+- STANDARD_TECH: RSI<65 + nie blisko ATH + fundamenty OK + pozytywne rewizje EPS = WARTE UWAGI
 - CRYPTO_PROXY (MSTR, MARA, HOOD): oceniaj TYLKO przez BTC trend (nie PE/marże). BTC bullish+RSI_BTC<70=KUP. Zaznacz aktualny kurs BTC w reasoning.
 - URANIUM (UEC,DNN,UUUU,CCJ): oceniaj przez spot uranu i nuclear renaissance, nie przez PE. Tailwind = rosnący popyt AI/data centers.
 - DEFENSE (NOC,BA,TDG): geopolityka=TAILWIND, backlog kontraktów, budżety NATO rosnące.
