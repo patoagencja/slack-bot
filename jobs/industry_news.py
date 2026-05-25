@@ -138,25 +138,71 @@ def _fetch_with_web_search(prompt: str) -> str:
         }],
         messages=[{"role": "user", "content": prompt}],
     )
-    parts = [block.text for block in response.content if hasattr(block, "text")]
-    return "\n".join(parts).strip()
+    # Collect all text blocks — Claude may interleave tool_use and text blocks
+    parts = []
+    for block in response.content:
+        if hasattr(block, "text") and block.text:
+            parts.append(block.text)
+    raw = "\n".join(parts).strip()
+    logger.debug("_fetch_with_web_search raw (first 500): %s", raw[:500])
+    return raw
 
 
 def _parse_points(raw: str) -> list[dict]:
-    """Wyciąga listę punktów z odpowiedzi JSON Claude'a."""
-    # Strip markdown code fences first
+    """Wyciąga listę punktów z odpowiedzi Claude'a — kilka strategii parsowania."""
+    # Strategy 1: strip markdown fences, find JSON object
     cleaned = re.sub(r'```(?:json)?\s*', '', raw).strip()
-    candidates = [cleaned, raw]
-    for text in candidates:
+    cleaned = re.sub(r'```\s*$', '', cleaned).strip()
+
+    for text in [cleaned, raw]:
+        # Try outermost JSON object
         try:
             match = re.search(r'\{[\s\S]*\}', text)
             if match:
                 data = json.loads(match.group())
                 points = data.get("points", [])
                 if points:
+                    return [p for p in points if p.get("headline")]
+        except Exception:
+            pass
+
+        # Try JSON array directly (if Claude returned just the array)
+        try:
+            match = re.search(r'\[[\s\S]*\]', text)
+            if match:
+                points = json.loads(match.group())
+                if isinstance(points, list) and points and points[0].get("headline"):
                     return points
-        except Exception as e:
-            logger.warning(f"Nie udało się sparsować JSON z newsów: {e}")
+        except Exception:
+            pass
+
+    # Strategy 2: Claude didn't return JSON — ask it to reformat what it found
+    logger.warning("Pierwsze parsowanie nieudane — próbuję re-format przez Claude")
+    try:
+        resp = _ctx.claude.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=2000,
+            messages=[{
+                "role": "user",
+                "content": (
+                    "Poniżej jest tekst z informacjami o nowościach branżowych. "
+                    "Wyciągnij z niego maksymalnie 8 punktów i zwróć TYLKO JSON w formacie:\n"
+                    '{"points":[{"platform":"Meta Ads","headline":"...","detail":"...","url":"..."}]}\n\n'
+                    f"Tekst:\n{raw[:3000]}"
+                ),
+            }],
+        )
+        reformat = resp.content[0].text.strip()
+        cleaned2 = re.sub(r'```(?:json)?\s*', '', reformat).strip()
+        match = re.search(r'\{[\s\S]*\}', cleaned2)
+        if match:
+            data = json.loads(match.group())
+            points = data.get("points", [])
+            if points:
+                return [p for p in points if p.get("headline")]
+    except Exception as e:
+        logger.error("Re-format fallback failed: %s", e)
+
     return []
 
 
