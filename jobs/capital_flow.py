@@ -223,6 +223,22 @@ def get_ticker_flow(ticker: str) -> str:
     return signals.get(etf, "NEUTRAL")
 
 
+# ── ETF → example tickers (max 3 from watchlist) ─────────────────────────────
+
+# Reverse map: ETF → up to 3 representative tickers
+_ETF_EXAMPLES: dict[str, list[str]] = {}
+for _ticker, _etf in _TICKER_ETF_MAP.items():
+    _ETF_EXAMPLES.setdefault(_etf, [])
+    if len(_ETF_EXAMPLES[_etf]) < 3:
+        _ETF_EXAMPLES[_etf].append(_ticker)
+
+
+def _etf_label(etf: str, pct: float) -> str:
+    examples = _ETF_EXAMPLES.get(etf, [])
+    ex_str = f" _{', '.join(examples)}_" if examples else ""
+    return f"{etf} {SECTOR_ETFS.get(etf, etf)} {pct:+.1f}%{ex_str}"
+
+
 # ── Format for digest header ──────────────────────────────────────────────────
 
 def format_capital_flow_block(snapshot: dict | None = None) -> str:
@@ -236,8 +252,8 @@ def format_capital_flow_block(snapshot: dict | None = None) -> str:
     etf_perf = snapshot.get("etf_perf", {})
 
     sorted_etfs = sorted(etf_perf.items(), key=lambda x: x[1], reverse=True)
-    top3    = [f"{e} {SECTOR_ETFS.get(e,e)} {p:+.1f}%" for e, p in sorted_etfs[:3]]
-    bottom3 = [f"{e} {SECTOR_ETFS.get(e,e)} {p:+.1f}%" for e, p in sorted_etfs[-3:]]
+    top3    = [_etf_label(e, p) for e, p in sorted_etfs[:3]]
+    bottom3 = [_etf_label(e, p) for e, p in sorted_etfs[-3:]]
 
     lines = [
         f"💰 *Gdzie płynie kapitał — {today}*",
@@ -252,7 +268,7 @@ def format_capital_flow_block(snapshot: dict | None = None) -> str:
         f"🔴 Przegrywa: {snapshot.get('crypto_losers', '—')}",
         f"→ Sentyment: {snapshot.get('crypto_sentiment', '—')}",
         "",
-        f"*Globalnie:*",
+        "*Globalnie:*",
         f"→ {snapshot.get('global_summary', '—')}",
     ]
     return "\n".join(lines)
