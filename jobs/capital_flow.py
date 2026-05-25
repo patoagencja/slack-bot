@@ -150,13 +150,38 @@ _FLOW_SYSTEM = (
     '"top_sectors":["ETF1 +X%","ETF2 +X%","ETF3 +X%"],'
     '"bottom_sectors":["ETF1 -X%","ETF2 -X%","ETF3 -X%"],'
     '"sector_signals":{"XLK":"INFLOW|OUTFLOW|NEUTRAL",...},'
-    '"crypto_winners":"np. RWA, stablecoiny",'
-    '"crypto_losers":"np. AI coins, DeFi",'
+    '"crypto_winners":"konkretne coiny np. BTC, ETH, SOL",'
+    '"crypto_losers":"konkretne coiny np. DOGE, SHIB, AVAX",'
     '"crypto_sentiment":"RISK-ON|RISK-OFF|NEUTRALNY",'
     '"global_summary":"1 zdanie o globalnych przepływach"}\n'
+    "W crypto_winners i crypto_losers podaj KONKRETNE nazwy coinów (tickery), nie kategorie. "
     "sector_signals musi zawierać ocenę dla każdego ETF z listy. "
     "INFLOW = wygrywa vs SPY (top tercyl), OUTFLOW = przegrywa (bottom tercyl), NEUTRAL = środek."
 )
+
+
+def _fetch_top_coins_simple(limit: int = 20) -> str:
+    """Returns a simple string listing top coins with 7d performance."""
+    try:
+        import requests
+        url = "https://api.coingecko.com/api/v3/coins/markets"
+        params = {
+            "vs_currency": "usd",
+            "order": "market_cap_desc",
+            "per_page": limit,
+            "page": 1,
+            "price_change_percentage": "7d",
+        }
+        r = requests.get(url, params=params, timeout=10)
+        coins = r.json()
+        lines = []
+        for c in coins:
+            sym  = (c.get("symbol") or "").upper()
+            chg7 = c.get("price_change_percentage_7d_in_currency") or 0
+            lines.append(f"{sym} {chg7:+.1f}%")
+        return ", ".join(lines)
+    except Exception:
+        return ""
 
 
 def _build_flow_snapshot(etf_perf: dict, news: dict) -> dict:
@@ -168,9 +193,13 @@ def _build_flow_snapshot(etf_perf: dict, news: dict) -> dict:
 
     news_text = "\n".join(f"{k}: {v[:200]}" for k, v in news.items() if v)
 
+    top_coins = _fetch_top_coins_simple(20)
+    coins_section = f"\n\nTop 20 krypto (7d):\n{top_coins}" if top_coins else ""
+
     prompt = (
         f"ETF 5-dniowe wyniki:\n{etf_lines}\n\n"
-        f"Newsy o przepływach:\n{news_text}\n\n"
+        f"Newsy o przepływach:\n{news_text}"
+        f"{coins_section}\n\n"
         "Wykonaj analizę sektor rotation i zwróć JSON."
     )
 
