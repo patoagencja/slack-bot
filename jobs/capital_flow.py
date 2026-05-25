@@ -332,28 +332,25 @@ def fetch_capital_flow_news() -> dict[str, str]:
 # ── Claude synthesis ──────────────────────────────────────────────────────────
 
 _FLOW_SYSTEM = (
-    "Jesteś analitykiem przepływów kapitału. Odpowiadasz WYŁĄCZNIE w JSON:\n"
-    '{"rotation_summary":"1 zdanie co się dzieje z kapitałem w akcjach",'
-    '"top_sectors":["ETF1 +X%","ETF2 +X%","ETF3 +X%"],'
-    '"bottom_sectors":["ETF1 -X%","ETF2 -X%","ETF3 -X%"],'
-    '"sector_signals":{"XLK":"INFLOW|OUTFLOW|NEUTRAL",...},'
-    '"crypto_winners":"konkretne coiny np. BTC, ETH, SOL",'
-    '"crypto_losers":"konkretne coiny np. DOGE, SHIB, AVAX",'
-    '"crypto_sentiment":"RISK-ON|RISK-OFF|NEUTRALNY",'
-    '"global_summary":"1 zdanie co się dzieje globalnie",'
-    '"global_what_it_means":"wyjaśnienie dla laika: co to znaczy i co robić — max 2 zdania, po polsku, konkretnie",'
-    '"rotate_from":"sektor/ETF z którego warto wychodzić, np. XLE Ropa",'
-    '"rotate_to":"sektor/ETF do którego warto rotować, np. ITA Defense",'
-    '"new_money":"gdzie wrzucić nowy kapitał teraz — konkretny sektor lub ETF + 1 zdanie dlaczego"}\n'
-    "WAŻNE — pisz po ludzku, jakbyś tłumaczył kumplowi który nie zna finansów:\n"
-    "- zamiast 'ITA' napisz 'spółki obronne (producenci broni)'\n"
-    "- zamiast 'rotacja do defensywnych' napisz 'ludzie uciekają z ryzykownych akcji do bezpiecznych'\n"
-    "- zamiast 'inflows do XLU' napisz 'pieniądze płyną do firm energetycznych i wodociągów'\n"
-    "- rotate_from/rotate_to: konkretne przykłady co sprzedać i co kupić\n"
-    "- new_money: powiedz wprost gdzie i dlaczego, bez żargonu\n"
-    "W crypto_winners/losers podaj konkretne tickery coinów. "
-    "sector_signals musi zawierać ocenę dla każdego ETF. "
-    "INFLOW = wygrywa vs SPY (top tercyl), OUTFLOW = przegrywa (bottom tercyl), NEUTRAL = środek."
+    "Jesteś analitykiem przepływów kapitału. Piszesz po polsku, prosto i zrozumiale.\n"
+    "Odpowiadasz WYŁĄCZNIE czystym JSON (bez markdown, bez tekstu przed/po):\n"
+    "{\n"
+    '  "rotation_summary": "1 zdanie co się dzieje — pisz prosto np. kapitał ucieka z tech do spółek obronnych",\n'
+    '  "sector_signals": {"XLK":"INFLOW","XLV":"NEUTRAL","XLE":"OUTFLOW","XLF":"NEUTRAL","XLI":"NEUTRAL","XLC":"OUTFLOW","XLY":"NEUTRAL","XLP":"INFLOW","XLB":"NEUTRAL","XLRE":"NEUTRAL","XLU":"INFLOW","ITA":"INFLOW","ARKK":"OUTFLOW","GLD":"NEUTRAL","USO":"OUTFLOW"},\n'
+    '  "crypto_winners": "BTC, SOL, TRX",\n'
+    '  "crypto_losers": "ETH, DOGE, ADA",\n'
+    '  "crypto_sentiment": "RISK-ON",\n'
+    '  "global_summary": "1 zdanie co się dzieje globalnie",\n'
+    '  "global_what_it_means": "dla laika: co to znaczy i co robić — max 2 zdania, konkretnie bez żargonu",\n'
+    '  "rotate_from": "np. spółki naftowe (XOM, Chevron) — odpływa od X dni",\n'
+    '  "rotate_to": "np. spółki obronne (Raytheon, Lockheed) — napływa od X dni",\n'
+    '  "new_money": "gdzie wrzucić nowy kapitał i dlaczego — 1 konkretne zdanie bez żargonu"\n'
+    "}\n\n"
+    "ZASADY:\n"
+    "- sector_signals MUSI zawierać WSZYSTKIE 15 ETF-ów z listy powyżej\n"
+    "- crypto_winners/losers: konkretne tickery coinów, nie kategorie\n"
+    "- pisz jakbyś tłumaczył kumplowi który nie inwestuje — żadnego żargonu finansowego\n"
+    "- rotate_from/rotate_to/new_money: pisz konkretnie co kupić/sprzedać"
 )
 
 
@@ -400,20 +397,29 @@ def _build_flow_snapshot(etf_perf: dict, news: dict) -> dict:
         "Wykonaj analizę sektor rotation i zwróć JSON."
     )
 
-    try:
-        resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=600,
-            system=_FLOW_SYSTEM,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        import re, json
-        raw = resp.content[0].text.strip()
-        m = re.search(r"\{.*\}", raw, re.DOTALL)
-        result = json.loads(m.group() if m else "{}")
-    except Exception as e:
-        logger.warning("Capital flow Claude error: %s", e)
-        result = {}
+    import re, json as _json
+
+    result = {}
+    for attempt in range(2):
+        try:
+            resp = _ctx.claude.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=800,
+                system=_FLOW_SYSTEM,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            raw = resp.content[0].text.strip()
+            logger.debug("Capital flow raw (attempt %d): %s", attempt, raw[:300])
+            # Strip markdown fences if present
+            raw = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("```").strip()
+            m = re.search(r"\{.*\}", raw, re.DOTALL)
+            parsed = _json.loads(m.group() if m else "{}")
+            if parsed.get("rotation_summary"):  # valid response
+                result = parsed
+                break
+            logger.warning("Capital flow attempt %d: empty rotation_summary", attempt)
+        except Exception as e:
+            logger.warning("Capital flow Claude error attempt %d: %s", attempt, e)
 
     result["etf_perf"] = etf_perf
     return result
@@ -439,8 +445,14 @@ def build_capital_flow_snapshot(force: bool = False) -> dict:
     snapshot["streaks"]     = compute_streaks(history)
     snapshot["daily_data"]  = daily_data
 
-    _snapshot_cache = snapshot
-    _snapshot_date  = today
+    # Only cache if Claude returned useful data
+    if snapshot.get("rotation_summary"):
+        _snapshot_cache = snapshot
+        _snapshot_date  = today
+    else:
+        logger.warning("build_capital_flow_snapshot: Claude returned empty — not caching")
+        _snapshot_cache = snapshot  # still store so we have ETF data
+        _snapshot_date  = today
     return snapshot
 
 
@@ -480,7 +492,7 @@ def _etf_label(etf: str, pct: float, streaks: dict) -> str:
     human  = _ETF_HUMAN.get(etf, SECTOR_ETFS.get(etf, etf))
     streak = _streak_label(etf, streaks)
     st_str = f"  {streak}" if streak else ""
-    return f"*{etf}* ({human}) {pct:+.1f}%{st_str}"
+    return f"*{etf}* — {human} — {pct:+.1f}%{st_str}"
 
 
 # ── Format for digest header ──────────────────────────────────────────────────
