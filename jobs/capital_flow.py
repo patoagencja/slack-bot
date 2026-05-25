@@ -223,14 +223,25 @@ def get_ticker_flow(ticker: str) -> str:
     return signals.get(etf, "NEUTRAL")
 
 
-# ── ETF → example tickers (max 3 from watchlist) ─────────────────────────────
+# ── ETF → representative market tickers ──────────────────────────────────────
 
-# Reverse map: ETF → up to 3 representative tickers
-_ETF_EXAMPLES: dict[str, list[str]] = {}
-for _ticker, _etf in _TICKER_ETF_MAP.items():
-    _ETF_EXAMPLES.setdefault(_etf, [])
-    if len(_ETF_EXAMPLES[_etf]) < 3:
-        _ETF_EXAMPLES[_etf].append(_ticker)
+_ETF_EXAMPLES: dict[str, list[str]] = {
+    "XLK":  ["AAPL", "NVDA", "MSFT"],
+    "XLV":  ["JNJ", "UNH", "LLY"],
+    "XLE":  ["XOM", "CVX", "SLB"],
+    "XLF":  ["JPM", "BAC", "GS"],
+    "XLI":  ["CAT", "HON", "UPS"],
+    "XLC":  ["META", "GOOG", "NFLX"],
+    "XLY":  ["AMZN", "TSLA", "HD"],
+    "XLP":  ["PG", "KO", "WMT"],
+    "XLB":  ["LIN", "APD", "FCX"],
+    "XLRE": ["AMT", "PLD", "SPG"],
+    "XLU":  ["NEE", "DUK", "SO"],
+    "ITA":  ["RTX", "LMT", "NOC"],
+    "ARKK": ["TSLA", "COIN", "ROKU"],
+    "GLD":  ["GLD", "GDX", "NEM"],
+    "USO":  ["XOM", "CVX", "OXY"],
+}
 
 
 def _etf_label(etf: str, pct: float) -> str:
