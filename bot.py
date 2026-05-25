@@ -1650,9 +1650,9 @@ def handle_cleanup_slash(ack, respond, command, client):
 
             for msg in resp.get("messages", []):
                 is_bot_msg = (
-                    (bot_id      and msg.get("bot_id") == bot_id)
-                    or (bot_user_id and msg.get("user")   == bot_user_id)
-                    or msg.get("subtype") == "bot_message"
+                    bool(msg.get("bot_id"))                              # dowolna wiadomość bota/apki
+                    or (bot_user_id and msg.get("user") == bot_user_id)  # wiadomość jako user bota
+                    or msg.get("subtype") == "bot_message"               # legacy bot message
                 )
                 if not is_bot_msg:
                     continue
