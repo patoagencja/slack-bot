@@ -322,9 +322,13 @@ _FLOW_SYSTEM = (
     '"crypto_losers":"konkretne coiny np. DOGE, SHIB, AVAX",'
     '"crypto_sentiment":"RISK-ON|RISK-OFF|NEUTRALNY",'
     '"global_summary":"1 zdanie co się dzieje globalnie",'
-    '"global_what_it_means":"wyjaśnienie dla laika: co to znaczy i co robić — max 2 zdania, po polsku, konkretnie (np. kapitał wraca do USA = trzymaj US equities, unikaj złota i ropy)"}\n'
+    '"global_what_it_means":"wyjaśnienie dla laika: co to znaczy i co robić — max 2 zdania, po polsku, konkretnie",'
+    '"rotate_from":"sektor/ETF z którego warto wychodzić, np. XLE Ropa",'
+    '"rotate_to":"sektor/ETF do którego warto rotować, np. ITA Defense",'
+    '"new_money":"gdzie wrzucić nowy kapitał teraz — konkretny sektor lub ETF + 1 zdanie dlaczego"}\n'
     "W crypto_winners i crypto_losers podaj KONKRETNE nazwy coinów (tickery), nie kategorie. "
-    "global_what_it_means musi być praktyczne i zrozumiałe — napisz jakbyś tłumaczył osobie która nie zna finansów. "
+    "rotate_from/rotate_to/new_money muszą być KONKRETNE i actionable — podaj ETF lub nazwę sektora. "
+    "global_what_it_means musi być praktyczne — napisz jakbyś tłumaczył osobie która nie zna finansów. "
     "sector_signals musi zawierać ocenę dla każdego ETF z listy. "
     "INFLOW = wygrywa vs SPY (top tercyl), OUTFLOW = przegrywa (bottom tercyl), NEUTRAL = środek."
 )
@@ -495,6 +499,10 @@ def format_capital_flow_block(snapshot: dict | None = None) -> str:
     if notable:
         lines += ["", "*📊 Trwające przepływy (≥3 dni):*"] + notable
 
+    rotate_from = snapshot.get("rotate_from", "")
+    rotate_to   = snapshot.get("rotate_to", "")
+    new_money   = snapshot.get("new_money", "")
+
     lines += [
         "",
         "*Krypto:*",
@@ -506,6 +514,14 @@ def format_capital_flow_block(snapshot: dict | None = None) -> str:
         f"→ {snapshot.get('global_summary', '—')}",
         f"💡 *Co to znaczy:* {snapshot.get('global_what_it_means', '—')}",
     ]
+
+    if rotate_from or rotate_to or new_money:
+        lines += ["", "*🔄 Co zrobić z kasą:*"]
+        if rotate_from and rotate_to:
+            lines.append(f"↪️ Rotacja: wyjdź z *{rotate_from}* → wejdź w *{rotate_to}*")
+        if new_money:
+            lines.append(f"💵 Nowy kapitał: {new_money}")
+
     return "\n".join(lines)
 
 
