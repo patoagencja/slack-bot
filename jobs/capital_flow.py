@@ -45,6 +45,25 @@ SECTOR_ETFS: dict[str, str] = {
     "USO":  "Ropa",
 }
 
+# Human-friendly descriptions for each ETF
+_ETF_HUMAN: dict[str, str] = {
+    "XLK":  "spółki technologiczne (Apple, Nvidia, Microsoft)",
+    "XLV":  "firmy medyczne i farmaceutyczne (Johnson & Johnson, UnitedHealth)",
+    "XLE":  "firmy naftowe i gazowe (ExxonMobil, Chevron)",
+    "XLF":  "banki i instytucje finansowe (JPMorgan, Goldman Sachs)",
+    "XLI":  "przemysł i infrastruktura (Caterpillar, Honeywell)",
+    "XLC":  "media i komunikacja (Meta, Google, Netflix)",
+    "XLY":  "dobra luksusowe i handel (Amazon, Tesla, Nike)",
+    "XLP":  "produkty codziennego użytku — defensywne (Procter & Gamble, Coca-Cola, Walmart)",
+    "XLB":  "surowce i materiały (miedź, aluminium, chemikalia)",
+    "XLRE": "nieruchomości i fundusze REIT (centra handlowe, biurowce)",
+    "XLU":  "energetyka i wodociągi — bardzo defensywne (NextEra, Duke Energy)",
+    "ITA":  "producenci broni i lotnictwa wojskowego (Raytheon, Lockheed, Northrop)",
+    "ARKK": "innowacyjne spółki wzrostowe — wysokie ryzyko (Tesla, Coinbase, Roku)",
+    "GLD":  "złoto — bezpieczna przystań w czasach niepewności",
+    "USO":  "ropa naftowa — zależy od popytu globalnego i OPEC",
+}
+
 # ── Ticker → primary ETF mapping ─────────────────────────────────────────────
 _TICKER_ETF_MAP: dict[str, str] = {
     # Tech (XLK)
@@ -326,10 +345,14 @@ _FLOW_SYSTEM = (
     '"rotate_from":"sektor/ETF z którego warto wychodzić, np. XLE Ropa",'
     '"rotate_to":"sektor/ETF do którego warto rotować, np. ITA Defense",'
     '"new_money":"gdzie wrzucić nowy kapitał teraz — konkretny sektor lub ETF + 1 zdanie dlaczego"}\n'
-    "W crypto_winners i crypto_losers podaj KONKRETNE nazwy coinów (tickery), nie kategorie. "
-    "rotate_from/rotate_to/new_money muszą być KONKRETNE i actionable — podaj ETF lub nazwę sektora. "
-    "global_what_it_means musi być praktyczne — napisz jakbyś tłumaczył osobie która nie zna finansów. "
-    "sector_signals musi zawierać ocenę dla każdego ETF z listy. "
+    "WAŻNE — pisz po ludzku, jakbyś tłumaczył kumplowi który nie zna finansów:\n"
+    "- zamiast 'ITA' napisz 'spółki obronne (producenci broni)'\n"
+    "- zamiast 'rotacja do defensywnych' napisz 'ludzie uciekają z ryzykownych akcji do bezpiecznych'\n"
+    "- zamiast 'inflows do XLU' napisz 'pieniądze płyną do firm energetycznych i wodociągów'\n"
+    "- rotate_from/rotate_to: konkretne przykłady co sprzedać i co kupić\n"
+    "- new_money: powiedz wprost gdzie i dlaczego, bez żargonu\n"
+    "W crypto_winners/losers podaj konkretne tickery coinów. "
+    "sector_signals musi zawierać ocenę dla każdego ETF. "
     "INFLOW = wygrywa vs SPY (top tercyl), OUTFLOW = przegrywa (bottom tercyl), NEUTRAL = środek."
 )
 
@@ -454,11 +477,10 @@ _ETF_EXAMPLES: dict[str, list[str]] = {
 
 
 def _etf_label(etf: str, pct: float, streaks: dict) -> str:
-    examples = _ETF_EXAMPLES.get(etf, [])
-    ex_str   = f" _{', '.join(examples)}_" if examples else ""
-    streak   = _streak_label(etf, streaks)
-    st_str   = f"  {streak}" if streak else ""
-    return f"{etf} {SECTOR_ETFS.get(etf, etf)} {pct:+.1f}%{ex_str}{st_str}"
+    human  = _ETF_HUMAN.get(etf, SECTOR_ETFS.get(etf, etf))
+    streak = _streak_label(etf, streaks)
+    st_str = f"  {streak}" if streak else ""
+    return f"*{etf}* ({human}) {pct:+.1f}%{st_str}"
 
 
 # ── Format for digest header ──────────────────────────────────────────────────
@@ -482,10 +504,11 @@ def format_capital_flow_block(snapshot: dict | None = None) -> str:
     notable = []
     for etf, s in sorted(streaks.items(), key=lambda x: x[1].get("streak_days", 0), reverse=True):
         if s.get("streak_days", 0) >= 3:
-            direction = "napływa" if s["streak_dir"] == "INFLOW" else "odpływa"
+            direction = "💹 napływa" if s["streak_dir"] == "INFLOW" else "📉 odpływa"
+            human = _ETF_HUMAN.get(etf, SECTOR_ETFS.get(etf, etf))
             dv = f", ~${s['avg_dv_m']/1000:.1f}B/dzień" if s.get("avg_dv_m") and s["avg_dv_m"] >= 100 else ""
             mom = f", {s['momentum']}" if s.get("momentum") and s["momentum"] != "stabilny" else ""
-            notable.append(f"• {etf} {SECTOR_ETFS.get(etf, etf)}: {direction} od *{s['streak_days']} dni*{dv}{mom}")
+            notable.append(f"• *{etf}* ({human}): {direction} od *{s['streak_days']} dni*{dv}{mom}")
 
     lines = [
         f"💰 *Gdzie płynie kapitał — {today}*",
