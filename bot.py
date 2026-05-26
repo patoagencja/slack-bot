@@ -56,6 +56,7 @@ from jobs.cost_report import weekly_cost_report
 from jobs.stock_digest import send_stock_digest, send_summary_digest, run_stock_digest, run_summary_digest, analyze_ticker, format_ticker_slack, format_ticker_attachment, WATCHLIST, send_macro_briefing, send_crypto_digest
 from jobs.weekly_setups import send_weekly_setups, analyze_single_swing, send_scan_setups
 from jobs.capital_flow import send_capital_flow_snapshot
+from jobs.narrative_scanner import send_narrative_radar, run_narrative_scan, run_sector_dive
 # jobs.reminders removed — reminders now use Slack chat.scheduleMessage
 from tools.campaign_creator import (
     download_slack_files, upload_creative_to_meta, parse_campaign_request,
@@ -1539,6 +1540,35 @@ def handle_kapital_slash(ack, respond, command):
             respond("✅ Capital flow snapshot wysłany na #inwestowanie!")
         except Exception as e:
             respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
+@app.command("/narracje")
+def handle_narracje_slash(ack, respond, command):
+    """Narrative momentum radar: /narracje | /narracje {sektor}"""
+    import threading as _th
+    ack()
+    arg = (command.get("text") or "").strip().lower()
+
+    if arg:
+        respond(f"🔭 Szukam narracji dla sektora *{arg}*... (~1 min)")
+        def _worker():
+            try:
+                result = run_sector_dive(arg)
+                for chunk in [result[i:i+3900] for i in range(0, len(result), 3900)]:
+                    respond(chunk)
+            except Exception as e:
+                respond(f"❌ Błąd: {e}")
+    else:
+        respond("🔭 Uruchamiam Narrative Radar... (~2 min)")
+        def _worker():
+            try:
+                result = run_narrative_scan()
+                for chunk in [result[i:i+3900] for i in range(0, len(result), 3900)]:
+                    respond(chunk)
+            except Exception as e:
+                respond(f"❌ Błąd: {e}")
 
     _th.Thread(target=_worker, daemon=True).start()
 
@@ -4425,6 +4455,7 @@ scheduler.add_job(check_stale_onboardings,   'cron', hour=9, minute=30, id='stal
 scheduler.add_job(weekly_industry_news,      'cron', day_of_week='mon',     hour=9, minute=0,  id='industry_news')
 scheduler.add_job(weekly_cost_report,        'cron', day_of_week='mon',     hour=9,  minute=5,  id='weekly_cost_report')
 scheduler.add_job(send_weekly_setups,        'cron', day_of_week='fri',     hour=16, minute=0,  id='weekly_setups')
+scheduler.add_job(send_narrative_radar,      'cron', day_of_week='fri',     hour=16, minute=30, id='narrative_radar')
 # stock_digest disabled — uruchamiać ręcznie przez /digest
 scheduler.add_job(sync_calendar_from_email,  'cron', minute=0,                                id='email_calendar_sync')
 # reminders job removed — Slack chat.scheduleMessage handles delivery natively
