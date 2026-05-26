@@ -1573,20 +1573,28 @@ def handle_narracje_slash(ack, respond, command):
     _th.Thread(target=_worker, daemon=True).start()
 
 
+_SWING_SECTOR_NAMES = {
+    "space", "nuclear", "defense", "ai", "biotech", "fintech", "cyber", "semis", "energy", "consumer",
+    "kosmiczny", "kosmos", "nuklear", "uranium", "uran", "obronny", "obrona", "sztuczna",
+    "glp1", "em", "cybersecurity", "chips", "semiconductor", "energia", "konsument",
+}
+
+
 @app.command("/swing")
 def handle_swing_slash(ack, respond, command):
-    """Swing setups: /swing | /swing 10 | /swing scan | /swing TICKER"""
+    """Swing setups: /swing | /swing {N} | /swing scan | /swing watchlist | /swing {sektor} | /swing {TICKER}"""
     import threading as _th
     ack()
     arg = (command.get("text") or "").strip()
+    arg_lower = arg.lower()
 
     # /swing scan — all candidates, no Claude filter
-    if arg.lower() == "scan":
-        respond("🔍 Skanuję całą watchlistę... wyślę wszystkich kandydatów na #inwestowanie (~3 min).")
+    if arg_lower == "scan":
+        respond("🔍 Skanuję S&P500 + NDX + krypto... wyślę wszystkich kandydatów na #inwestowanie (~5 min).")
 
         def _scan():
             try:
-                send_scan_setups()
+                send_scan_setups(mode="all")
                 respond("✅ Scan gotowy na #inwestowanie!")
             except Exception as e:
                 respond(f"❌ Błąd: {e}")
@@ -1594,14 +1602,42 @@ def handle_swing_slash(ack, respond, command):
         _th.Thread(target=_scan, daemon=True).start()
         return
 
+    # /swing watchlist — only watchlist
+    if arg_lower == "watchlist":
+        respond("🎯 Skanuję watchlistę... TOP 5 zagrań wyślę na #inwestowanie (~2 min).")
+
+        def _wl():
+            try:
+                send_weekly_setups(mode="watchlist")
+                respond("✅ Swing setups (watchlista) wysłane na #inwestowanie!")
+            except Exception as e:
+                respond(f"❌ Błąd: {e}")
+
+        _th.Thread(target=_wl, daemon=True).start()
+        return
+
+    # /swing {sektor} — sector-specific scan
+    if arg_lower in _SWING_SECTOR_NAMES:
+        respond(f"🎯 Skanuję sektor *{arg_lower}*... wyślę wyniki na #inwestowanie (~3 min).")
+
+        def _sector(s=arg_lower):
+            try:
+                send_weekly_setups(mode=s)
+                respond(f"✅ Swing setups ({s}) wysłane na #inwestowanie!")
+            except Exception as e:
+                respond(f"❌ Błąd: {e}")
+
+        _th.Thread(target=_sector, daemon=True).start()
+        return
+
     # /swing 10 — custom limit
     if arg.isdigit():
         limit = max(1, min(int(arg), 15))
-        respond(f"🎯 Skanuję watchlistę i krypto... TOP {limit} zagrań wyślę na #inwestowanie (~3 min).")
+        respond(f"🎯 Skanuję S&P500 + NDX + krypto... TOP {limit} zagrań wyślę na #inwestowanie (~5 min).")
 
         def _full_limit(lim=limit):
             try:
-                send_weekly_setups(limit=lim)
+                send_weekly_setups(limit=lim, mode="all")
                 respond(f"✅ TOP {lim} swing setups wysłane na #inwestowanie!")
             except Exception as e:
                 respond(f"❌ Błąd: {e}")
@@ -1624,12 +1660,12 @@ def handle_swing_slash(ack, respond, command):
         _th.Thread(target=_single, daemon=True).start()
         return
 
-    # /swing — default TOP 5
-    respond("🎯 Skanuję watchlistę i krypto... TOP 5 zagrań wyślę na #inwestowanie (~3 min).")
+    # /swing — default full market scan, TOP 5
+    respond("🎯 Skanuję S&P500 + NDX + krypto (cały rynek)... TOP 5 zagrań wyślę na #inwestowanie (~5 min).")
 
     def _full():
         try:
-            send_weekly_setups()
+            send_weekly_setups(mode="all")
             respond("✅ Swing setups wysłane na #inwestowanie!")
         except Exception as e:
             respond(f"❌ Błąd: {e}")
