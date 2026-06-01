@@ -315,20 +315,58 @@ def _score_retail_sales() -> tuple[int, str]:
     return 2, f"🟡 Retail Sales {vals[-1]:.1f}B — stabilne"
 
 
-def _score_vix() -> tuple[int, str]:
-    closes = _yf_close("^VIX", period="1mo")
-    if not closes:
-        return 1, "VIX: brak danych"
-    vix = closes[-1]
-    if vix < 15:
-        return 5, f"🟢 VIX {vix:.1f} — spokój (risk-on)"
-    if vix < 20:
-        return 3, f"🟢 VIX {vix:.1f} — normalny"
-    if vix < 28:
-        return 1, f"🟡 VIX {vix:.1f} — lekki stres"
-    if vix < 35:
-        return -2, f"⚠️ VIX {vix:.1f} — strach (redukuj ryzyko)"
-    return -5, f"🔴 VIX {vix:.1f} — PANIKA (historycznie blisko dna!)"
+def _score_vix_structure() -> tuple[int, str]:
+    """B1: VIX term structure (leading) + SKEW index.
+    VIX spot alone is lagging. Term structure & SKEW anticipate moves by 2-6 weeks.
+    """
+    vix_spot = _yf_latest("^VIX")
+    vix3m    = _yf_latest("^VIX3M")
+
+    # Term structure signal
+    structure_pts = 0
+    structure_label = "brak danych"
+    if vix_spot and vix3m:
+        diff = vix3m - vix_spot  # positive = contango (normal), negative = backwardation (alarm)
+        if diff > 2:
+            structure_pts   = 4
+            structure_label = f"🟢 Contango VIX {vix_spot:.1f} / VIX3M {vix3m:.1f} (+{diff:.1f}) — rynek spokojny"
+        elif diff > 0:
+            structure_pts   = 1
+            structure_label = f"🟡 Contango płaski VIX {vix_spot:.1f} / VIX3M {vix3m:.1f} (+{diff:.1f}) — uwaga"
+        elif diff > -2:
+            structure_pts   = -2
+            structure_label = f"⚠️ VIX zbliża się do VIX3M ({vix_spot:.1f} / {vix3m:.1f}) — krótkoterm. strach rośnie"
+        else:
+            structure_pts   = -4
+            structure_label = f"🔴 BACKWARDATION VIX {vix_spot:.1f} > VIX3M {vix3m:.1f} ({diff:.1f}) — rynek boi się TERAZ (alarm 1-3 tyg.)"
+    elif vix_spot:
+        # Fallback: VIX spot level as rough proxy if VIX3M unavailable
+        if vix_spot < 18:
+            structure_pts, structure_label = 3, f"🟢 VIX {vix_spot:.1f} (VIX3M niedostępne)"
+        elif vix_spot < 25:
+            structure_pts, structure_label = 1, f"🟡 VIX {vix_spot:.1f} — lekki stres"
+        else:
+            structure_pts, structure_label = -3, f"🔴 VIX {vix_spot:.1f} — podwyższony"
+
+    # SKEW signal — tail risk / smart money buying OTM puts
+    skew_pts = 0
+    skew_label = ""
+    skew_snippet = _tavily_snippet("CBOE SKEW index tail risk options latest 2026", 200)
+    import re as _re
+    m = _re.search(r'\b(1[0-9][0-9]|[2-9][0-9])\b', skew_snippet)
+    skew_val = int(m.group()) if m else None
+    if skew_val:
+        if skew_val > 140:
+            skew_pts   = -3
+            skew_label = f" | SKEW {skew_val} 🔴 — smart money kupuje ochronę przed crash"
+        elif skew_val >= 130:
+            skew_pts   = -1
+            skew_label = f" | SKEW {skew_val} 🟡 — instytucje zaczynają się zabezpieczać"
+        else:
+            skew_label = f" | SKEW {skew_val} 🟢 — normalny poziom ochrony"
+
+    total_pts = max(-5, structure_pts + skew_pts)
+    return total_pts, f"{structure_label}{skew_label}"
 
 
 def _score_sp500_ma200() -> tuple[int, str]:
@@ -388,38 +426,90 @@ def _score_market_breadth() -> tuple[int, str]:
 
 
 def _score_credit_spreads() -> tuple[int, str]:
+    """B4: HYG/TLT credit spread proxy — leading indicator, anticipates equity moves 2-4 weeks.
+    Detect 2-week rising trend (not just snapshot level).
+    """
     hyg = _yf_close("HYG", period="3mo")
     tlt = _yf_close("TLT", period="3mo")
     if len(hyg) < 20 or len(tlt) < 20:
         snippet = _tavily_snippet("HYG LQD credit spreads high yield tightening widening 2026", 200)
         sl = snippet.lower()
         if any(w in sl for w in ("tighten", "narrow", "zawężają")):
-            return 4, "🟢 Spready kredytowe zawężają się"
+            return 4, "🟢 Spready kredytowe zawężają się (leading — akcje opóźnione 2-4 tyg.)"
         if any(w in sl for w in ("widen", "blow", "rozszerzają")):
-            return -3, "🔴 Spready kredytowe rosną"
+            return -4, "🔴 Spready kredytowe rosną (OSTRZEŻENIE — akcje zazwyczaj reagują z opóźnieniem)"
         return 1, "Credit spreads: neutralne"
-    ratio_now  = hyg[-1] / tlt[-1]
-    ratio_20d  = (sum(hyg[-20:]) / 20) / (sum(tlt[-20:]) / 20)
-    pct_chg = (ratio_now / ratio_20d - 1) * 100
-    if pct_chg > 1:
-        return 4, f"🟢 HYG/TLT ratio +{pct_chg:.1f}% (spready zawężają się)"
-    if pct_chg > -1:
-        return 2, f"🟡 HYG/TLT ratio {pct_chg:+.1f}% (stabilne)"
-    if pct_chg > -3:
-        return -3, f"⚠️ HYG/TLT ratio {pct_chg:.1f}% (spready rosną)"
-    return -5, f"🔴 HYG/TLT ratio {pct_chg:.1f}% (gwałtowne rozszerzenie!)"
+
+    # Build daily HYG/TLT ratio series
+    n = min(len(hyg), len(tlt))
+    ratios = [hyg[-(n - i)] / tlt[-(n - i)] for i in range(n - 1, -1, -1)]
+    ratio_now  = ratios[-1]
+    ratio_10d  = sum(ratios[-10:]) / 10 if len(ratios) >= 10 else ratio_now
+    ratio_20d  = sum(ratios[-20:]) / 20
+
+    pct_vs_20d = (ratio_now / ratio_20d - 1) * 100
+    pct_vs_10d = (ratio_now / ratio_10d - 1) * 100
+
+    # 2-week consecutive decline in ratio = spreads rising = warning
+    trend_weeks = 0
+    if len(ratios) >= 10 and ratios[-5] < ratios[-10]:
+        trend_weeks += 1
+    if len(ratios) >= 5 and ratios[-1] < ratios[-5]:
+        trend_weeks += 1
+
+    if pct_vs_20d > 1 and pct_vs_10d > 0:
+        return 4, f"🟢 HYG/TLT {pct_vs_20d:+.1f}% vs 20d — spready zawężają się (risk-on)"
+    if pct_vs_20d > -1:
+        return 2, f"🟡 HYG/TLT {pct_vs_20d:+.1f}% vs 20d — stabilne"
+    if trend_weeks >= 2:
+        return -5, f"🔴 HYG/TLT {pct_vs_20d:.1f}% vs 20d — SPREADY ROSNĄ 2 TYG. — akcje opóźnione!"
+    if pct_vs_20d < -3:
+        return -5, f"🔴 HYG/TLT {pct_vs_20d:.1f}% — gwałtowne rozszerzenie!"
+    return -3, f"⚠️ HYG/TLT {pct_vs_20d:.1f}% vs 20d — spready rosną ({trend_weeks}/2 tygodnie)"
 
 
-def _score_positioning() -> tuple[int, str]:
-    snippet = _tavily_snippet("hedge fund equity exposure positioning discretionary systematic 2026", 300)
+def _score_smart_money_flow() -> tuple[int, str]:
+    """B5: Smart money flow — SPY price/volume analysis + institutional flow Tavily.
+    Distribution: price rises on falling volume (institutions selling into strength).
+    Accumulation: price falls on rising volume (institutions buying weakness).
+    """
+    spy_hist = yf.Ticker("SPY").history(period="30d", auto_adjust=True)
+    if len(spy_hist) >= 10:
+        closes  = list(spy_hist["Close"])
+        volumes = list(spy_hist["Volume"])
+        # Last 10 sessions
+        price_chg_10d = (closes[-1] / closes[-10] - 1) * 100
+        vol_now_avg   = sum(volumes[-5:])  / 5
+        vol_prev_avg  = sum(volumes[-15:-5]) / 10 if len(volumes) >= 15 else vol_now_avg
+        vol_ratio = vol_now_avg / vol_prev_avg if vol_prev_avg > 0 else 1.0
+
+        if price_chg_10d > 1 and vol_ratio < 0.85:
+            spy_signal = -3
+            spy_label  = f"⚠️ SPY +{price_chg_10d:.1f}% na wolumenie -{(1-vol_ratio)*100:.0f}% — dystrybucja (instytucje sprzedają)"
+        elif price_chg_10d < -1 and vol_ratio > 1.2:
+            spy_signal = 3
+            spy_label  = f"🟢 SPY {price_chg_10d:.1f}% na wolumenie +{(vol_ratio-1)*100:.0f}% — akumulacja (instytucje kupują)"
+        elif price_chg_10d > 1 and vol_ratio >= 1.1:
+            spy_signal = 3
+            spy_label  = f"🟢 SPY +{price_chg_10d:.1f}% na rosnącym wolumenie (conviction)"
+        else:
+            spy_signal = 1
+            spy_label  = f"🟡 SPY {price_chg_10d:+.1f}% / vol ratio {vol_ratio:.2f} — neutralny"
+    else:
+        spy_signal, spy_label = 1, "SPY: brak danych"
+
+    # Institutional flow from Tavily
+    snippet = _tavily_snippet("institutional investors equity selling buying flows 2026", 200)
     sl = snippet.lower()
-    if "low" in sl and "systematic" in sl:
-        return 4, "🟢 Discretionary LOW — jest paliwo do wzrostów"
-    if any(w in sl for w in ("underweight", "low exposure", "defensive")):
-        return 3, "🟢 Fundusze defensywnie — dużo gotówki na boku"
-    if any(w in sl for w in ("overweight", "high exposure", "max long")):
-        return 0, "⚠️ Fundusze maksymalnie zaangażowane — mało paliwa"
-    return 2, "🟡 Pozycjonowanie neutralne"
+    if any(w in sl for w in ("selling", "reducing", "distribution", "outflow")):
+        inst_signal, inst_label = -2, " | Instytucje: sprzedają"
+    elif any(w in sl for w in ("buying", "accumulating", "inflow", "adding")):
+        inst_signal, inst_label = 2, " | Instytucje: akumulują"
+    else:
+        inst_signal, inst_label = 0, ""
+
+    total = max(-5, min(4, spy_signal + inst_signal))
+    return total, f"{spy_label}{inst_label}"
 
 
 def _score_put_call_ratio() -> tuple[int, str]:
@@ -456,6 +546,100 @@ def _score_seasonality() -> tuple[int, str]:
     if month in _STRONG:
         return 2, f"🟢 Sezonowość: {name} — historycznie silny miesiąc"
     return 1, f"🟡 Sezonowość: {name} — neutralna"
+
+
+def _score_rotation() -> tuple[int, str]:
+    """B8: QQQ vs defensive rotation (XLU + GLD).
+    When QQQ underperforms defensives 2+ weeks BEFORE VIX spikes:
+    capital quietly rotating out of risk — one of the best early warning signals.
+    """
+    qqq = _yf_close("QQQ", period="3mo")
+    xlu = _yf_close("XLU", period="3mo")
+    gld = _yf_close("GLD", period="3mo")
+    if len(qqq) < 15 or len(xlu) < 15 or len(gld) < 15:
+        snippet = _tavily_snippet("tech growth vs defensive utilities rotation stock market 2026", 200)
+        sl = snippet.lower()
+        if any(w in sl for w in ("defensive", "utilities", "rotation out of tech")):
+            return -3, "⚠️ Rotacja do defensywnych — risk-off sygnał"
+        return 1, "Rotacja: brak danych"
+
+    # 10-day relative performance
+    qqq_10d = (qqq[-1] / qqq[-10] - 1) * 100
+    xlu_10d = (xlu[-1] / xlu[-10] - 1) * 100
+    gld_10d = (gld[-1] / gld[-10] - 1) * 100
+    def_avg  = (xlu_10d + gld_10d) / 2
+    spread_10d = qqq_10d - def_avg
+
+    # 20-day trend
+    qqq_20d  = (qqq[-1] / qqq[-20] - 1) * 100
+    def_20d  = ((xlu[-1] / xlu[-20] - 1) + (gld[-1] / gld[-20] - 1)) / 2 * 100
+    spread_20d = qqq_20d - def_20d
+
+    if spread_10d > 3 and spread_20d > 0:
+        return 3, f"🟢 QQQ bije defensywne +{spread_10d:.1f}% (10d) — risk-on, rotacja do wzrostowych"
+    if spread_10d > 0:
+        return 1, f"🟡 QQQ nieznacznie lepszy {spread_10d:+.1f}% (10d) — neutralny"
+    if spread_10d < -3 and spread_20d < 0:
+        return -3, f"🔴 QQQ gorzej od defensywnych {spread_10d:.1f}% (10d) / {spread_20d:.1f}% (20d) — cicha rotacja risk-off!"
+    return -1, f"🟡 QQQ lekko słabszy {spread_10d:.1f}% (10d) — obserwuj"
+
+
+def _score_naaim() -> tuple[int, str]:
+    """C7: NAAIM Exposure Index — active manager equity exposure.
+    >80%: everyone bought in, little fuel left.
+    Rapid drop from >80% to <60%: institutions massively reducing = ALARM.
+    """
+    snippet = _tavily_snippet("NAAIM exposure index active managers equity allocation latest 2026", 300)
+    import re as _re
+    m = _re.search(r'\b(\d{2,3}(?:\.\d+)?)\b', snippet)
+    naaim = float(m.group(1)) if m and float(m.group(1)) <= 200 else None
+    sl = snippet.lower()
+
+    if naaim is None:
+        if any(w in sl for w in ("bearish", "reducing", "defensive")):
+            return 3, "🟢 NAAIM: aktywni zarządzający defensywnie (paliwo do wzrostów)"
+        if any(w in sl for w in ("bullish", "max", "overweight")):
+            return -2, "⚠️ NAAIM: zarządzający maksymalnie zaangażowani"
+        return 1, "NAAIM: brak danych"
+
+    if naaim < 40:
+        return 4, f"🟢 NAAIM {naaim:.0f}% — duże niedoważenie, dużo gotówki na boku"
+    if naaim < 60:
+        return 2, f"🟢 NAAIM {naaim:.0f}% — normalne zaangażowanie"
+    if naaim < 80:
+        return 0, f"🟡 NAAIM {naaim:.0f}% — podwyższone zaangażowanie, mniej paliwa"
+    return -3, f"🔴 NAAIM {naaim:.0f}% — wszyscy kupieni! Mało paliwa do wzrostów, ryzyko korekty"
+
+
+def _score_earnings_revisions() -> tuple[int, str]:
+    """C8: S&P500 aggregate earnings revision momentum.
+    More downgrades than upgrades 3+ weeks = fundamentals deteriorating before price reacts.
+    Anticipates correction 4-8 weeks ahead.
+    """
+    snippet = _tavily_snippet("S&P500 earnings revisions up down ratio analyst upgrades downgrades 2026", 300)
+    sl = snippet.lower()
+    import re as _re
+
+    # Look for up/down ratio or directional language
+    m_ratio = _re.search(r'(\d+(?:\.\d+)?)\s*(?:to|:)\s*(\d+(?:\.\d+)?)\s*(?:up|down|ratio)', sl)
+    if m_ratio:
+        up_n, dn_n = float(m_ratio.group(1)), float(m_ratio.group(2))
+        ratio = up_n / dn_n if dn_n > 0 else 1.5
+        if ratio > 1.5:
+            return 4, f"🟢 Rewizje EPS: {up_n:.0f} w górę vs {dn_n:.0f} w dół — fundamenty poprawiają się"
+        if ratio > 1.0:
+            return 2, f"🟡 Rewizje EPS: lekka przewaga wzrostów ({ratio:.1f}x)"
+        if ratio > 0.7:
+            return -1, f"⚠️ Rewizje EPS: więcej obniżek ({ratio:.1f}x)"
+        return -4, f"🔴 Rewizje EPS: silna fala obniżek ({ratio:.1f}x) — fundamenty się pogarszają"
+
+    if any(w in sl for w in ("more upgrades", "positive revisions", "raising estimates", "beat")):
+        return 3, "🟢 Rewizje EPS: przewaga wzrostów — fundamenty OK"
+    if any(w in sl for w in ("more downgrades", "cutting estimates", "negative revisions", "miss")):
+        return -3, "🔴 Rewizje EPS: przewaga obniżek — OSTRZEŻENIE (wyprzedza korektę 4-8 tyg.)"
+    if any(w in sl for w in ("mixed", "balanced")):
+        return 1, "🟡 Rewizje EPS: mieszane sygnały"
+    return 1, "🟡 Rewizje EPS: brak wyraźnego sygnału"
 
 
 def _score_fund_manager_survey() -> tuple[int, str]:
@@ -567,9 +751,9 @@ def _score_treasury_yield() -> tuple[int, str]:
 # GŁÓWNA FUNKCJA SCORINGU
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Raw score range: min ≈ -49, max ≈ +62 → normalise to 0-100
-_RAW_MIN = -49.0
-_RAW_MAX =  62.0
+# Raw score range (22 indicators): min ≈ -58, max ≈ +73 → normalise to 0-100
+_RAW_MIN = -58.0
+_RAW_MAX =  73.0
 
 _INDICATORS = [
     # (fn, weight_factor, label)
@@ -581,14 +765,15 @@ _INDICATORS = [
     (_score_fed_policy,        0.9, "A5. Fed Policy"),
     (_score_gdp,               0.9, "A6. GDP"),
     (_score_retail_sales,      0.9, "A7. Retail Sales"),
-    # Kategoria B: Rynkowe (35%)
-    (_score_vix,               1.0, "B1. VIX"),
+    # Kategoria B: Rynkowe / Early Warning (35%)
+    (_score_vix_structure,     1.2, "B1. VIX Structure + SKEW"),   # leading, higher weight
     (_score_sp500_ma200,       1.0, "B2. S&P500/MA200"),
     (_score_market_breadth,    1.0, "B3. Market Breadth"),
-    (_score_credit_spreads,    1.0, "B4. Credit Spreads"),
-    (_score_positioning,       0.8, "B5. Positioning"),
+    (_score_credit_spreads,    1.2, "B4. Credit Spreads (leading)"),# leading, higher weight
+    (_score_smart_money_flow,  1.0, "B5. Smart Money Flow"),
     (_score_put_call_ratio,    0.8, "B6. Put/Call Ratio"),
     (_score_seasonality,       0.5, "B7. Sezonowość"),
+    (_score_rotation,          1.1, "B8. QQQ vs Defensive Rotation"), # leading
     # Kategoria C: Sentyment (30%)
     (_score_fund_manager_survey, 0.9, "C1. BofA FMS"),
     (_score_fear_greed,          1.0, "C2. Fear & Greed"),
@@ -596,6 +781,8 @@ _INDICATORS = [
     (_score_dxy,                 0.8, "C4. DXY"),
     (_score_gold_vs_equities,    0.7, "C5. Gold/Equities"),
     (_score_treasury_yield,      1.0, "C6. 10Y Yield"),
+    (_score_naaim,               1.0, "C7. NAAIM Exposure"),
+    (_score_earnings_revisions,  1.1, "C8. EPS Revision Momentum"), # leading
 ]
 
 
@@ -707,6 +894,19 @@ def format_health_full(result: dict) -> str:
         sign = "+" if r["pts"] > 0 else ""
         lines.append(f"  {r['label']}: {sign}{r['pts']} pkt — {r['detail']}")
 
+    # Extract early warning indicators for separate section
+    _ew_labels = {"B1. VIX Structure + SKEW", "B4. Credit Spreads (leading)",
+                  "B8. QQQ vs Defensive Rotation", "C8. EPS Revision Momentum"}
+    ew_results = [r for r in result["indicators"] if r["label"] in _ew_labels]
+
+    lines += [
+        "",
+        "*📡 Early Warning Signals (wyprzedzają VIX o 2-6 tyg.):*",
+    ]
+    for r in ew_results:
+        sign = "+" if r["pts"] > 0 else ""
+        lines.append(f"  {r['label']}: {sign}{r['pts']} pkt — {r['detail']}")
+
     lines += [
         "",
         f"*Implikacja dla portfela:*",
@@ -715,7 +915,7 @@ def format_health_full(result: dict) -> str:
         "*Korekta vs Bessa — pamiętaj:*",
         "  📉 Korekta (10-20%) + zielone filary = OKAZJA. Nie sprzedawaj.",
         "  🐻 Bessa + 2 czerwone filary = REALNA BESSA. Redukuj.",
-        "  ⚡ VIX>40 + zielone filary = FLASH CRASH. Najlepszy moment wejścia.",
+        "  ⚡ VIX>40 + backwardation odwrócona + filary zielone = FLASH CRASH. Najlepszy moment wejścia.",
     ]
     return "\n".join(lines)
 
@@ -747,45 +947,86 @@ def format_recession_pillars(result: dict | None = None) -> str:
 
 
 def format_vix_analysis() -> str:
-    """Short /vix output."""
-    closes = _yf_close("^VIX", period="3mo")
-    if not closes:
-        return "⚠️ Nie mogę pobrać danych VIX."
-    vix = closes[-1]
-    vix_1m = sum(closes[-20:]) / 20 if len(closes) >= 20 else vix
-    vix_3m = sum(closes) / len(closes)
+    """Full /vix output — term structure + SKEW + spot level interpretation."""
+    vix_spot = _yf_latest("^VIX")
+    vix3m    = _yf_latest("^VIX3M")
+    closes   = _yf_close("^VIX", period="3mo")
 
-    if vix > 40:
-        interpretation = (
-            "⚡ *PANIKA* — historycznie NAJLEPSZY moment wejścia.\n"
-            "Fundamenty raczej OK? To flash crash. Kupuj stopniowo."
-        )
-    elif vix > 35:
-        interpretation = (
-            "🔴 *EKSTREMALNY STRACH* — dno może być blisko.\n"
-            "Sprawdź filary recesji (/recesja) zanim zagrasz pod odbicie."
-        )
-    elif vix > 28:
-        interpretation = (
-            "⚠️ *STRACH* — redukuj ryzyko, ale nie panikuj.\n"
-            "Historycznie VIX 28-35 = korekta, nie bessa (bez złych filarów)."
-        )
-    elif vix > 20:
-        interpretation = "🟡 *LEKKI STRES* — normalny rynek z podwyższoną zmiennością."
-    elif vix > 15:
-        interpretation = "🟢 *NORMALNY* — zdrowe otoczenie dla risk-on."
+    if not vix_spot:
+        return "⚠️ Nie mogę pobrać danych VIX."
+
+    vix_1m = sum(closes[-20:]) / 20 if len(closes) >= 20 else vix_spot
+    vix_3m = sum(closes) / len(closes) if closes else vix_spot
+
+    # Term structure
+    if vix3m:
+        diff = vix3m - vix_spot
+        if diff > 2:
+            ts_line  = f"🟢 *Contango* — VIX3M {vix3m:.1f} > VIX {vix_spot:.1f} (+{diff:.1f})"
+            ts_interp = "Rynek spokojny, nikt się nie boi krótkoterminowo. Normalny stan."
+        elif diff >= 0:
+            ts_line  = f"🟡 *Contango płaski* — VIX3M {vix3m:.1f} ≈ VIX {vix_spot:.1f} ({diff:+.1f})"
+            ts_interp = "Rynek zaczyna się bać krótkoterminowo. Monitoruj."
+        elif diff > -2:
+            ts_line  = f"⚠️ *Backwardation* — VIX {vix_spot:.1f} > VIX3M {vix3m:.1f} ({diff:.1f})"
+            ts_interp = "Rynek boi się TERAZ bardziej niż przyszłości. Ostrzeżenie 1-3 tygodnie."
+        else:
+            ts_line  = f"🔴 *BACKWARDATION GŁĘBOKA* — VIX {vix_spot:.1f} >> VIX3M {vix3m:.1f} ({diff:.1f})"
+            ts_interp = "ALARM — rynek w panice krótkoterminowej. Historycznie wyprzedza duże spadki."
     else:
-        interpretation = (
-            "🟢 *SPOKÓJ* — risk-on, rynek pewny siebie.\n"
-            "Uwaga: niski VIX = mało zabezpieczeń = możliwy nagły spike."
-        )
+        ts_line  = f"VIX spot: {vix_spot:.1f} (VIX3M niedostępne)"
+        ts_interp = "Nie można ocenić term structure."
+
+    # SKEW
+    skew_snippet = _tavily_snippet("CBOE SKEW index tail risk options latest 2026", 200)
+    import re as _re
+    m_skew = _re.search(r'\b(1[0-9][0-9])\b', skew_snippet)
+    skew_val = int(m_skew.group()) if m_skew else None
+    if skew_val:
+        if skew_val > 140:
+            skew_line = f"🔴 SKEW {skew_val} — smart money kupuje ochronę przed crash"
+        elif skew_val >= 130:
+            skew_line = f"🟡 SKEW {skew_val} — instytucje zaczynają się zabezpieczać"
+        else:
+            skew_line = f"🟢 SKEW {skew_val} — normalny poziom ochrony"
+    else:
+        skew_line = "SKEW: brak danych"
+
+    # VIX spot interpretation (context, NOT the primary signal)
+    if vix_spot > 40:
+        spot_interp = "⚡ *PANIKA* — historycznie NAJLEPSZY moment wejścia (jeśli filary zielone!)"
+    elif vix_spot > 35:
+        spot_interp = "🔴 *EKSTREMALNY STRACH* — sprawdź /recesja przed graniem pod odbicie"
+    elif vix_spot > 28:
+        spot_interp = "⚠️ *STRACH* — zazwyczaj korekta (nie bessa, jeśli filary OK)"
+    elif vix_spot > 20:
+        spot_interp = "🟡 *LEKKI STRES* — normalny rynek z podwyższoną zmiennością"
+    elif vix_spot > 15:
+        spot_interp = "🟢 *NORMALNY* — zdrowe otoczenie risk-on"
+    else:
+        spot_interp = "🟢 *SPOKÓJ* — niski VIX = mało zabezpieczeń = możliwy nagły spike"
+
+    # Combined signal
+    if vix3m and vix_spot > vix3m and (skew_val or 0) > 130:
+        combined = "🔴 *ŁĄCZNY SYGNAŁ: WARNING* — backwardation + SKEW podwyższony"
+    elif vix3m and vix_spot > vix3m:
+        combined = "⚠️ *ŁĄCZNY SYGNAŁ: CAUTION* — backwardation (monitoruj uważnie)"
+    elif (skew_val or 0) > 140:
+        combined = "⚠️ *ŁĄCZNY SYGNAŁ: CAUTION* — SKEW wysoki mimo spokojnej struktury"
+    else:
+        combined = "🟢 *ŁĄCZNY SYGNAŁ: CLEAR* — brak wczesnych ostrzeżeń"
 
     return (
-        f"😱 *VIX — Indeks Strachu*\n\n"
-        f"Aktualny: *{vix:.1f}*\n"
-        f"Średnia 1M: {vix_1m:.1f}\n"
-        f"Średnia 3M: {vix_3m:.1f}\n\n"
-        f"{interpretation}"
+        f"📡 *VIX Early Warning System*\n\n"
+        f"*Term Structure (LEADING — wyprzedza 1-3 tyg.):*\n"
+        f"  {ts_line}\n"
+        f"  _{ts_interp}_\n\n"
+        f"*SKEW (LEADING — wyprzedza 2-6 tyg.):*\n"
+        f"  {skew_line}\n\n"
+        f"*VIX Spot (lagging — kontekst):*\n"
+        f"  Aktualny: *{vix_spot:.1f}* | Śr. 1M: {vix_1m:.1f} | Śr. 3M: {vix_3m:.1f}\n"
+        f"  _{spot_interp}_\n\n"
+        f"{combined}"
     )
 
 
@@ -830,18 +1071,54 @@ def check_and_send_alerts(new_result: dict):
                 f"Filar *{_NAMES[key]}* zmienił status: {old_status} → {new_status}"
             )
 
-    # VIX thresholds
+    # Leading indicator alerts (fire BEFORE VIX spikes)
     try:
-        vix_pts, vix_detail = _score_vix()
-        vix_val = float(vix_detail.split("VIX")[1].split()[0]) if "VIX" in vix_detail else None
-        prev_vix = state.get("last_vix")
-        if vix_val:
-            for threshold in (28, 35):
-                if prev_vix and prev_vix < threshold <= vix_val:
-                    alerts.append(f"⚠️ VIX przebił {threshold} ({vix_val:.1f})")
-            state["last_vix"] = vix_val
-    except Exception:
-        pass
+        # VIX term structure — backwardation is the real signal
+        vix_spot = _yf_latest("^VIX")
+        vix3m    = _yf_latest("^VIX3M")
+        prev_structure = state.get("last_vix_structure", "contango")
+        if vix_spot and vix3m:
+            diff = vix3m - vix_spot
+            curr_structure = "backwardation" if diff < 0 else ("flat" if diff < 2 else "contango")
+            if prev_structure != "backwardation" and curr_structure == "backwardation":
+                alerts.append(
+                    f"📡 VIX TERM STRUCTURE → BACKWARDATION "
+                    f"(VIX {vix_spot:.1f} > VIX3M {vix3m:.1f}) — rynek boi się TERAZ, alarm 1-3 tyg. przed spadkami"
+                )
+            elif prev_structure == "contango" and curr_structure == "flat":
+                alerts.append(f"📡 VIX Structure spłaszczona (VIX {vix_spot:.1f} / VIX3M {vix3m:.1f}) — obserwuj")
+            state["last_vix_structure"] = curr_structure
+            state["last_vix"] = vix_spot
+
+        # SKEW alert
+        skew_snippet = _tavily_snippet("CBOE SKEW index tail risk latest 2026", 150)
+        import re as _re
+        m_skew = _re.search(r'\b(1[0-9][0-9])\b', skew_snippet)
+        if m_skew:
+            skew_val = int(m_skew.group())
+            prev_skew = state.get("last_skew", 120)
+            if prev_skew < 140 <= skew_val:
+                alerts.append(
+                    f"📡 SKEW przebił 140 ({skew_val}) — smart money kupuje ochronę przed crash scenariuszem"
+                )
+            state["last_skew"] = skew_val
+
+        # Credit spreads — 2-week trend
+        credit_pts, credit_detail = _score_credit_spreads()
+        prev_credit = state.get("last_credit_pts", 2)
+        if credit_pts <= -5 and prev_credit > -3:
+            alerts.append(f"📡 CREDIT SPREADS: {credit_detail[:100]}")
+        state["last_credit_pts"] = credit_pts
+
+        # Rotation — QQQ underperforming defensives
+        rot_pts, rot_detail = _score_rotation()
+        prev_rot = state.get("last_rotation_pts", 1)
+        if rot_pts <= -3 and prev_rot > -1:
+            alerts.append(f"📡 ROTACJA: {rot_detail[:100]}")
+        state["last_rotation_pts"] = rot_pts
+
+    except Exception as e:
+        logger.warning("Leading indicator alert check error: %s", e)
 
     # 2+ red pillars
     if new_result["recession_alert"] and not state.get("recession_alert_sent"):
