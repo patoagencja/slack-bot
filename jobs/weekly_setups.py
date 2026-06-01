@@ -192,7 +192,7 @@ def _batch_prescreen(tickers: list[str], qqq_30d: float | None = None,
     Typical: 500 tickers → 30-60 candidates.
     """
     candidates = []
-    chunk_size = 100
+    chunk_size = 50  # smaller chunks = more reliable downloads
 
     for i in range(0, len(tickers), chunk_size):
         chunk = tickers[i:i + chunk_size]
@@ -201,13 +201,14 @@ def _batch_prescreen(tickers: list[str], qqq_30d: float | None = None,
             if raw.empty:
                 continue
 
-            # yfinance returns multi-level columns for multi-ticker downloads
-            if len(chunk) == 1:
-                closes_df  = raw[["Close"]].rename(columns={"Close": chunk[0]})
-                volumes_df = raw[["Volume"]].rename(columns={"Volume": chunk[0]})
+            # Detect column structure (single vs multi-ticker)
+            if isinstance(raw.columns, pd.MultiIndex):
+                closes_df  = raw["Close"]
+                volumes_df = raw.get("Volume")
             else:
-                closes_df  = raw["Close"] if "Close" in raw.columns.get_level_values(0) else raw
-                volumes_df = raw["Volume"] if "Volume" in raw.columns.get_level_values(0) else None
+                # Single-ticker download — wrap in DataFrame
+                closes_df  = raw[["Close"]].rename(columns={"Close": chunk[0]})
+                volumes_df = raw[["Volume"]].rename(columns={"Volume": chunk[0]}) if "Volume" in raw.columns else None
 
             for t in chunk:
                 try:
@@ -221,14 +222,6 @@ def _batch_prescreen(tickers: list[str], qqq_30d: float | None = None,
                     if price < 5:
                         continue  # penny stock filter
 
-                    # Liquidity check
-                    avg_dv_m = 0.0
-                    if volumes_df is not None and t in volumes_df.columns:
-                        v = volumes_df[t].dropna()
-                        avg_dv_m = float((v * c.reindex(v.index)).tail(20).mean()) / 1_000_000
-                    if avg_dv_m < min_dv_m:
-                        continue
-
                     # Trend: must be above MA50
                     ma50 = float(c.rolling(50).mean().iloc[-1]) if len(c) >= 50 else float(c.mean())
                     if price < ma50:
@@ -239,29 +232,35 @@ def _batch_prescreen(tickers: list[str], qqq_30d: float | None = None,
                     if not (40 <= rsi <= 70):
                         continue
 
+                    # Liquidity check
+                    avg_dv_m = 0.0
+                    vol_spike = 1.0
+                    if volumes_df is not None and t in volumes_df.columns:
+                        v = volumes_df[t].dropna()
+                        common = c.index.intersection(v.index)
+                        if len(common) >= 20:
+                            avg_dv_m = float((v.loc[common] * c.loc[common]).tail(20).mean()) / 1_000_000
+                            avg_vol = float(v.tail(20).mean())
+                            recent_vol = float(v.tail(3).mean())
+                            vol_spike = round(recent_vol / avg_vol, 2) if avg_vol else 1.0
+                    if avg_dv_m < min_dv_m:
+                        continue
+
                     # Momentum vs QQQ (relative strength)
                     momentum_30d = round((price / float(c.iloc[-30]) - 1) * 100, 2) if len(c) >= 30 else 0.0
                     rs_vs_qqq = round(momentum_30d - qqq_30d, 2) if qqq_30d is not None else 0.0
                     if rs_vs_qqq < -10:
                         continue  # badly lagging market
 
-                    # Volume spike: last 3 days vs 20-day average
-                    vol_spike = 1.0
-                    if volumes_df is not None and t in volumes_df.columns:
-                        v = volumes_df[t].dropna()
-                        avg_vol = float(v.tail(20).mean())
-                        recent_vol = float(v.tail(3).mean())
-                        vol_spike = round(recent_vol / avg_vol, 2) if avg_vol else 1.0
-
                     candidates.append({
-                        "ticker":      t,
-                        "price":       round(price, 2),
-                        "rsi":         rsi,
+                        "ticker":       t,
+                        "price":        round(price, 2),
+                        "rsi":          rsi,
                         "momentum_30d": momentum_30d,
-                        "rs_vs_qqq":   rs_vs_qqq,
-                        "avg_dv_m":    round(avg_dv_m, 1),
-                        "vol_spike":   vol_spike,
-                        "ma50":        round(ma50, 2),
+                        "rs_vs_qqq":    rs_vs_qqq,
+                        "avg_dv_m":     round(avg_dv_m, 1),
+                        "vol_spike":    vol_spike,
+                        "ma50":         round(ma50, 2),
                     })
                 except Exception:
                     continue
@@ -417,10 +416,12 @@ def _calc_rr(closes: list, atr_pct: float = 0) -> dict:
 
 # ── Per-ticker full analysis ──────────────────────────────────────────────────
 
-def _analyze_setup_ticker(ticker: str, prescreen: dict | None = None) -> dict | None:
+def _analyze_setup_ticker(ticker: str, prescreen: dict | None = None,
+                          fetch_catalyst: bool = True) -> dict | None:
     """
-    Full analysis for one ticker: yfinance history + ATR + pattern + catalyst.
+    Full analysis for one ticker: yfinance history + ATR + pattern + optional catalyst.
     prescreen: pre-computed basic metrics from batch download (saves one API call).
+    fetch_catalyst=False skips Tavily to allow parallel batch analysis.
     """
     try:
         t    = yf.Ticker(ticker)
@@ -475,9 +476,9 @@ def _analyze_setup_ticker(ticker: str, prescreen: dict | None = None) -> dict | 
         vol_spike = prescreen.get("vol_spike", 1.0) if prescreen else 1.0
         rs_vs_qqq = prescreen.get("rs_vs_qqq", 0.0) if prescreen else 0.0
 
-        # Catalyst (Tavily)
+        # Catalyst (Tavily) — skipped in parallel batch mode, fetched later for top candidates
         catalyst = ""
-        if _tavily:
+        if fetch_catalyst and _tavily:
             try:
                 r = _tavily.search(
                     f"{ticker} catalyst event earnings partnership news week 2026",
@@ -712,25 +713,49 @@ def _scan_candidates(mode: str = "all") -> tuple[list[dict], dict, float | None]
     candidates: list[dict] = []
 
     if mode == "all" and len(universe) > len(WATCHLIST) + 10:
-        # Batch pre-screen for large universes
+        # ── Large universe: batch pre-screen → parallel full analysis ──────────
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         logger.info("Batch pre-screening %d tickers...", len(universe))
         prescreened = _batch_prescreen(universe, qqq_30d=qqq_30d)
-        # Sort pre-screened by momentum + vol_spike, take top 80 for full analysis
+
+        # Sort by momentum + volume spike, keep top 25 for full analysis
         prescreened.sort(
             key=lambda x: x.get("rs_vs_qqq", 0) + x.get("vol_spike", 1) * 5,
             reverse=True,
         )
-        top_prescreened = prescreened[:80]
-        logger.info("Pre-screen: %d → %d candidates for full analysis", len(universe), len(top_prescreened))
-        prescreen_map = {p["ticker"]: p for p in top_prescreened}
-        for p in top_prescreened:
-            s = _analyze_setup_ticker(p["ticker"], prescreen=p)
-            if s:
-                candidates.append(s)
+        top_prescreened = prescreened[:25]
+        logger.info("Pre-screen: %d → %d for full analysis (parallel)", len(universe), len(top_prescreened))
+
+        # Parallel full analysis — no Tavily yet (fetch_catalyst=False)
+        def _full_no_catalyst(p):
+            return _analyze_setup_ticker(p["ticker"], prescreen=p, fetch_catalyst=False)
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for result in pool.map(_full_no_catalyst, top_prescreened):
+                if result:
+                    candidates.append(result)
+
+        # Fetch catalyst only for top 10 by score (sequential, after parallel analysis)
+        if _tavily and candidates:
+            candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
+            for c in candidates[:10]:
+                try:
+                    r = _tavily.search(
+                        f"{c['ticker']} catalyst event earnings partnership news week 2026",
+                        max_results=2,
+                    )
+                    c["catalyst"] = " ".join(
+                        (x.get("content") or "")[:120] for x in (r.get("results") or [])
+                    )[:250]
+                    if c["catalyst"]:
+                        c["score"] = min(100, c["score"] + 15)
+                except Exception:
+                    pass
     else:
-        # Small universe (watchlist or sector) — individual analysis
+        # Small universe (watchlist or sector) — sequential with catalyst
         for ticker in universe:
-            s = _analyze_setup_ticker(ticker)
+            s = _analyze_setup_ticker(ticker, fetch_catalyst=True)
             if s:
                 candidates.append(s)
 
