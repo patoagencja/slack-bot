@@ -253,6 +253,11 @@ def _batch_prescreen(tickers: list[str], qqq_30d: float | None = None,
                     if price < ma50:
                         continue
 
+                    # ATH filter: skip stocks within 5% of 52-week high (early reject)
+                    high52 = float(c.tail(252).max()) if len(c) >= 252 else float(c.max())
+                    if (price / high52 - 1) * 100 > -5:
+                        continue
+
                     # RSI filter
                     rsi = round(_calc_rsi(c.tolist()), 1)
                     if not (40 <= rsi <= 70):
@@ -456,6 +461,22 @@ def _analyze_setup_ticker(ticker: str, prescreen: dict | None = None,
         if not price:
             return None
 
+        # ── Freshness check: reject if pre/post-market gap > -5% ──────────────
+        # Catches gap-downs like QCOM -9% pre-market before regular session
+        try:
+            fi = t.fast_info
+            live_price = getattr(fi, "last_price", None)
+            if live_price and live_price > 0:
+                gap_pct = (live_price - price) / price * 100
+                if gap_pct < -5:
+                    logger.info("Skip %s: pre/post-market gap %.1f%% (%s→%s)",
+                                ticker, gap_pct, price, live_price)
+                    return None
+                # Use the fresher price as actual entry
+                price = live_price
+        except Exception:
+            pass
+
         hist   = t.history(period="1y")
         if hist.empty or len(hist) < 22:
             return None
@@ -477,6 +498,13 @@ def _analyze_setup_ticker(ticker: str, prescreen: dict | None = None,
         if not tech.get("above_ma50"):
             return None
         if pattern["quality"] < 1:
+            return None
+
+        # ATH filter: reject stocks within 5% of 52-week high
+        # At ATH there's limited upside and high reversal risk — not a swing setup
+        high52 = max(closes[-252:]) if len(closes) >= 252 else max(closes)
+        pct_from_high52 = (price / high52 - 1) * 100
+        if pct_from_high52 > -5:
             return None
 
         # Liquidity filter: need avg dollar volume ≥ $5M
