@@ -10,6 +10,8 @@ import re
 import json
 import logging
 import datetime
+import warnings
+import time as _time
 
 import yfinance as yf
 import pandas as pd
@@ -85,7 +87,7 @@ _SP500_FALLBACK = [
     "MCO", "NOC", "RTX", "LMT", "HCA", "F", "GM", "INTC", "CARR", "UBER",
     "ABNB", "RIVN", "LCID", "PLTR", "SNOW", "CRWD", "DDOG", "ZS", "FTNT",
     "TTD", "RBLX", "U", "APP", "SOFI", "COIN", "HOOD", "AFRM", "UPST",
-    "SMCI", "ARM", "MRVL", "ON", "AMBA", "WOLF", "CREE",
+    "SMCI", "ARM", "MRVL", "ON", "AMBA", "WOLF",
     "AXON", "TDG", "GD", "HII", "LDOS", "SAIC", "KTOS", "BAH",
     "CCJ", "UEC", "DNN", "UUUU", "NNE", "SMR", "OKLO",
     "RKLB", "ASTS", "LUNR", "PL", "RDW", "IRDM",
@@ -194,21 +196,45 @@ def _batch_prescreen(tickers: list[str], qqq_30d: float | None = None,
     candidates = []
     chunk_size = 50  # smaller chunks = more reliable downloads
 
+    # Silence yfinance delisted / crumb warnings
+    logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+
     for i in range(0, len(tickers), chunk_size):
         chunk = tickers[i:i + chunk_size]
-        try:
-            raw = yf.download(chunk, period="65d", progress=False, auto_adjust=True)
-            if raw.empty:
-                continue
+        raw = None
+        for _attempt in range(3):
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    raw = yf.download(
+                        chunk, period="65d", progress=False,
+                        auto_adjust=True, timeout=30,
+                    )
+                break
+            except Exception as e:
+                err_str = str(e)
+                if "401" in err_str or "Unauthorized" in err_str or "Crumb" in err_str:
+                    logger.warning("yfinance 401 crumb error on chunk %d, retry %d/3", i // chunk_size, _attempt + 1)
+                    _time.sleep(2 ** _attempt)
+                    # Reset yfinance session to get fresh crumb
+                    try:
+                        yf.utils.get_json.cache_clear()
+                    except Exception:
+                        pass
+                else:
+                    logger.warning("yfinance download chunk %d error: %s", i // chunk_size, e)
+                    break
+        if raw is None or raw.empty:
+            continue
 
-            # Detect column structure (single vs multi-ticker)
-            if isinstance(raw.columns, pd.MultiIndex):
-                closes_df  = raw["Close"]
-                volumes_df = raw.get("Volume")
-            else:
-                # Single-ticker download — wrap in DataFrame
-                closes_df  = raw[["Close"]].rename(columns={"Close": chunk[0]})
-                volumes_df = raw[["Volume"]].rename(columns={"Volume": chunk[0]}) if "Volume" in raw.columns else None
+        # Detect column structure (single vs multi-ticker)
+        if isinstance(raw.columns, pd.MultiIndex):
+            closes_df  = raw["Close"]
+            volumes_df = raw.get("Volume")
+        else:
+            # Single-ticker download — wrap in DataFrame
+            closes_df  = raw[["Close"]].rename(columns={"Close": chunk[0]})
+            volumes_df = raw[["Volume"]].rename(columns={"Volume": chunk[0]}) if "Volume" in raw.columns else None
 
             for t in chunk:
                 try:
@@ -264,8 +290,6 @@ def _batch_prescreen(tickers: list[str], qqq_30d: float | None = None,
                     })
                 except Exception:
                     continue
-        except Exception as e:
-            logger.warning("Batch prescreen chunk %d error: %s", i, e)
 
     return candidates
 

@@ -15,6 +15,7 @@ import json
 import logging
 import datetime
 import time as _time
+import warnings
 
 import requests as _requests
 import pandas as pd
@@ -398,7 +399,9 @@ def _score_market_breadth() -> tuple[int, str]:
     above = 0
     total = 0
     try:
-        raw = yf.download(_SAMPLE, period="65d", progress=False, auto_adjust=True)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            raw = yf.download(_SAMPLE, period="65d", progress=False, auto_adjust=True)
         if isinstance(raw.columns, pd.MultiIndex):
             closes_df = raw["Close"]
         else:
