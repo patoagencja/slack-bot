@@ -199,6 +199,29 @@ _CATEGORY_MAP = {
 # Tickers with tariff/supply-chain risk beyond CONSUMER_DISCRETIONARY
 _TARIFF_RISK_TICKERS = {"LULU", "NKE", "DECK", "RACE", "SNAP", "AAPL", "CMG"}
 
+# Tickers that are inherently cyclical (don't penalize one bad quarter)
+_CYCLICAL_TICKERS = {
+    "ASML", "MU", "AMAT", "KLAC", "LRCX", "GFS",  # semis capex cycle
+    "CCJ", "UEC", "DNN", "UUUU",                    # uranium cycle
+    "BA", "RYCEY",                                   # aerospace cycle
+}
+
+# Active supercycles: name → {query, tickers}
+_SUPERCYCLE_MAP = {
+    "HBM/DRAM Memory":     {"query": "memory DRAM HBM supercycle AI demand 2026",           "tickers": ["MU", "ALAB", "ASML", "NVDA", "AMD"]},
+    "Nuclear Renaissance": {"query": "nuclear renaissance SMR orders utility contracts 2026", "tickers": ["CCJ", "UEC", "DNN", "UUUU"]},
+    "Defense Supercycle":  {"query": "defense spending NATO supercycle procurement 2026",     "tickers": ["NOC", "TDG", "AXON", "BA"]},
+    "GLP-1/Obesity":       {"query": "GLP-1 obesity drug market expansion supply chain 2026","tickers": ["NVO", "ISRG", "TEM"]},
+    "Agentic AI":          {"query": "agentic AI enterprise deployment revenue 2026",        "tickers": ["NOW", "CRM", "PATH", "CRWD", "APP", "MSFT"]},
+    "Power Grid/Energy":   {"query": "power grid energy AI datacenter infrastructure 2026",  "tickers": ["EOSE", "VST", "CEG"]},
+}
+
+# Reverse map: ticker → list of supercycle names it belongs to
+_TICKER_SUPERCYCLES: dict[str, list[str]] = {}
+for _sc_name, _sc_data in _SUPERCYCLE_MAP.items():
+    for _t in _sc_data["tickers"]:
+        _TICKER_SUPERCYCLES.setdefault(_t, []).append(_sc_name)
+
 ASSET_CATEGORY: dict[str, str] = {}
 for _cat, _tickers in _CATEGORY_MAP.items():
     for _t in _tickers:
@@ -372,8 +395,11 @@ def _fetch_news(ticker: str, category: str = "STANDARD_TECH") -> list:
         return []
 
 
-def _fetch_extra_signals(ticker: str, category: str) -> dict:
-    """Additional targeted Tavily calls for guidance, tariffs, US sales, EPS revisions."""
+def _fetch_extra_signals(ticker: str, category: str,
+                         short_pct: float | None = None,
+                         margin_declining: bool = False,
+                         is_cyclical: bool = False) -> dict:
+    """Additional targeted Tavily calls: guidance, EPS revisions, insider, catalyst, etc."""
     if _tavily is None:
         return {}
     out = {}
@@ -385,17 +411,24 @@ def _fetch_extra_signals(ticker: str, category: str) -> dict:
         except Exception as e:
             logger.warning("Extra signal %s for %s: %s", key, ticker, e)
 
-    # Guidance — all tickers
-    _search("guidance", f"{ticker} guidance lowered raised outlook forecast 2026")
+    # Core signals — all tickers
+    _search("guidance",       f"{ticker} guidance lowered raised outlook forecast 2026")
+    _search("eps_revisions",  f"{ticker} EPS estimates revision analysts upgrade downgrade 2026")
+    _search("insider_quality",f"{ticker} insider purchase open market CEO CFO director 2026")
+    _search("catalyst_window",f"{ticker} upcoming catalyst event conference earnings product launch 2026")
 
-    # EPS revision trajectory — all tickers (DNA Rynków: rewizje ważniejsze niż snapshot)
-    _search("eps_revisions", f"{ticker} EPS estimates revision analysts upgrade downgrade 2026")
+    # Conditional signals
+    if (short_pct or 0) > 15:
+        _search("convertible_debt", f"{ticker} convertible notes zero coupon debt hedge 2026")
 
-    # Tariffs — consumer & other exposed tickers
+    if margin_declining or category == "CONSUMER_DISCRETIONARY":
+        _search("margin_reason", f"{ticker} margin decline reason investment capex reinvest 2026")
+
+    if is_cyclical:
+        _search("cycle_context", f"{ticker} industry cycle recovery inventory correction 2026")
+
     if category == "CONSUMER_DISCRETIONARY" or ticker in _TARIFF_RISK_TICKERS:
-        _search("tariffs", f"{ticker} tariffs supply chain China import costs 2026")
-
-    # US domestic sales — consumer focused
+        _search("tariffs",  f"{ticker} tariffs supply chain China import costs 2026")
     if category == "CONSUMER_DISCRETIONARY":
         _search("us_sales", f"{ticker} US domestic sales revenue decline slowdown 2026")
 
@@ -651,6 +684,25 @@ def _build_user_msg(ticker: str, fin: dict, news: list, category: str) -> str:
         base += f"Tariff/supply chain risk: {extras['tariffs'][:200]}\n"
     if extras.get("us_sales"):
         base += f"US domestic sales: {extras['us_sales'][:200]}\n"
+    if extras.get("insider_quality"):
+        base += f"Insider activity: {extras['insider_quality'][:250]}\n"
+    if extras.get("catalyst_window"):
+        base += f"Upcoming catalysts: {extras['catalyst_window'][:200]}\n"
+    if extras.get("convertible_debt"):
+        base += f"Convertible debt/hedge context: {extras['convertible_debt'][:200]}\n"
+    if extras.get("margin_reason"):
+        base += f"Margin compression reason: {extras['margin_reason'][:200]}\n"
+    if extras.get("cycle_context"):
+        base += f"Industry cycle context: {extras['cycle_context'][:200]}\n"
+
+    # Supercycle membership
+    supercycles = _TICKER_SUPERCYCLES.get(ticker, [])
+    if supercycles:
+        base += f"Supercykle strukturalne: {', '.join(supercycles)}\n"
+
+    # Cyclical flag
+    if ticker in _CYCLICAL_TICKERS:
+        base += "UWAGA: Spółka CYKLICZNA — nie oceniaj przez jeden słaby kwartał, patrz na cykl.\n"
 
     # ── Sector context ──
     sector_ctx = fin.get("sector_context", "")
@@ -790,8 +842,14 @@ def analyze_ticker(ticker: str, qqq_30d: float | None = None, btc_data: dict | N
             except Exception as e:
                 logger.warning("MSTR NAV fetch error: %s", e)
 
-    # ── Extra signals: guidance + tariffs + US sales ──
-    fin["extra_signals"] = _fetch_extra_signals(ticker, category)
+    # ── Extra signals (guidance, EPS, insider, catalyst, convertible debt, etc.) ──
+    qtrd = fin["quarterly_trends"]
+    fin["extra_signals"] = _fetch_extra_signals(
+        ticker, category,
+        short_pct=short_pct,
+        margin_declining=qtrd.get("margin_declining", False),
+        is_cyclical=ticker in _CYCLICAL_TICKERS,
+    )
 
     news     = _fetch_news(ticker, category)
     analysis = _claude_analyze(ticker, fin, news, category)
@@ -826,6 +884,85 @@ def analyze_ticker(ticker: str, qqq_30d: float | None = None, btc_data: dict | N
         old_t = analysis.get("timing_score", 3)
         analysis["timing_score"] = max(1, old_t - 1)
         analysis["flags"] = analysis.get("flags", []) + ["🔴 SECTOR_OUTFLOW"]
+
+    # ── Convertible debt decoder (high short ≠ always bearish) ──
+    convertible_text = (fin["extra_signals"].get("convertible_debt") or "").lower()
+    short_val = short_pct or 0
+    if short_val > 15:
+        if any(w in convertible_text for w in ("convertible", "zero coupon", "notes", "hedge", "delta")):
+            analysis["flags"] = analysis.get("flags", []) + [
+                "💡 CONVERTIBLE_DEBT_HEDGE — short to prawdopodobnie delta-hedge, nie teza niedźwiedzia"
+            ]
+        else:
+            analysis["flags"] = analysis.get("flags", []) + [f"⚠️ HIGH_SHORT_INTEREST {short_val:.0f}%"]
+
+    # ── Insider buying quality ──
+    insider_text = (fin["extra_signals"].get("insider_quality") or "").lower()
+    _strong_words = ("ceo", "cfo", "chief executive", "chief financial", "open market", "purchased on", "bought shares")
+    if sum(1 for w in _strong_words if w in insider_text) >= 2:
+        analysis["flags"] = analysis.get("flags", []) + ["🟢 STRONG_INSIDER_BUY — CEO/CFO kupuje na wolnym rynku"]
+        old_f = analysis.get("fundamentals_score", 3)
+        analysis["fundamentals_score"] = min(5, old_f + 1)
+
+    # ── Supercycle tailwind ──
+    supercycles = _TICKER_SUPERCYCLES.get(ticker, [])
+    if supercycles:
+        analysis["flags"] = analysis.get("flags", []) + [f"🌊 SUPERCYCLE: {', '.join(supercycles)}"]
+        old_t = analysis.get("timing_score", 3)
+        analysis["timing_score"] = min(5, old_t + 1)
+
+    # ── Cyclicality: don't penalize mid-cycle correction ──
+    if ticker in _CYCLICAL_TICKERS:
+        cycle_text = (fin["extra_signals"].get("cycle_context") or "").lower()
+        if any(w in cycle_text for w in ("recovery", "upturn", "improving", "accelerating", "trough")):
+            analysis["flags"] = analysis.get("flags", []) + ["🔄 CYCLICAL_RECOVERY — cykl się odwraca w górę"]
+        elif any(w in cycle_text for w in ("peak", "late cycle", "slowdown", "inventory correction", "correction")):
+            analysis["flags"] = analysis.get("flags", []) + ["⚠️ CYCLICAL_PEAK — możliwy szczyt cyklu"]
+
+    # ── Margin compression: reinvestment vs structural ──
+    margin_text = (fin["extra_signals"].get("margin_reason") or "").lower()
+    qtrd2 = fin.get("quarterly_trends", {})
+    if qtrd2.get("margin_declining"):
+        rev_growth = qtrd2.get("revenue_growth_qtrs", [])
+        revenue_still_growing = bool(rev_growth and rev_growth[-1] > 0)
+        invest_words = ("invest", "capex", "expand", "build", "hiring", "r&d", "reinvest")
+        invest_signal = any(w in margin_text for w in invest_words)
+        if revenue_still_growing or invest_signal:
+            analysis["flags"] = analysis.get("flags", []) + [
+                "💡 MARGIN_COMPRESSION_INVESTMENT — marże spadają przez reinwestycję, revenue rośnie"
+            ]
+        else:
+            analysis["flags"] = analysis.get("flags", []) + [
+                "🔴 MARGIN_COMPRESSION_STRUCTURAL — marże spadają bez wzrostu revenue"
+            ]
+            old_f2 = analysis.get("fundamentals_score", 3)
+            analysis["fundamentals_score"] = max(1, old_f2 - 1)
+
+    # ── Catalyst window priority ──
+    catalyst_text = (fin["extra_signals"].get("catalyst_window") or "")
+    ed = fin.get("earnings_days")
+    if ed is not None and 0 <= ed <= 14:
+        analysis["flags"] = analysis.get("flags", []) + [f"⚡ CATALYST_IMMINENT — earnings za {ed} dni (ryzyko/szansa)"]
+    elif ed is not None and 14 < ed <= 60:
+        analysis["flags"] = analysis.get("flags", []) + [f"🎯 CATALYST_SWEET_SPOT — earnings za {ed} dni (optymalne okno)"]
+    elif catalyst_text and len(catalyst_text) > 60:
+        analysis["flags"] = analysis.get("flags", []) + ["🎯 CATALYST_DETECTED — katalizator w horyzoncie"]
+    else:
+        analysis["flags"] = analysis.get("flags", []) + ["📭 NO_CATALYST — brak widocznego katalizatora"]
+
+    # ── Liquidity / position size for small caps ──
+    market_cap = info.get("marketCap") or 0
+    if 0 < market_cap < 2_000_000_000:
+        try:
+            avg_dv_m = float((ticker_obj.history(period="20d")["Volume"] *
+                              ticker_obj.history(period="20d")["Close"]).mean()) / 1_000_000
+        except Exception:
+            avg_dv_m = 0
+        if avg_dv_m > 0 and avg_dv_m < 5:
+            max_pos_m = round(avg_dv_m * 0.01, 3)
+            analysis["flags"] = analysis.get("flags", []) + [
+                f"⚠️ LOW_LIQUIDITY — avg ${avg_dv_m:.1f}M/dzień, max pozycja ~${max_pos_m}M (1% vol)"
+            ]
 
     return {**fin, "news": news, "analysis": analysis}
 
@@ -1562,6 +1699,170 @@ def send_crypto_digest(limit: int = 20):
         logger.info("send_crypto_digest: done")
     except Exception as e:
         logger.error("send_crypto_digest failed: %s", e)
+
+
+# ── Supercycle scan ───────────────────────────────────────────────────────────
+
+def run_supercycle_scan() -> str:
+    """Scan all active supercycles and return Slack-formatted status report."""
+    if _tavily is None:
+        return "⚠️ Tavily niedostępny — nie można pobrać danych supercykli."
+
+    today = datetime.datetime.now().strftime("%d.%m.%Y")
+    signals: dict[str, str] = {}
+    for name, sc in _SUPERCYCLE_MAP.items():
+        try:
+            r = _tavily.search(sc["query"], max_results=3)
+            signals[name] = " ".join((x.get("content") or "")[:200] for x in (r.get("results") or []))[:500]
+        except Exception:
+            signals[name] = ""
+
+    prompt = (
+        f"Dzisiaj: {today}\n\n"
+        "Poniżej dane o aktywnych supercyklach inwestycyjnych. "
+        "Dla każdego określ gdzie jesteśmy w cyklu i jakie są perspektywy.\n\n"
+        + "\n\n".join(f"[{name}]\n{text}" for name, text in signals.items() if text)
+        + "\n\nOdpowiedz TYLKO w JSON:\n"
+        '{"cycles": [{"name": "...", "status": "WCZESNY/ŚRODKOWY/PÓŹNY/ZAKOŃCZONY", '
+        '"momentum": "PRZYSPIESZA/STABILNY/ZWALNIA", '
+        '"key_signal": "1 zdanie co napędza cykl", '
+        '"watchlist_tickers": ["TICK1", "TICK2"], '
+        '"outlook": "1 zdanie co dalej"}]}'
+    )
+
+    try:
+        resp = _ctx.claude.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1200,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw  = resp.content[0].text.strip()
+        m    = re.search(r"\{[\s\S]*\}", raw)
+        data = json.loads(m.group() if m else raw)
+        cycles = data.get("cycles", [])
+    except Exception as e:
+        logger.error("Supercycle scan Claude error: %s", e)
+        return "❌ Błąd analizy supercykli."
+
+    _status_emoji = {"WCZESNY": "🌱", "ŚRODKOWY": "🔥", "PÓŹNY": "⚠️", "ZAKOŃCZONY": "❄️"}
+    _mom_emoji    = {"PRZYSPIESZA": "⬆️", "STABILNY": "➡️", "ZWALNIA": "⬇️"}
+
+    lines = [f"🌊 *Supercykle Inwestycyjne — {today}*\n"]
+    for cy in cycles:
+        name    = cy.get("name", "?")
+        status  = cy.get("status", "?")
+        mom     = cy.get("momentum", "?")
+        se      = _status_emoji.get(status, "📌")
+        me      = _mom_emoji.get(mom, "")
+        tickers = cy.get("watchlist_tickers", [])
+        lines.append(
+            f"{se} *{name}* — {status} {me}\n"
+            f"   {cy.get('key_signal','')}\n"
+            f"   Beneficjenci z watchlisty: {', '.join(tickers) or 'brak'}\n"
+            f"   Perspektywa: _{cy.get('outlook','')}_\n"
+        )
+    return "\n".join(lines)
+
+
+def send_supercycle_scan():
+    """Post supercycle scan to #inwestowanie."""
+    try:
+        text = run_supercycle_scan()
+        _ctx.app.client.chat_postMessage(channel=STOCK_CHANNEL_ID, text=text)
+    except Exception as e:
+        logger.error("send_supercycle_scan failed: %s", e)
+
+
+# ── Cyclicality analysis ──────────────────────────────────────────────────────
+
+def run_cyclicality_analysis(ticker: str) -> str:
+    """Deep cyclicality analysis for one ticker."""
+    ticker = ticker.upper().strip()
+    is_cyclical = ticker in _CYCLICAL_TICKERS
+    supercycles = _TICKER_SUPERCYCLES.get(ticker, [])
+
+    tavily_ctx = ""
+    if _tavily:
+        try:
+            r = _tavily.search(f"{ticker} industry cycle semiconductor memory recovery 2026", max_results=4)
+            tavily_ctx = " | ".join((x.get("content") or "")[:180] for x in (r.get("results") or []))[:600]
+        except Exception:
+            pass
+
+    prompt = (
+        f"Ticker: {ticker}\n"
+        f"Znany jako cykliczny: {'TAK' if is_cyclical else 'NIE (sprawdź)'}\n"
+        f"Powiązane supercykle: {', '.join(supercycles) or 'brak zidentyfikowanych'}\n\n"
+        f"Dane rynkowe:\n{tavily_ctx or '(brak danych Tavily)'}\n\n"
+        "Oceń cykliczność tej spółki i gdzie jesteśmy w jej cyklu branżowym.\n"
+        "Odpowiedz po polsku, max 200 słów. Format:\n"
+        "1. *Typ cykliczności* — cykliczna/defensywna/wzrostowa\n"
+        "2. *Gdzie w cyklu* — wczesny/środkowy/późny/szczyt/dołek\n"
+        "3. *Co napędza cykl* — konkretny czynnik\n"
+        "4. *Implikacja inwestycyjna* — co z tym zrobić teraz\n"
+        "5. *Werdykt* — KUPUJ W DOŁKU / TRZYMAJ / REDUKUJ PRZY SZCZYCIE"
+    )
+
+    try:
+        resp = _ctx.claude.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        analysis = resp.content[0].text.strip()
+    except Exception as e:
+        analysis = f"_(błąd Claude: {e})_"
+
+    header = f"🔄 *Cykliczność: {ticker}*"
+    if supercycles:
+        header += f"  🌊 _{', '.join(supercycles)}_"
+    return f"{header}\n\n{analysis}"
+
+
+# ── Insider analysis ──────────────────────────────────────────────────────────
+
+def run_insider_analysis(ticker: str) -> str:
+    """Deep insider transaction quality analysis."""
+    ticker = ticker.upper().strip()
+
+    tavily_ctx = ""
+    if _tavily:
+        try:
+            r1 = _tavily.search(f"{ticker} insider purchase open market CEO CFO 2026", max_results=3)
+            r2 = _tavily.search(f"{ticker} SEC Form 4 insider buying director 2026", max_results=2)
+            parts  = [(x.get("content") or "")[:180] for x in (r1.get("results") or [])]
+            parts += [(x.get("content") or "")[:180] for x in (r2.get("results") or [])]
+            tavily_ctx = " | ".join(parts)[:700]
+        except Exception:
+            pass
+
+    if not tavily_ctx:
+        return f"⚠️ *{ticker}* — brak danych o transakcjach insiderów w Tavily."
+
+    prompt = (
+        f"Ticker: {ticker}\n\n"
+        f"Dane o transakcjach insiderów:\n{tavily_ctx}\n\n"
+        "Oceń JAKOŚĆ sygnału insider buying. DNA Rynków mówi:\n"
+        "MOCNY SYGNAŁ: CEO lub CFO kupuje na wolnym rynku (not exercise), duże kwoty, przy słabości kursu.\n"
+        "SŁABY SYGNAŁ: rutynowe opcje, małe kwoty, zakup po wzroście.\n\n"
+        "Odpowiedz po polsku, max 150 słów:\n"
+        "1. *Co konkretnie kupił/kupili* (kto, ile, cena)\n"
+        "2. *Ocena jakości sygnału* — MOCNY / SŁABY / BRAK\n"
+        "3. *Dlaczego* — 1 zdanie uzasadnienia\n"
+        "4. *Implikacja* — co to znaczy dla tezy inwestycyjnej"
+    )
+
+    try:
+        resp = _ctx.claude.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=350,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        analysis = resp.content[0].text.strip()
+    except Exception as e:
+        analysis = f"_(błąd Claude: {e})_"
+
+    return f"👤 *Insider Activity: {ticker}*\n\n{analysis}"
 
 
 def send_summary_digest(tickers: list = None):

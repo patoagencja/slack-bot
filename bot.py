@@ -53,7 +53,7 @@ from jobs.onboarding import (
 )
 from jobs.industry_news import weekly_industry_news
 from jobs.cost_report import weekly_cost_report
-from jobs.stock_digest import send_stock_digest, send_summary_digest, run_stock_digest, run_summary_digest, analyze_ticker, format_ticker_slack, format_ticker_attachment, WATCHLIST, send_macro_briefing, send_crypto_digest
+from jobs.stock_digest import send_stock_digest, send_summary_digest, run_stock_digest, run_summary_digest, analyze_ticker, format_ticker_slack, format_ticker_attachment, WATCHLIST, send_macro_briefing, send_crypto_digest, run_supercycle_scan, send_supercycle_scan, run_cyclicality_analysis, run_insider_analysis
 from jobs.weekly_setups import send_weekly_setups, analyze_single_swing, send_scan_setups
 from jobs.capital_flow import send_capital_flow_snapshot
 from jobs.narrative_scanner import send_narrative_radar, run_narrative_scan, run_sector_dive
@@ -1569,6 +1569,63 @@ def handle_narracje_slash(ack, respond, command):
                     respond(chunk)
             except Exception as e:
                 respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
+@app.command("/supercykle")
+def handle_supercykle_slash(ack, respond, command):
+    """Active supercycles and their beneficiaries."""
+    import threading as _th
+    ack()
+    respond("🌊 Analizuję aktywne supercykle... (~2 min)")
+
+    def _worker():
+        try:
+            result = run_supercycle_scan()
+            respond(result)
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
+@app.command("/cyklicznosc")
+def handle_cyklicznosc_slash(ack, respond, command):
+    """/cyklicznosc {TICKER} — cyclicality and cycle position analysis."""
+    import threading as _th
+    ack()
+    ticker = (command.get("text") or "").strip().upper()
+    if not ticker:
+        respond("Podaj ticker, np. `/cyklicznosc MU` lub `/cyklicznosc ASML`")
+        return
+    respond(f"🔄 Analizuję cykliczność *{ticker}*...")
+
+    def _worker(t=ticker):
+        try:
+            respond(run_cyclicality_analysis(t))
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
+@app.command("/insider")
+def handle_insider_slash(ack, respond, command):
+    """/insider {TICKER} — insider transaction quality analysis."""
+    import threading as _th
+    ack()
+    ticker = (command.get("text") or "").strip().upper()
+    if not ticker:
+        respond("Podaj ticker, np. `/insider NVDA` lub `/insider MSTR`")
+        return
+    respond(f"👤 Szukam transakcji insiderów dla *{ticker}*...")
+
+    def _worker(t=ticker):
+        try:
+            respond(run_insider_analysis(t))
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
 
     _th.Thread(target=_worker, daemon=True).start()
 
