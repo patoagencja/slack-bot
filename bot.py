@@ -57,6 +57,10 @@ from jobs.stock_digest import send_stock_digest, send_summary_digest, run_stock_
 from jobs.weekly_setups import send_weekly_setups, analyze_single_swing, send_scan_setups
 from jobs.capital_flow import send_capital_flow_snapshot
 from jobs.narrative_scanner import send_narrative_radar, run_narrative_scan, run_sector_dive
+from jobs.market_health_monitor import (
+    run_zdrowie_command, run_recesja_command, run_vix_command,
+    send_daily_health_header, run_market_health,
+)
 # jobs.reminders removed — reminders now use Slack chat.scheduleMessage
 from tools.campaign_creator import (
     download_slack_files, upload_creative_to_meta, parse_campaign_request,
@@ -1571,6 +1575,48 @@ def handle_narracje_slash(ack, respond, command):
                 respond(f"❌ Błąd: {e}")
 
     _th.Thread(target=_worker, daemon=True).start()
+
+
+@app.command("/zdrowie")
+def handle_zdrowie_slash(ack, respond, command):
+    """/zdrowie — full Market Health Score with all 20 indicators."""
+    import threading as _th
+    ack()
+    respond("🏥 Obliczam Market Health Score... (~3 min)")
+
+    def _worker():
+        try:
+            respond(run_zdrowie_command())
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
+@app.command("/recesja")
+def handle_recesja_slash(ack, respond, command):
+    """/recesja — 3 filary recesji DNA Rynków + trend."""
+    import threading as _th
+    ack()
+    respond("🔍 Sprawdzam 3 filary recesji...")
+
+    def _worker():
+        try:
+            respond(run_recesja_command())
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
+@app.command("/vix")
+def handle_vix_slash(ack, respond, command):
+    """/vix — aktualny VIX z interpretacją."""
+    ack()
+    try:
+        respond(run_vix_command())
+    except Exception as e:
+        respond(f"❌ Błąd: {e}")
 
 
 @app.command("/supercykle")
@@ -4547,6 +4593,7 @@ scheduler.add_job(check_stale_onboardings,   'cron', hour=9, minute=30, id='stal
 # scheduler.add_job(post_standup_summary,      'cron', day_of_week='mon-fri', hour=9, minute=30, id='standup_summary')
 scheduler.add_job(weekly_industry_news,      'cron', day_of_week='mon',     hour=9, minute=0,  id='industry_news')
 scheduler.add_job(weekly_cost_report,        'cron', day_of_week='mon',     hour=9,  minute=5,  id='weekly_cost_report')
+scheduler.add_job(send_daily_health_header,  'cron', day_of_week='mon-fri', hour=8,  minute=30, id='market_health_daily')
 scheduler.add_job(send_weekly_setups,        'cron', day_of_week='fri',     hour=16, minute=0,  id='weekly_setups')
 scheduler.add_job(send_narrative_radar,      'cron', day_of_week='fri',     hour=16, minute=30, id='narrative_radar')
 # stock_digest disabled — uruchamiać ręcznie przez /digest
