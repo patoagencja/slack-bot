@@ -52,6 +52,11 @@ from jobs.onboarding import (
     _handle_onboarding_done, check_stale_onboardings, handle_onboard_slash,
 )
 from jobs.industry_news import weekly_industry_news
+from jobs.cost_report import weekly_cost_report
+from jobs.stock_digest import send_stock_digest, send_summary_digest, run_stock_digest, run_summary_digest, analyze_ticker, format_ticker_slack, format_ticker_attachment, WATCHLIST, send_macro_briefing, send_crypto_digest, run_supercycle_scan, send_supercycle_scan, run_cyclicality_analysis, run_insider_analysis
+from jobs.weekly_setups import send_weekly_setups, analyze_single_swing, send_scan_setups
+from jobs.capital_flow import send_capital_flow_snapshot
+from jobs.narrative_scanner import send_narrative_radar, run_narrative_scan, run_sector_dive
 # jobs.reminders removed — reminders now use Slack chat.scheduleMessage
 from tools.campaign_creator import (
     download_slack_files, upload_creative_to_meta, parse_campaign_request,
@@ -60,10 +65,12 @@ from tools.campaign_creator import (
     get_meta_account_id, generate_campaign_expert_analysis,
 )
 from tools.voice_transcription import transcribe_slack_audio, SLACK_AUDIO_MIMES
+from tools.marketing_skills import load_marketing_skill, SKILLS_INDEX
 from tools.icloud_calendar import icloud_calendar_tool
-from tools.google_slides import create_presentation
+from tools.pptx_presentation import generate_pptx, share_pptx
 from tools.memory import init_memory, remember, recall_as_context, get_history
 from tools.reminders import init_reminders, schedule_reminder, list_reminders
+from tools.token_log import init_token_log, TrackedAnthropicClient, get_summary, get_user_summary, set_current_user, USD_TO_PLN
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -102,11 +109,12 @@ class _SlackErrorHandler(logging.Handler):
 
 # ── initialization ────────────────────────────────────────────────────────────
 _ctx.app    = App(token=os.environ.get("SLACK_BOT_TOKEN"))
-from tools.token_log import LoggingAnthropicWrapper, get_cost_summary as _token_cost_summary
-_ctx.claude = LoggingAnthropicWrapper(Anthropic(api_key=os.environ.get("CLAUDE_API_KEY")))
+_ctx.claude = TrackedAnthropicClient(Anthropic(api_key=os.environ.get("CLAUDE_API_KEY")))
 init_memory()
+init_token_log()
 init_reminders()
-_ctx.load_wizard_state()  # Restore wizard sessions that survived restart
+_ctx.load_wizard_state()   # Restore wizard sessions that survived restart
+_ctx.load_muted_alerts()  # Restore muted budget alert rules that survived restart
 
 # Odtwórz nieobecności z historii Slacka po restarcie (Render usuwa pliki)
 try:
@@ -451,6 +459,68 @@ def handle_mention(event, say):
             logger.error(f"Błąd email trigger w mention: {e}")
         return
 
+    thread_ts = event.get('thread_ts', event['ts'])
+
+    # Weekly cost report (manual trigger)
+    _cost_triggers = ["koszty ai", "ile kosztuje ai", "koszty claude",
+                      "koszty sebol", "weekly cost", "koszty tygodnia",
+                      "ile kosztuje sebol", "raport ai"]
+    if any(t in user_message.lower() for t in _cost_triggers):
+        from jobs.cost_report import generate_weekly_cost_report
+        _days_m = re.search(r'(\d+)\s*dni', user_message)
+        _days = int(_days_m.group(1)) if _days_m else 7
+        say(text=generate_weekly_cost_report(_days), thread_ts=thread_ts)
+        return
+
+    # Token usage per user
+    _tok_triggers = ["kto ile tokenów", "kto ile żre tokenów", "tokeny per osoba",
+                     "token usage", "kto używa tokenów", "zużycie tokenów",
+                     "ile tokenów zużywa", "raport tokenów", "kto ile kosztuje claude"]
+    if any(t in user_message.lower() for t in _tok_triggers):
+        _days_m = re.search(r'(\d+)\s*dni', user_message)
+        _days = int(_days_m.group(1)) if _days_m else 30
+        say(text=_format_user_token_report(_days), thread_ts=thread_ts)
+        return
+
+    # Swing setup intent detection
+    _swing_keywords = ["swing", "setup na", "zagranie na", "short term", "wejście tygodniowe", "setup tygodniowy"]
+    if any(kw in msg_lower_m for kw in _swing_keywords):
+        import threading as _th
+        _swing_ticker_match = re.search(r'\b([A-Z]{2,5})\b', user_message.upper())
+        _swing_ticker = _swing_ticker_match.group(1) if _swing_ticker_match else None
+        if _swing_ticker and _swing_ticker not in {"NA", "OR", "IN", "IS", "BY", "AT"}:
+            _cap_ts = thread_ts
+            say(text=f"🎯 Szukam swing setupu dla *{_swing_ticker}*...", thread_ts=_cap_ts)
+
+            def _swing_worker(_t=_swing_ticker, _ts=_cap_ts):
+                try:
+                    say(text=analyze_single_swing(_t), thread_ts=_ts)
+                except Exception as _e:
+                    say(text=f"❌ Błąd: {_e}", thread_ts=_ts)
+
+            _th.Thread(target=_swing_worker, daemon=True).start()
+            return
+
+    # Stock ticker detection
+    _words = set(re.findall(r'\b[A-Z]{1,5}\b', user_message.upper()))
+    _matched_tickers = [t for t in WATCHLIST if t in _words]
+    if _matched_tickers:
+        import threading as _th
+        ticker = _matched_tickers[0]
+        _captured_thread_ts = thread_ts
+        say(text=f"📊 Analizuję *{ticker}*... chwilę.", thread_ts=_captured_thread_ts)
+
+        def _ticker_worker(_ticker=ticker, _ts=_captured_thread_ts):
+            try:
+                data = analyze_ticker(_ticker)
+                att = format_ticker_attachment(_ticker, data)
+                say(text=f"📊 {_ticker}", attachments=[att], thread_ts=_ts)
+            except Exception as _e:
+                say(text=f"❌ Błąd analizy {_ticker}: {_e}", thread_ts=_ts)
+
+        _th.Thread(target=_ticker_worker, daemon=True).start()
+        return
+
     # === NIEOBECNOŚCI / PROŚBY via @mention ===
     _mention_uid = event.get('user', '')
     if _mention_uid and any(kw in msg_lower_m for kw in EMPLOYEE_MSG_KEYWORDS):
@@ -472,7 +542,6 @@ def handle_mention(event, say):
             return
 
     channel   = event['channel']
-    thread_ts = event.get('thread_ts', event['ts'])
     _mention_user_id = event.get('user', '')
 
     # Track thread so bot responds to follow-ups without explicit mention
@@ -563,6 +632,7 @@ Przedstaw się krótko i naturalnie. Wymień funkcje w formie listy jak powyżej
 META ADS: "instax"/"fuji" → Instax Fujifilm | "zbiorcze" → Kampanie zbiorcze | "drzwi dre" → DRE (drzwi)
 GOOGLE ADS: "3wm"/"pato" → Agencja | "dre 2024"/"dre24" → DRE 2024 | "dre 2025"/"dre25"/"dre" → DRE 2025 | "m2" → M2 (nieruchomości) | "zbiorcze" → Zbiorcze
 ⚠️ "dre" = producent drzwi, NIE raper!
+⛔ BEZWZGLĘDNY ZAKAZ: NIE zgaduj klienta i NIE wybieraj domyślnego. Jeśli pytanie dotyczy kampanii/danych/raportów a klient NIE jest jednoznacznie podany w wiadomości → zapytaj "Dla którego klienta?" ZANIM wywołasz jakiekolwiek narzędzie. Zgadywanie = marnowanie tokenów.
 
 # NARZĘDZIA - ZAWSZE UŻYWAJ NAJPIERW
 Pytanie o kampanie/metryki/spend/ROAS/CTR → WYWOŁAJ narzędzie:
@@ -570,7 +640,10 @@ Pytanie o kampanie/metryki/spend/ROAS/CTR → WYWOŁAJ narzędzie:
 - get_google_ads_data() → Google Ads (kampanie, kliknięcia, wydatki, ROAS, CTR, CPC, reklamy)
 - get_ga4_data() → Google Analytics 4 / GA4 / analytics (ruch na stronie, sesje, użytkownicy, źródła ruchu, bounce rate) - NIE Google Ads!
 - manage_calendar() → kalendarz iCloud: "co mam jutro", "plan na tydzień", "dodaj spotkanie" → ZAWSZE wywołaj to narzędzie, nie mów że nie masz dostępu!
+- manage_email(action='find_invites') + manage_calendar(action='create') → "zaciągnij z maila", "dodaj z maila do kalendarza", "co mam w mailach do kalendarza" → wywołaj find_invites, pokaż listę znalezionych wydarzeń i zapytaj co dodać
 - create_presentation() → "zrób prezentację", "zrób prezke", "przygotuj ofertę dla klienta", "deck", "pitch deck", "raport w prezentacji"
+- write_linkedin_post() → "napisz post linkedin", "zrób posta", "napisz coś na linkedin", "hook na linkedin" → WYWOŁAJ to narzędzie, nie pisz samemu
+- linkedin_research() → "zrób research linkedin", "co się niesie na linkedin", "znajdź trendy", "co piszą o X", "inspiracje do posta", "co jest hot na linkedin" → WYWOŁAJ to narzędzie
   ⚠️ PRZED wywołaniem create_presentation ZAWSZE zbierz pełny kontekst — jeśli czegoś brakuje, zapytaj:
   1. Dla kogo jest prezentacja i jaki jest cel? (oferta sprzedażowa, raport wyników, onboarding, pitch?)
   2. Co ma zawierać? (jakie slajdy, tematy, dane?)
@@ -579,6 +652,60 @@ Pytanie o kampanie/metryki/spend/ROAS/CTR → WYWOŁAJ narzędzie:
   Dopiero gdy masz odpowiedzi — sam napisz pełną treść każdego slajdu i wywołaj create_presentation z extra_slides wypełnionymi gotowym contentem.
 NIGDY nie mów "nie mam dostępu" - zawsze najpierw użyj narzędzi!
 ⛔ BEZWZGLĘDNY ZAKAZ: Gdy ktoś pyta o GA4/analytics → wywołaj get_ga4_data() i podaj TYLKO dane z tego narzędzia. NIGDY nie zastępuj danych GA4 estymacjami z Meta Ads, Google Ads ani żadnych innych źródeł. Jeśli get_ga4_data() zwróci błąd → powiedz wprost jaki błąd wystąpił, NIE wymyślaj alternatywnych danych.
+
+# MARKETING SKILLS (ekspercie playbooki)
+Masz dostęp do 41 specjalistycznych marketing skillów. Gdy użytkownik prosi o pomoc z zadaniem marketingowym, ZAWSZE wywołaj load_marketing_skill() z odpowiednią nazwą — otrzymasz pełne eksperckie wytyczne i wykonaj zadanie zgodnie z nimi.
+
+Dostępne skille:
+- copywriting — copy na strony (homepage, landing, pricing, feature, about)
+- paid-ads — kampanie Google Ads, Meta, LinkedIn, TikTok, Twitter/X
+- seo-audit — audyt i diagnoza problemów SEO
+- ai-seo — optymalizacja pod AI search (LLMs, ChatGPT, Perplexity)
+- ad-creative — generowanie i iteracja kreacji reklamowych
+- analytics-tracking — setup i audyt trackingu analitycznego
+- content-strategy — strategia contentowa, dobór tematów
+- social-content — posty na LinkedIn, Instagram, TikTok, Twitter/X
+- email-sequence — sekwencje emailowe, drip campaigns, lifecycle
+- cold-email — zimne maile B2B, follow-upy
+- copywriting — copy stron www
+- copy-editing — edycja i poprawa istniejącego copy
+- page-cro — optymalizacja konwersji stron
+- signup-flow-cro — optymalizacja flow rejestracji
+- onboarding-cro — onboarding i aktywacja użytkowników
+- popup-cro — popupy, modale, slide-iny
+- form-cro — formularze lead gen
+- paywall-upgrade-cro — paywalle, upgrade screens, upsell
+- launch-strategy — strategia launchu produktu
+- pricing-strategy — pricing, pakiety, monetyzacja
+- lead-magnets — lead magnety do zbierania emaili
+- referral-program — programy referral i afiliacyjne
+- churn-prevention — zapobieganie churnie, save offers
+- customer-research — badania i analiza klientów
+- competitor-profiling — profilowanie konkurencji
+- competitor-alternatives — strony porównawcze vs. konkurencja
+- marketing-ideas — pomysły marketingowe dla SaaS
+- marketing-psychology — psychologia i behawiorystyka w marketingu
+- ab-test-setup — planowanie i design testów A/B
+- programmatic-seo — SEO programmatyczne, strony w skali
+- site-architecture — architektura strony, nawigacja, URL structure
+- schema-markup — schema markup i structured data
+- directory-submissions — zgłaszanie do katalogów startupów/SaaS
+- free-tool-strategy — strategia darmowego narzędzia marketingowego
+- community-marketing — budowanie społeczności
+- co-marketing — partnerstwa i wspólne kampanie
+- sales-enablement — materiały sprzedażowe, pitch decki, one-pagery
+- revops — revenue operations, handoff marketing→sprzedaż
+- aso-audit — audyt App Store / Google Play
+- video — tworzenie video contentów z AI
+- image — generowanie i optymalizacja grafik marketingowych
+- product-marketing-context — kontekst product marketingu (brief)
+
+Przykłady użycia:
+- "napisz copy na landing" → load_marketing_skill("copywriting")
+- "zrób audyt SEO" → load_marketing_skill("seo-audit")
+- "pomóż z kampaniami Google" → load_marketing_skill("paid-ads")
+- "napisz sekwencję emailową" → load_marketing_skill("email-sequence")
+- "strategia na launch" → load_marketing_skill("launch-strategy")
 
 # TON I STYL
 - Polski, naturalny, mówisz "Ty", jesteś częścią teamu
@@ -631,16 +758,17 @@ Pytanie → Direct answer → Context → Actionable next step
         },
         {
             "name": "manage_email",
-            "description": "Zarządza emailami użytkownika - czyta, wysyła i wyszukuje wiadomości. Użyj gdy użytkownik pyta o emaile, chce wysłać wiadomość lub szuka czegoś w skrzynce.",
+            "description": "Zarządza emailami użytkownika - czyta, wysyła, wyszukuje wiadomości i szuka zaproszeń kalendarzowych. Użyj gdy użytkownik pyta o emaile, chce wysłać wiadomość, szuka czegoś w skrzynce, lub prosi o zaciągnięcie zaproszeń z maila do kalendarza.",
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "action":  {"type": "string", "enum": ["read", "send", "search"], "description": "Akcja: 'read' = odczytaj najnowsze emaile, 'send' = wyślij email, 'search' = szukaj emaili po frazie"},
-                    "limit":   {"type": "integer", "description": "Ile emaili pobrać/przeszukać (domyślnie 10)"},
-                    "to":      {"type": "string", "description": "Adres odbiorcy (tylko dla action='send')"},
-                    "subject": {"type": "string", "description": "Temat emaila (tylko dla action='send')"},
-                    "body":    {"type": "string", "description": "Treść emaila (tylko dla action='send')"},
-                    "query":   {"type": "string", "description": "Fraza do wyszukania (tylko dla action='search')"}
+                    "action":    {"type": "string", "enum": ["read", "send", "search", "find_invites"], "description": "Akcja: 'read' = odczytaj najnowsze emaile, 'send' = wyślij email, 'search' = szukaj emaili po frazie, 'find_invites' = znajdź zaproszenia kalendarzowe (.ics) w skrzynce"},
+                    "limit":     {"type": "integer", "description": "Ile emaili pobrać/przeszukać (domyślnie 10)"},
+                    "to":        {"type": "string", "description": "Adres odbiorcy (tylko dla action='send')"},
+                    "subject":   {"type": "string", "description": "Temat emaila (tylko dla action='send')"},
+                    "body":      {"type": "string", "description": "Treść emaila (tylko dla action='send')"},
+                    "query":     {"type": "string", "description": "Fraza do wyszukania (tylko dla action='search')"},
+                    "days_back": {"type": "integer", "description": "Ile dni wstecz szukać zaproszeń (tylko dla action='find_invites', domyślnie 14)"}
                 },
                 "required": ["action"]
             }
@@ -721,6 +849,7 @@ Pytanie → Direct answer → Context → Actionable next step
                     "location":      {"type": "string", "description": "Miejsce spotkania (opcjonalne)."},
                     "description":   {"type": "string", "description": "Opis/notatka do wydarzenia (opcjonalne)."},
                     "calendar_name": {"type": "string", "description": "Nazwa kalendarza iCloud (opcjonalne — jeśli nie podano, używa pierwszego dostępnego)."},
+                    "recurrence":    {"type": "string", "description": "Cykliczność: 'daily', 'weekly', 'biweekly', 'monthly', 'weekdays' lub własna reguła RRULE:FREQ=..."},
                 },
                 "required": ["action"]
             }
@@ -780,10 +909,97 @@ Pytanie → Direct answer → Context → Actionable next step
                 "required": ["title"]
             }
         },
+        {
+            "name": "mute_budget_alert",
+            "description": (
+                "Wycisza alerty budżetowe dla konkretnej kampanii na podaną liczbę godzin. "
+                "ZAWSZE wywołaj to narzędzie gdy mówisz że wyłączasz/wyciszasz/ignorujesz alerty dla kampanii. "
+                "Użyj gdy użytkownik prosi o wyłączenie alertów, lub gdy alerty wynikają z planowanych zmian budżetu."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "platform":      {"type": "string", "enum": ["meta", "google"], "description": "Platforma: 'meta' lub 'google'."},
+                    "client_name":   {"type": "string", "description": "Nazwa klienta, np. 'drzwi dre', 'instax'."},
+                    "campaign_name": {"type": "string", "description": "Nazwa kampanii (lub jej fragment) do wyciszenia."},
+                    "hours":         {"type": "integer", "description": "Na ile godzin wyciszyć alerty (domyślnie 24)."},
+                },
+                "required": ["platform", "client_name", "campaign_name"]
+            }
+        },
+        {
+            "name": "write_linkedin_post",
+            "description": (
+                "Ghostwriter LinkedIn dla Daniela Koszuka. Generuje 3 warianty hooka (i na żądanie pełne posty) "
+                "zgodnie z briefem personal brand Daniela. "
+                "Użyj gdy ktoś prosi o post na LinkedIn, hooka, content na LinkedIn, posta o Sebolu, hot take'a."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "topic": {
+                        "type": "string",
+                        "description": (
+                            "Temat, sytuacja lub konkretne zdarzenie do opisania. "
+                            "Jak najwięcej konkretów: co się stało, jakie liczby, jaki wynik. "
+                            "Przykład: 'Sebol właśnie wygenerował PPTX raportu post-buy przez AI i wysłał na Slack — pokazujemy jak to działa Demo #5'"
+                        )
+                    },
+                    "format": {
+                        "type": "string",
+                        "description": "Opcjonalnie: 'hooki' (domyślnie, 3 warianty) albo 'pelny' (od razu pełny post).",
+                        "enum": ["hooki", "pelny"]
+                    }
+                },
+                "required": ["topic"]
+            }
+        },
+        {
+            "name": "linkedin_research",
+            "description": (
+                "Przeszukuje LinkedIn i internet w poszukiwaniu trendów, wiralowych postów i inspiracji contentowych. "
+                "Użyj gdy ktoś prosi o 'research linkedin', 'co się niesie na linkedin', 'znajdź trendy', "
+                "'co piszą o X na linkedin', 'inspiracje do posta', 'co jest teraz hot'."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "topic": {
+                        "type": "string",
+                        "description": "Temat do zbadania, np. 'AI w marketingu', 'agencje performance', 'automatyzacja reklam'."
+                    }
+                },
+                "required": ["topic"]
+            }
+        },
+        {
+            "name": "load_marketing_skill",
+            "description": (
+                "Ładuje pełne instrukcje wybranego marketing skilla. Użyj gdy użytkownik prosi o pomoc z: "
+                "copywritingiem, SEO, reklamami płatnymi, CRO, email marketingiem, strategią contentową, "
+                "social mediami, pricing, launch strategy, competitor research, cold email, churn, "
+                "lead magnets, referral program, onboarding, sales enablement i innymi zadaniami marketingowymi. "
+                "Zwraca ekspercie wytyczne jak wykonać zadanie."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "skill_name": {
+                        "type": "string",
+                        "description": (
+                            "Nazwa skilla do załadowania. Dostępne skille: "
+                            + ", ".join(sorted(SKILLS_INDEX.keys()))
+                        )
+                    }
+                },
+                "required": ["skill_name"]
+            }
+        },
     ]
 
     try:
         user_id = event.get('user')
+        set_current_user(user_id or "")
 
         # Store incoming message to long-term memory
         remember(user_id, channel, event.get("ts", ""), "user", user_message)
@@ -901,16 +1117,114 @@ Pytanie → Direct answer → Context → Actionable next step
                         thread_ts=tool_input.get('thread_ts')
                     )
                 elif tool_name == "create_presentation":
-                    tool_result = create_presentation(
-                        title=tool_input.get("title"),
-                        client_name=tool_input.get("client_name"),
-                        subtitle=tool_input.get("subtitle"),
-                        brief=tool_input.get("brief"),
-                        date_range=tool_input.get("date_range"),
-                        google_ads_data=tool_input.get("google_ads_data"),
-                        meta_ads_data=tool_input.get("meta_ads_data"),
-                        extra_slides=tool_input.get("extra_slides"),
-                    )
+                    try:
+                        _pptx_bytes = generate_pptx(
+                            title=tool_input.get("title"),
+                            client_name=tool_input.get("client_name"),
+                            subtitle=tool_input.get("subtitle"),
+                            brief=tool_input.get("brief"),
+                            date_range=tool_input.get("date_range"),
+                            meta_ads_data=tool_input.get("meta_ads_data"),
+                            google_ads_data=tool_input.get("google_ads_data"),
+                            extra_slides=tool_input.get("extra_slides"),
+                        )
+                    except Exception as _pe:
+                        logger.error(f"Błąd generowania PPTX: {_pe}")
+                        tool_result = {"error": f"Błąd generowania prezentacji: {_pe}"}
+                    else:
+                        import io as _io
+                        _pptx_name = re.sub(r'[^\w\-]', '_', tool_input.get("title", "prezentacja"))[:40]
+                        _pptx_filename = f"{_pptx_name}.pptx"
+                        _upload_ok = False
+                        try:
+                            app.client.files_upload_v2(
+                                channel=channel,
+                                file=_io.BytesIO(_pptx_bytes),
+                                filename=_pptx_filename,
+                                title=tool_input.get("title", "Prezentacja"),
+                            )
+                            _upload_ok = True
+                        except Exception as _e1:
+                            logger.warning(f"files_upload_v2 failed ({_e1}), próbuję files_upload...")
+                            try:
+                                app.client.files_upload(
+                                    channels=channel,
+                                    file=_io.BytesIO(_pptx_bytes),
+                                    filename=_pptx_filename,
+                                    title=tool_input.get("title", "Prezentacja"),
+                                )
+                                _upload_ok = True
+                            except Exception as _e2:
+                                logger.warning(f"files_upload też failed ({_e2}), próbuję transfer.sh...")
+                                _dl_url = share_pptx(_pptx_bytes, _pptx_filename)
+                                if _dl_url:
+                                    _prez_title = tool_input.get("title", "Prezentacja")
+                                    _msg = f"📊 *{_prez_title}*\n\n⬇️ *Pobierz prezentację PPTX:*\n{_dl_url}\n\n_(link ważny ~14 dni — otwórz w PowerPoint, Keynote lub Google Slides)_"
+                                    if is_group_chat:
+                                        say(text=_msg, thread_ts=thread_ts)
+                                    else:
+                                        say(text=_msg, thread_ts=thread_ts)
+                                    _upload_ok = True
+                                    tool_result = {"status": "ok", "message": f"Prezentacja dostępna do pobrania: {_dl_url}"}
+                                else:
+                                    logger.error(f"Wszystkie metody uploadu zawiodły. Ostatni błąd: {_e2}")
+                                    tool_result = {"error": "Nie udało się wysłać pliku. Dodaj scope 'files:write' w konfiguracji Slack App (api.slack.com/apps)."}
+                        if _upload_ok and "status" not in tool_result:
+                            tool_result = {"status": "ok", "message": "Prezentacja wygenerowana i wysłana na Slack jako plik PPTX."}
+                elif tool_name == "write_linkedin_post":
+                    from jobs.linkedin import generate_linkedin_post, generate_linkedin_image, generate_image_prompt
+                    _li_owner = os.environ.get("LINKEDIN_OWNER_SLACK_ID", "UTE1RN6SJ")
+                    if event.get("user") != _li_owner:
+                        tool_result = {"error": "Brak dostępu — ghostwriter LinkedIn jest prywatny."}
+                    else:
+                        _li_topic = tool_input.get("topic", "")
+                        _li_format = tool_input.get("format", "hooki")
+                        _li_prompt = (
+                            f"Napisz od razu pełny post (nie tylko hooki).\n\nTemat: {_li_topic}"
+                            if _li_format == "pelny" else _li_topic
+                        )
+                        _li_post = generate_linkedin_post(_li_prompt)
+                        # Wyślij post
+                        try:
+                            _li_msg = app.client.chat_postMessage(
+                                channel=channel,
+                                text=_li_post,
+                                thread_ts=thread_ts,
+                                unfurl_links=False,
+                            )
+                            _li_thread = _li_msg.get("ts") or thread_ts
+                        except Exception as _le:
+                            logger.warning(f"LinkedIn post message failed: {_le}")
+                            _li_thread = thread_ts
+                        # Wygeneruj prompt do grafiki i zapytaj o zatwierdzenie
+                        _img_prompt = generate_image_prompt(_li_post, _li_topic)
+                        _ctx.linkedin_image_pending[user_id] = {
+                            "img_prompt": _img_prompt,
+                            "post_text":  _li_post,
+                            "topic":      _li_topic,
+                            "channel":    channel,
+                            "thread_ts":  _li_thread,
+                        }
+                        app.client.chat_postMessage(
+                            channel=channel,
+                            thread_ts=_li_thread,
+                            text=(
+                                f"🎨 *Mam pomysł na grafikę:*\n```{_img_prompt}```\n\n"
+                                "Napisz:\n"
+                                "• `tak` — generuj\n"
+                                "• `zmień na [opis]` — popraw pomysł\n"
+                                "• `nie` — pomijam grafikę"
+                            ),
+                        )
+                        tool_result = {"status": "ok", "message": "Post wysłany. Czekam na decyzję o grafice."}
+                elif tool_name == "linkedin_research":
+                    from jobs.linkedin import research_linkedin
+                    _lr_owner = os.environ.get("LINKEDIN_OWNER_SLACK_ID", "UTE1RN6SJ")
+                    if event.get("user") != _lr_owner:
+                        tool_result = {"error": "Brak dostępu — research LinkedIn jest prywatny."}
+                    else:
+                        _lr_topic = tool_input.get("topic", "")
+                        tool_result = {"research": research_linkedin(_lr_topic)}
                 elif tool_name == "manage_calendar":
                     _cal_user = event.get('user')
                     _owner_id = os.environ.get("CALENDAR_OWNER_SLACK_ID")
@@ -927,7 +1241,18 @@ Pytanie → Direct answer → Context → Actionable next step
                             location=tool_input.get('location'),
                             description=tool_input.get('description'),
                             calendar_name=tool_input.get('calendar_name'),
+                            recurrence=tool_input.get('recurrence'),
                         )
+                elif tool_name == "mute_budget_alert":
+                    from jobs.budget_alerts import mute_campaign_alert
+                    tool_result = mute_campaign_alert(
+                        platform=tool_input.get('platform', 'meta'),
+                        client_name=tool_input.get('client_name', ''),
+                        campaign_name=tool_input.get('campaign_name', ''),
+                        hours=tool_input.get('hours', 24),
+                    )
+                elif tool_name == "load_marketing_skill":
+                    tool_result = load_marketing_skill(tool_input.get('skill_name', ''))
                 else:
                     tool_result = {"error": "Nieznane narzędzie"}
 
@@ -1003,80 +1328,668 @@ def handle_news_slash(ack, respond, command):
     threading.Thread(target=_news_worker, args=(respond,), daemon=True).start()
 
 
+# ── /linkedin slash command ────────────────────────────────────────────────────
+
+def _linkedin_worker(topic: str, respond, channel_id: str, thread_ts=None):
+    from jobs.linkedin import generate_linkedin_post, generate_linkedin_image
+    import io as _io
+    try:
+        result = generate_linkedin_post(topic)
+        # Wyślij tekst posta
+        try:
+            msg_resp = app.client.chat_postMessage(
+                channel=channel_id,
+                text=result,
+                thread_ts=thread_ts,
+                unfurl_links=False,
+            )
+            _post_ts = msg_resp.get("ts")
+        except Exception:
+            respond(result)
+            _post_ts = None
+
+        # Generuj grafikę DALL-E w tle
+        img_bytes = generate_linkedin_image(result, topic)
+        if img_bytes:
+            try:
+                app.client.files_upload_v2(
+                    channel=channel_id,
+                    file=_io.BytesIO(img_bytes),
+                    filename="linkedin_grafika.png",
+                    title=f"Grafika: {topic[:60]}",
+                    thread_ts=_post_ts or thread_ts,
+                )
+            except Exception as _ue:
+                logger.warning(f"Upload grafiki LinkedIn failed: {_ue}")
+    except Exception as e:
+        respond(f"❌ Błąd generowania posta: {e}")
+
+
+@app.command("/linkedin")
+def handle_linkedin_slash(ack, respond, command):
+    """Ghostwriter LinkedIn dla Daniela — generuje hooki i posty."""
+    import threading
+    ack()
+    _li_owner = os.environ.get("LINKEDIN_OWNER_SLACK_ID", "UTE1RN6SJ")
+    if command.get("user_id") != _li_owner:
+        respond("🔒 Ta funkcja jest dostępna tylko dla właściciela konta.")
+        return
+    topic = (command.get("text") or "").strip()
+    channel_id = command.get("channel_id", "")
+    if not topic:
+        respond(
+            "📝 Podaj temat posta, np.:\n"
+            "`/linkedin Sebol generuje teraz raporty PPTX przez AI — demo jak to działa`\n"
+            "`/linkedin hot take: większość agencji nie ma pojęcia co to znaczy 'wdrożyć AI'`"
+        )
+        return
+    respond("✍️ Piszę hooki...")
+    threading.Thread(
+        target=_linkedin_worker,
+        args=(topic, respond, channel_id),
+        daemon=True,
+    ).start()
+
+
+_SLACK_ID_TO_NAME = {m["slack_id"]: m["name"] for m in TEAM_MEMBERS}
+
+
+def _format_user_token_report(days: int = 30) -> str:
+    rows = get_user_summary(days=days)
+    if not rows:
+        return f"Brak danych per-użytkownik z ostatnich {days} dni.\n_(Dane zbierane są od momentu wdrożenia tej funkcji.)_"
+
+    total_pln = sum(r["cost_pln"] for r in rows)
+    medals = ["🥇", "🥈", "🥉"]
+    lines = [f"*👥 Tokeny per osoba — ostatnie {days} dni*\n"]
+    for i, row in enumerate(rows):
+        uid = row["user_id"]
+        name = _SLACK_ID_TO_NAME.get(uid) or f"<@{uid}>"
+        medal = medals[i] if i < 3 else f"{i+1}."
+        pct = (row["cost_pln"] / total_pln * 100) if total_pln else 0
+        bar = "█" * int(pct / 5) + "░" * (20 - int(pct / 5))
+        lines.append(
+            f"{medal} *{name}*  `{row['cost_pln']:.3f} PLN`  ({pct:.0f}%)\n"
+            f"    `{bar}` {row['calls']} wywołań · {row['input_tokens']:,} in / {row['output_tokens']:,} out"
+        )
+    lines.append(f"\n💰 Łącznie: *{total_pln:.3f} PLN*  |  _kurs: 1 USD = {USD_TO_PLN} PLN_")
+    return "\n".join(lines)
+
+
+# ── /koszty slash command ─────────────────────────────────────────────────────
+
+@app.command("/koszty")
+def handle_koszty_slash(ack, respond, command):
+    """Raport kosztów tokenów Anthropic API w PLN."""
+    ack()
+    text = (command.get("text") or "").strip()
+    try:
+        days = int(text) if text else 30
+    except ValueError:
+        days = 30
+
+    rows, total = get_summary(days=days)
+
+    if not total or not total["calls"]:
+        respond(f"Brak danych o tokenach z ostatnich {days} dni.")
+        return
+
+    lines = [f"*Koszty API Claude — ostatnie {days} dni*"]
+    lines.append(
+        f"Łącznie: *{total['cost_pln']:.4f} PLN*  ({total['cost_usd']:.4f} USD)"
+        f"  |  wywołań: {total['calls']}  |  tokenów in: {total['input_tokens']:,}  out: {total['output_tokens']:,}"
+    )
+
+    if rows:
+        lines.append("\n*Według modelu:*")
+        for row in rows:
+            lines.append(
+                f"  `{row['model']}`: {row['cost_pln']:.4f} PLN"
+                f"  ({row['calls']} wywołań, in {row['input_tokens']:,} / out {row['output_tokens']:,})"
+            )
+
+    lines.append(f"\n_Kurs: 1 USD = {USD_TO_PLN} PLN_")
+    lines.append("\n" + _format_user_token_report(days))
+    respond("\n".join(lines))
+
+
+@app.command("/analiza")
+def handle_analiza_slash(ack, respond, command):
+    import threading as _th
+    ack()
+    ticker = (command.get("text") or "").strip().upper()
+    if not ticker:
+        respond("Użycie: `/analiza TICKER` np. `/analiza NVDA`")
+        return
+    respond(f"📊 Analizuję *{ticker}*... chwilę.")
+
+    def _worker():
+        try:
+            data = analyze_ticker(ticker)
+            att = format_ticker_attachment(ticker, data)
+            respond({"text": f"📊 {ticker}", "attachments": [att]})
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
+@app.command("/watchlist")
+def handle_watchlist_slash(ack, respond, command):
+    """Szczegółowy digest — kolorowe karty per ticker → #inwestowanie."""
+    import threading as _th
+    ack()
+    respond("⏳ Uruchamiam szczegółowy digest z kartami... wyślę na #inwestowanie. Może potrwać kilka minut.")
+
+    def _worker():
+        try:
+            send_stock_digest()
+            respond("✅ Karty wysłane na #inwestowanie!")
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
+@app.command("/digest")
+def handle_digest_slash(ack, respond, command):
+    import threading as _th
+    ack()
+    respond("⏳ Pobieram dane i analizuję watchlistę... wyślę na #inwestowanie za ~2 minuty.")
+
+    def _worker():
+        try:
+            send_summary_digest()
+            respond("✅ Digest wysłany na #inwestowanie!")
+        except Exception as e:
+            respond(f"❌ Digest zakończył się błędem: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
 # ── /cleanup slash command ────────────────────────────────────────────────────
+
+@app.command("/makro")
+def handle_makro_slash(ack, respond, command):
+    """Makro briefing: sentyment, VIX, BTC, główne ryzyki."""
+    import threading as _th
+    ack()
+    respond("⏳ Pobierам dane makro... chwilę.")
+
+    def _worker():
+        try:
+            send_macro_briefing()
+            respond("✅ Makro briefing wysłany na #inwestowanie!")
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
+@app.command("/kapital")
+def handle_kapital_slash(ack, respond, command):
+    """Sektor rotation snapshot — gdzie płynie kapitał."""
+    import threading as _th
+    ack()
+    force = (command.get("text") or "").strip().lower() == "refresh"
+    respond("💰 Pobieram dane o przepływach kapitału... chwilę (~2 min).")
+
+    def _worker():
+        try:
+            send_capital_flow_snapshot(force=force)
+            respond("✅ Capital flow snapshot wysłany na #inwestowanie!")
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
+@app.command("/narracje")
+def handle_narracje_slash(ack, respond, command):
+    """Narrative momentum radar: /narracje | /narracje {sektor}"""
+    import threading as _th
+    ack()
+    arg = (command.get("text") or "").strip().lower()
+
+    if arg:
+        respond(f"🔭 Szukam narracji dla sektora *{arg}*... (~1 min)")
+        def _worker():
+            try:
+                result = run_sector_dive(arg)
+                for chunk in [result[i:i+3900] for i in range(0, len(result), 3900)]:
+                    respond(chunk)
+            except Exception as e:
+                respond(f"❌ Błąd: {e}")
+    else:
+        respond("🔭 Uruchamiam Narrative Radar... (~2 min)")
+        def _worker():
+            try:
+                result = run_narrative_scan()
+                for chunk in [result[i:i+3900] for i in range(0, len(result), 3900)]:
+                    respond(chunk)
+            except Exception as e:
+                respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
+@app.command("/supercykle")
+def handle_supercykle_slash(ack, respond, command):
+    """Active supercycles and their beneficiaries."""
+    import threading as _th
+    ack()
+    respond("🌊 Analizuję aktywne supercykle... (~2 min)")
+
+    def _worker():
+        try:
+            result = run_supercycle_scan()
+            respond(result)
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
+@app.command("/cyklicznosc")
+def handle_cyklicznosc_slash(ack, respond, command):
+    """/cyklicznosc {TICKER} — cyclicality and cycle position analysis."""
+    import threading as _th
+    ack()
+    ticker = (command.get("text") or "").strip().upper()
+    if not ticker:
+        respond("Podaj ticker, np. `/cyklicznosc MU` lub `/cyklicznosc ASML`")
+        return
+    respond(f"🔄 Analizuję cykliczność *{ticker}*...")
+
+    def _worker(t=ticker):
+        try:
+            respond(run_cyclicality_analysis(t))
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
+@app.command("/insider")
+def handle_insider_slash(ack, respond, command):
+    """/insider {TICKER} — insider transaction quality analysis."""
+    import threading as _th
+    ack()
+    ticker = (command.get("text") or "").strip().upper()
+    if not ticker:
+        respond("Podaj ticker, np. `/insider NVDA` lub `/insider MSTR`")
+        return
+    respond(f"👤 Szukam transakcji insiderów dla *{ticker}*...")
+
+    def _worker(t=ticker):
+        try:
+            respond(run_insider_analysis(t))
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
+_SWING_SECTOR_NAMES = {
+    "space", "nuclear", "defense", "ai", "biotech", "fintech", "cyber", "semis", "energy", "consumer",
+    "kosmiczny", "kosmos", "nuklear", "uranium", "uran", "obronny", "obrona", "sztuczna",
+    "glp1", "em", "cybersecurity", "chips", "semiconductor", "energia", "konsument",
+}
+
+
+@app.command("/swing")
+def handle_swing_slash(ack, respond, command):
+    """Swing setups: /swing | /swing {N} | /swing scan | /swing watchlist | /swing {sektor} | /swing {TICKER}"""
+    import threading as _th
+    ack()
+    arg = (command.get("text") or "").strip()
+    arg_lower = arg.lower()
+
+    # /swing scan — all candidates, no Claude filter
+    if arg_lower == "scan":
+        respond("🔍 Skanuję S&P500 + NDX + krypto... wyślę wszystkich kandydatów na #inwestowanie (~5 min).")
+
+        def _scan():
+            try:
+                send_scan_setups(mode="all")
+                respond("✅ Scan gotowy na #inwestowanie!")
+            except Exception as e:
+                respond(f"❌ Błąd: {e}")
+
+        _th.Thread(target=_scan, daemon=True).start()
+        return
+
+    # /swing watchlist — only watchlist
+    if arg_lower == "watchlist":
+        respond("🎯 Skanuję watchlistę... TOP 5 zagrań wyślę na #inwestowanie (~2 min).")
+
+        def _wl():
+            try:
+                send_weekly_setups(mode="watchlist")
+                respond("✅ Swing setups (watchlista) wysłane na #inwestowanie!")
+            except Exception as e:
+                respond(f"❌ Błąd: {e}")
+
+        _th.Thread(target=_wl, daemon=True).start()
+        return
+
+    # /swing {sektor} — sector-specific scan
+    if arg_lower in _SWING_SECTOR_NAMES:
+        respond(f"🎯 Skanuję sektor *{arg_lower}*... wyślę wyniki na #inwestowanie (~3 min).")
+
+        def _sector(s=arg_lower):
+            try:
+                send_weekly_setups(mode=s)
+                respond(f"✅ Swing setups ({s}) wysłane na #inwestowanie!")
+            except Exception as e:
+                respond(f"❌ Błąd: {e}")
+
+        _th.Thread(target=_sector, daemon=True).start()
+        return
+
+    # /swing 10 — custom limit
+    if arg.isdigit():
+        limit = max(1, min(int(arg), 15))
+        respond(f"🎯 Skanuję S&P500 + NDX + krypto... TOP {limit} zagrań wyślę na #inwestowanie (~5 min).")
+
+        def _full_limit(lim=limit):
+            try:
+                send_weekly_setups(limit=lim, mode="all")
+                respond(f"✅ TOP {lim} swing setups wysłane na #inwestowanie!")
+            except Exception as e:
+                respond(f"❌ Błąd: {e}")
+
+        _th.Thread(target=_full_limit, daemon=True).start()
+        return
+
+    # /swing TICKER — single ticker analysis
+    if arg:
+        ticker = arg.upper()
+        respond(f"🎯 Szukam swing setupu dla *{ticker}*...")
+
+        def _single(t=ticker):
+            try:
+                result = analyze_single_swing(t)
+                respond(result)
+            except Exception as e:
+                respond(f"❌ Błąd: {e}")
+
+        _th.Thread(target=_single, daemon=True).start()
+        return
+
+    # /swing — default full market scan, TOP 5
+    respond("🎯 Skanuję S&P500 + NDX + krypto (cały rynek)... TOP 5 zagrań wyślę na #inwestowanie (~5 min).")
+
+    def _full():
+        try:
+            send_weekly_setups(mode="all")
+            respond("✅ Swing setups wysłane na #inwestowanie!")
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_full, daemon=True).start()
+
 
 @app.command("/cleanup")
 def handle_cleanup_slash(ack, respond, command, client):
     """Usuwa wszystkie wiadomości bota z bieżącego kanału."""
     ack()
     channel_id = command.get("channel_id", "")
-    user_id = command.get("user_id", "")
     text = (command.get("text") or "").strip()
 
-    # Opcjonalny argument: liczba dni (domyślnie 30)
-    try:
-        days = int(text) if text else 30
-    except ValueError:
-        respond("Użycie: `/cleanup [liczba_dni]` (domyślnie 30)")
+    # Wyciągnij liczbę dni z tekstu — akceptuje "120", "120 dni", "120d" itp.
+    _m = re.search(r'\d+', text)
+    days = int(_m.group()) if _m else (30 if not text else None)
+    if days is None:
+        respond("Użycie: `/cleanup [liczba_dni]` (domyślnie 30), np. `/cleanup 120`")
         return
 
     oldest = str(time.time() - days * 86400)
 
-    respond(f"🧹 Szukam wiadomości bota z ostatnich {days} dni... chwilka.")
-
-    deleted = 0
-    errors = 0
-    cursor = None
-
-    # Pobierz bot_id bota
+    # Pobierz bot_id i user_id bota
     try:
         auth_info = client.auth_test()
-        bot_id = auth_info.get("bot_id") or auth_info.get("user_id")
+        bot_id      = auth_info.get("bot_id")
+        bot_user_id = auth_info.get("user_id")
     except Exception as e:
         respond(f"❌ Nie udało się pobrać auth info: {e}")
         return
 
-    while True:
-        kwargs = {"channel": channel_id, "limit": 200, "oldest": oldest}
-        if cursor:
-            kwargs["cursor"] = cursor
-        try:
-            resp = client.conversations_history(**kwargs)
-        except Exception as e:
-            logger.error(f"cleanup: conversations_history error: {e}")
-            break
+    respond(f"🧹 Szukam wiadomości bota z ostatnich {days} dni... chwilka.")
 
-        messages = resp.get("messages", [])
-        for msg in messages:
-            is_bot_msg = (
-                msg.get("bot_id") == bot_id
-                or (msg.get("subtype") in ("bot_message",) and msg.get("bot_id") == bot_id)
-            )
-            if not is_bot_msg:
-                continue
+    def _do_cleanup():
+        deleted = 0
+        errors  = 0
+        cursor  = None
+        while True:
+            kwargs = {"channel": channel_id, "limit": 200, "oldest": oldest}
+            if cursor:
+                kwargs["cursor"] = cursor
             try:
-                client.chat_delete(channel=channel_id, ts=msg["ts"])
-                deleted += 1
-                time.sleep(0.3)  # rate limit
+                resp = client.conversations_history(**kwargs)
             except Exception as e:
-                logger.warning(f"cleanup: nie udało się usunąć {msg['ts']}: {e}")
-                errors += 1
+                logger.error(f"cleanup: conversations_history error: {e}")
+                break
 
-        if resp.get("has_more") and resp.get("response_metadata", {}).get("next_cursor"):
-            cursor = resp["response_metadata"]["next_cursor"]
-        else:
-            break
+            for msg in resp.get("messages", []):
+                is_bot_msg = (
+                    bool(msg.get("bot_id"))                              # dowolna wiadomość bota/apki
+                    or (bot_user_id and msg.get("user") == bot_user_id)  # wiadomość jako user bota
+                    or msg.get("subtype") == "bot_message"               # legacy bot message
+                )
+                if not is_bot_msg:
+                    continue
+                try:
+                    client.chat_delete(channel=channel_id, ts=msg["ts"])
+                    deleted += 1
+                    time.sleep(0.3)
+                except Exception as e:
+                    logger.warning(f"cleanup: nie udało się usunąć {msg['ts']}: {e}")
+                    errors += 1
 
-    status = f"✅ Usunięto *{deleted}* wiadomości bota"
-    if errors:
-        status += f" _(błędy przy {errors} wiadomościach)_"
-    respond(status)
+            if resp.get("has_more") and resp.get("response_metadata", {}).get("next_cursor"):
+                cursor = resp["response_metadata"]["next_cursor"]
+            else:
+                break
+
+        status = f"✅ Usunięto *{deleted}* wiadomości bota (zakres: {days} dni)"
+        if errors:
+            status += f" _(błędy przy {errors} wiadomościach)_"
+        respond(status)
+
+    import threading as _th
+    _th.Thread(target=_do_cleanup, daemon=True).start()
 
 
 # ── /onboard slash command ────────────────────────────────────────────────────
 
 app.command("/onboard")(handle_onboard_slash)
 logger.info("✅ /onboard handler zarejestrowany")
+
+
+# ── calendar invite detection helpers ────────────────────────────────────────
+
+def _detect_calendar_invite(file_id: str) -> dict | None:
+    """
+    Pobiera obraz ze Slacka i wysyła do Claude Vision.
+    Zwraca słownik {title, start, end, location} lub None jeśli to nie zaproszenie.
+    """
+    try:
+        token = os.environ.get("SLACK_BOT_TOKEN", "")
+        info = app.client.files_info(file=file_id)
+        file_obj = info["file"]
+        mime = file_obj.get("mimetype", "")
+        if not mime.startswith("image/"):
+            return None
+        url = file_obj.get("url_private_download") or file_obj.get("url_private")
+        if not url:
+            return None
+        import requests as _req
+        resp = _req.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=20)
+        resp.raise_for_status()
+        import base64 as _b64
+        img_b64 = _b64.b64encode(resp.content).decode()
+        media_type = mime  # e.g. "image/png"
+
+        claude_resp = anthropic.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=400,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": media_type, "data": img_b64},
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            "Czy to zrzut ekranu zaproszenia na spotkanie / wydarzenie kalendarzowe? "
+                            "Jeśli tak, wyciągnij dane i odpowiedz TYLKO w formacie JSON (bez markdown):\n"
+                            '{"is_invite": true, "title": "...", "start": "YYYY-MM-DD HH:MM", '
+                            '"end": "YYYY-MM-DD HH:MM", "location": "..."}\n'
+                            "Jeśli nie wiesz godziny zakończenia, ustaw end = start + 1h.\n"
+                            "Jeśli to NIE jest zaproszenie, odpowiedz: {\"is_invite\": false}"
+                        ),
+                    },
+                ],
+            }],
+        )
+        text = next((b.text for b in claude_resp.content if hasattr(b, "text")), "")
+        import json as _json
+        data = _json.loads(text.strip())
+        if not data.get("is_invite"):
+            return None
+        return {
+            "title":    data.get("title", "Spotkanie"),
+            "start":    data.get("start"),
+            "end":      data.get("end"),
+            "location": data.get("location"),
+        }
+    except Exception as e:
+        logger.warning("_detect_calendar_invite error: %s", e)
+        return None
+
+
+def _post_calendar_confirm(event: dict, cal_data: dict):
+    """
+    Wysyła Block Kit z przyciskami Dodaj / Pomiń dla wykrytego zaproszenia.
+    Zapisuje pending state w _ctx.calendar_pending.
+    """
+    user_id = event.get("user")
+    ts = event.get("ts", str(time.time()))
+    action_id = f"cal_confirm_{user_id}_{ts.replace('.', '')}"
+    thread_ts = event.get("thread_ts") or event.get("ts")
+
+    _ctx.calendar_pending[action_id] = {
+        "user_id":   user_id,
+        "title":     cal_data.get("title"),
+        "start":     cal_data.get("start"),
+        "end":       cal_data.get("end"),
+        "location":  cal_data.get("location"),
+        "channel":   event.get("channel"),
+        "thread_ts": thread_ts,
+    }
+
+    loc_line = f"\n📍 {cal_data['location']}" if cal_data.get("location") else ""
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"📅 Wykryłem zaproszenie na spotkanie:\n"
+                    f"*{cal_data.get('title', 'Spotkanie')}*\n"
+                    f"🕐 {cal_data.get('start', '?')} → {cal_data.get('end', '?')}"
+                    f"{loc_line}\n\nDodać do kalendarza iCloud?"
+                ),
+            },
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "✅ Dodaj do kalendarza"},
+                    "style": "primary",
+                    "action_id": action_id,
+                    "value": "confirm",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "❌ Nie, dzięki"},
+                    "action_id": f"cal_reject_{user_id}_{ts.replace('.', '')}",
+                    "value": "reject",
+                },
+            ],
+        },
+    ]
+    app.client.chat_postMessage(
+        channel=event.get("channel"),
+        thread_ts=thread_ts,
+        text="Wykryłem zaproszenie — dodać do kalendarza?",
+        blocks=blocks,
+    )
+
+
+@app.action(re.compile(r"^cal_confirm_"))
+def handle_calendar_confirm(ack, body, action):
+    ack()
+    try:
+        action_id = action.get("action_id", "")
+        pending = _ctx.calendar_pending.pop(action_id, None)
+        if not pending:
+            return
+        channel_id = body["container"]["channel_id"]
+        message_ts = body["container"]["message_ts"]
+        _cal_owner = os.environ.get("CALENDAR_OWNER_SLACK_ID")
+        user_id = body["user"]["id"]
+        if _cal_owner and user_id != _cal_owner:
+            app.client.chat_postMessage(
+                channel=channel_id,
+                thread_ts=body["container"].get("thread_ts") or message_ts,
+                text="❌ Brak dostępu — kalendarz jest prywatny.",
+            )
+            return
+        result = icloud_calendar_tool(
+            action="create",
+            title=pending["title"],
+            start=pending["start"],
+            end=pending["end"],
+            location=pending.get("location"),
+        )
+        # Replace action buttons with confirmation text
+        orig_blocks = body.get("message", {}).get("blocks", [])
+        new_blocks = [b for b in orig_blocks if b.get("type") != "actions"]
+        if result.get("status") == "created":
+            confirm_text = f"✅ Dodano *{result['title']}* ({result['start']}) do kalendarza!"
+        else:
+            confirm_text = f"❌ Błąd: {result.get('error', 'nieznany błąd')}"
+        new_blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": confirm_text}})
+        try:
+            app.client.chat_update(channel=channel_id, ts=message_ts, text=confirm_text, blocks=new_blocks)
+        except Exception:
+            app.client.chat_postMessage(channel=channel_id, thread_ts=message_ts, text=confirm_text)
+    except Exception as e:
+        logger.error("handle_calendar_confirm error: %s", e, exc_info=True)
+
+
+@app.action(re.compile(r"^cal_reject_"))
+def handle_calendar_reject(ack, body, action):
+    ack()
+    try:
+        # Remove pending state for any matching confirm action on same message
+        message_ts = body["container"]["message_ts"]
+        channel_id = body["container"]["channel_id"]
+        orig_blocks = body.get("message", {}).get("blocks", [])
+        new_blocks = [b for b in orig_blocks if b.get("type") != "actions"]
+        new_blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "👍 Ok, pomijam."}})
+        try:
+            app.client.chat_update(channel=channel_id, ts=message_ts, text="👍 Ok, pomijam.", blocks=new_blocks)
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error("handle_calendar_reject error: %s", e, exc_info=True)
 
 
 # ── message events (DM + channel triggers) ───────────────────────────────────
@@ -1250,6 +2163,51 @@ def handle_message_events(body, say, logger):
             if _handle_meta_campaign_wizard(user_id, user_message, _creative_files, _mwiz_say):
                 return
 
+    # === LINKEDIN grafika pending — obsłuż tak/zmień/nie w wątku ===
+    if user_id in _ctx.linkedin_image_pending:
+        _lip = _ctx.linkedin_image_pending[user_id]
+        _lip_ch  = _lip.get("channel")
+        _lip_tts = _lip.get("thread_ts")
+        if _ch_id == _lip_ch and event.get("thread_ts") == _lip_tts:
+            _lip_msg = user_message.strip().lower()
+            if _lip_msg in ("tak", "yes", "ok", "oke", "git", "generuj", "daj", "✅"):
+                del _ctx.linkedin_image_pending[user_id]
+                app.client.chat_postMessage(channel=_lip_ch, thread_ts=_lip_tts, text="⏳ Generuję grafikę...")
+                def _gen_img_bg(lip=_lip):
+                    from jobs.linkedin import generate_linkedin_image_from_prompt
+                    import io as _io2
+                    img = generate_linkedin_image_from_prompt(lip["img_prompt"])
+                    if img:
+                        try:
+                            app.client.files_upload_v2(channel=lip["channel"], file=_io2.BytesIO(img), filename="linkedin_grafika.png", title="Grafika LinkedIn", thread_ts=lip["thread_ts"])
+                        except Exception:
+                            app.client.files_upload(channels=lip["channel"], file=_io2.BytesIO(img), filename="linkedin_grafika.png", thread_ts=lip["thread_ts"])
+                    else:
+                        app.client.chat_postMessage(channel=lip["channel"], thread_ts=lip["thread_ts"], text="❌ Nie udało się wygenerować grafiki.")
+                import threading as _thr
+                _thr.Thread(target=_gen_img_bg, daemon=True).start()
+                return
+            elif _lip_msg.startswith("zmień") or _lip_msg.startswith("zmien") or _lip_msg.startswith("popraw") or _lip_msg.startswith("inny") or _lip_msg.startswith("zrób"):
+                # Popraw prompt zgodnie z sugestią użytkownika
+                _new_idea = re.sub(r'^(zmień na|zmien na|zmień|zmien|popraw|inny|zrób)\s*', '', user_message.strip(), flags=re.IGNORECASE).strip()
+                if _new_idea:
+                    from jobs.linkedin import generate_image_prompt
+                    _new_prompt = generate_image_prompt(
+                        _lip["post_text"],
+                        _lip["topic"] + f". Wskazówka wizualna: {_new_idea}"
+                    )
+                    _lip["img_prompt"] = _new_prompt
+                    _ctx.linkedin_image_pending[user_id] = _lip
+                    app.client.chat_postMessage(
+                        channel=_lip_ch, thread_ts=_lip_tts,
+                        text=f"🎨 *Nowy pomysł na grafikę:*\n```{_new_prompt}```\n\nNapisz `tak` żeby generować albo `zmień na [opis]` żeby jeszcze raz poprawić."
+                    )
+                return
+            elif _lip_msg in ("nie", "no", "pomiń", "skip", "cancel"):
+                del _ctx.linkedin_image_pending[user_id]
+                app.client.chat_postMessage(channel=_lip_ch, thread_ts=_lip_tts, text="👌 Pomijam grafikę.")
+                return
+
     # === STANDUP: przechwytuj odpowiedzi z DM ===
     if _ch_type == "im":
         try:
@@ -1359,8 +2317,19 @@ def handle_message_events(body, say, logger):
                     _say_dm("\n".join(_dm_results))
                     return
 
-        # === CAMPAIGN approve/cancel (DM) ===
+        # === AI cost report (DM) ===
         _dm_text_l    = user_message.lower()
+        _dm_cost_triggers = ["koszty ai", "ile kosztuje ai", "koszty claude",
+                             "koszty sebol", "weekly cost", "koszty tygodnia",
+                             "ile kosztuje sebol", "raport ai"]
+        if any(t in _dm_text_l for t in _dm_cost_triggers):
+            from jobs.cost_report import generate_weekly_cost_report
+            _days_m = re.search(r'(\d+)\s*dni', user_message)
+            _days = int(_days_m.group(1)) if _days_m else 7
+            _say_dm(text=generate_weekly_cost_report(_days))
+            return
+
+        # === CAMPAIGN approve/cancel (DM) ===
         _dm_approve_m = re.search(r'(zatwierdź|zatwierdz|uruchom)\s+kampanię\s+(\d+)', _dm_text_l)
         _dm_cancel_m  = re.search(r'(anuluj|usuń|usun|skasuj)\s+kampanię\s+(\d+)', _dm_text_l)
 
@@ -1376,9 +2345,28 @@ def handle_message_events(body, say, logger):
             return
 
         # Guard: tylko jeśli message zawiera znane employee keywords
-        if any(kw in _dm_text_l for kw in EMPLOYEE_MSG_KEYWORDS):
+        # Pomiń jeśli to prośba o kalendarz — obsłuży ją LLM z manage_calendar
+        _is_calendar_request = re.search(
+            r'kalen|calend|do\s+kal\w+|wrzuć\s+\w+\s+spotkanie|dodaj\s+\w+\s+spotkanie',
+            user_message, re.IGNORECASE,
+        )
+        if not _is_calendar_request and any(kw in _dm_text_l for kw in EMPLOYEE_MSG_KEYWORDS):
             if handle_employee_dm(user_id, user_name, user_message, _say_dm):
                 return
+
+        # === CALENDAR INVITE DETECTION: obraz w DM → zaoferuj dodanie do kalendarza ===
+        _cal_owner = os.environ.get("CALENDAR_OWNER_SLACK_ID")
+        if not _cal_owner or user_id == _cal_owner:
+            _image_files = [f for f in _creative_files if f.get("mimetype", "").startswith("image/")]
+            _cal_kw = re.search(
+                r'\b(wrzuć|dodaj|add|wstaw|zapisz|kalendarz|calendar|spotkanie|meeting|invite|zaproszenie)\b',
+                user_message, re.IGNORECASE,
+            )
+            if _image_files and (_cal_kw or not user_message.strip()):
+                _cal_data = _detect_calendar_invite(_image_files[0]["id"])
+                if _cal_data:
+                    _post_calendar_confirm(event, _cal_data)
+                    return
 
     # Email summary trigger — wyniki zawsze na DM
     if any(t in text_lower for t in ["test email", "email test", "email summary"]):
@@ -1395,6 +2383,11 @@ def handle_message_events(body, say, logger):
             logger.error(f"Błąd test email trigger: {e}")
         return
 
+    # Guard: sam obraz bez tekstu w DM — nie wywołuj LLM z pustą wiadomością
+    if not user_message.strip() and _creative_files and event.get("channel_type") == "im":
+        _say_dm("📎 Dostałem obraz — napisz co z nim zrobić, np. *wrzuć do kalendarza* albo *opisz co widzisz*.")
+        return
+
     # Store incoming user message to long-term memory (before building history)
     remember(user_id, event.get("channel", ""), event.get("ts", ""), "user", user_message)
 
@@ -1409,6 +2402,8 @@ def handle_message_events(body, say, logger):
     # Merge consecutive same-role messages (Anthropic requires alternating roles)
     _merged: list[dict] = []
     for _m in _history_msgs:
+        if not _m.get("content", "").strip():
+            continue  # pomiń puste wiadomości — Anthropic odrzuca non-empty content
         if _merged and _merged[-1]["role"] == _m["role"]:
             _merged[-1]["content"] += "\n" + _m["content"]
         else:
@@ -1416,6 +2411,8 @@ def handle_message_events(body, say, logger):
     while _merged and _merged[0]["role"] != "user":
         _merged.pop(0)
     if not _merged:
+        if not user_message.strip():
+            return  # brak historii i pusta wiadomość — nic do wysłania
         _merged = [{"role": "user", "content": user_message}]
 
     _today_dm = datetime.now()
@@ -1432,6 +2429,15 @@ def handle_message_events(body, say, logger):
         "Jedna prośba = jedna odpowiedź. Nie doklejaj niczego niezwiązanego.\n\n"
         "Mów po polsku. Bądź bezpośredni i konkretny — podawaj liczby, nie ogólniki. "
         "Emoji: 📊 💰 ⚠️ ✅\n\n"
+        "📅 KALENDARZ: Gdy user mówi 'dodaj do kalendarza', 'wrzuć do kalendarza', 'dodaj spotkanie', 'zaplanuj spotkanie', 'umów' — "
+        "ZAWSZE wywołaj manage_calendar(action='create', ...). NIE używaj save_reminder dla wydarzeń kalendarzowych! "
+        "Dla cyklicznych wydarzeń użyj recurrence: 'daily', 'weekly', 'biweekly', 'monthly', 'weekdays'. "
+        "Różnica: reminder = powiadomienie Slack o przyszłej rzeczy; kalendarz = wydarzenie w iCloud.\n"
+        "📧→📅 EMAIL→KALENDARZ: Gdy user mówi 'zaciągnij z maila', 'dodaj zaproszenia z maila do kalendarza', 'co mam w mailach' — "
+        "wywołaj manage_email(action='find_invites'), pokaż listę znalezionych wydarzeń i zapytaj które dodać (lub dodaj wszystkie jeśli user prosił o wszystkie), "
+        "następnie wywołaj manage_calendar(action='create', ...) dla każdego wybranego.\n"
+        "⛔ KRYTYCZNE: Jeśli manage_calendar zwróci błąd (np. brak autoryzacji) → powiedz użytkownikowi o błędzie i STOP. "
+        "NIE zapisuj jako reminder zamiast tego. NIE rób żadnego fallbacku. Tylko: 'Nie udało się dodać do kalendarza: [błąd]'.\n\n"
         "📌 REMINDERY: Gdy user prosi o przypomnienie ('przypomnij mi', 'zanotuj że', 'remind me') — "
         "ZAWSZE użyj narzędzia save_reminder żeby zapisać. NIE mów tylko 'zanotowałem' bez wywołania narzędzia. "
         "Po zapisaniu potwierdź datę i treść w MAX 2 zdaniach. Nic więcej."
@@ -1474,16 +2480,17 @@ def handle_message_events(body, say, logger):
         },
         {
             "name": "manage_email",
-            "description": "Zarządza emailami — czyta, wysyła, przeszukuje skrzynkę.",
+            "description": "Zarządza emailami — czyta, wysyła, przeszukuje skrzynkę, szuka zaproszeń kalendarzowych.",
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "action":  {"type": "string", "enum": ["read", "send", "search"]},
-                    "limit":   {"type": "integer"},
-                    "to":      {"type": "string"},
-                    "subject": {"type": "string"},
-                    "body":    {"type": "string"},
-                    "query":   {"type": "string"},
+                    "action":    {"type": "string", "enum": ["read", "send", "search", "find_invites"]},
+                    "limit":     {"type": "integer"},
+                    "to":        {"type": "string"},
+                    "subject":   {"type": "string"},
+                    "body":      {"type": "string"},
+                    "query":     {"type": "string"},
+                    "days_back": {"type": "integer"},
                 },
                 "required": ["action"],
             },
@@ -1519,6 +2526,7 @@ def handle_message_events(body, say, logger):
                     "location":      {"type": "string"},
                     "description":   {"type": "string"},
                     "calendar_name": {"type": "string"},
+                    "recurrence":    {"type": "string", "description": "'daily', 'weekly', 'biweekly', 'monthly', 'weekdays' lub RRULE:FREQ=..."},
                 },
                 "required": ["action"],
             },
@@ -1552,47 +2560,55 @@ def handle_message_events(body, say, logger):
             messages=_merged,
         )
         while _resp.stop_reason == "tool_use":
-            _tb = next(b for b in _resp.content if b.type == "tool_use")
-            if _tb.name == "get_meta_ads_data":
-                _tr = meta_ads_tool(**{k: v for k, v in _tb.input.items() if v is not None})
-            elif _tb.name == "get_google_ads_data":
-                _tr = google_ads_tool(**{k: v for k, v in _tb.input.items() if v is not None})
-            elif _tb.name == "get_ga4_data":
-                _tr = google_analytics_tool(**{k: v for k, v in _tb.input.items() if v is not None})
-            elif _tb.name == "manage_email":
-                _inp = {k: v for k, v in _tb.input.items() if v is not None and k != "user_id"}
-                _tr  = email_tool(user_id=user_id, **_inp)
-            elif _tb.name == "manage_calendar":
-                _owner_id = os.environ.get("CALENDAR_OWNER_SLACK_ID")
-                if _owner_id and user_id != _owner_id:
-                    _tr = {"error": "Brak dostępu — kalendarz jest prywatny."}
-                else:
-                    _tr = icloud_calendar_tool(**{k: v for k, v in _tb.input.items() if v is not None})
-            elif _tb.name == "save_reminder":
-                _action = _tb.input.get("action", "save")
-                _r_chan = _tb.input.get("channel_id") or event.get("channel", "")
-                if _action == "list":
-                    _pending = list_reminders(app.client, _r_chan)
-                    if _pending:
-                        _tr = {"reminders": _pending, "count": len(_pending)}
+            # Handle ALL tool_use blocks in one response (Claude may call multiple tools at once)
+            _tool_blocks = [b for b in _resp.content if b.type == "tool_use"]
+            _tool_results = []
+            for _tb in _tool_blocks:
+                if _tb.name == "get_meta_ads_data":
+                    _tr = meta_ads_tool(**{k: v for k, v in _tb.input.items() if v is not None})
+                elif _tb.name == "get_google_ads_data":
+                    _tr = google_ads_tool(**{k: v for k, v in _tb.input.items() if v is not None})
+                elif _tb.name == "get_ga4_data":
+                    _tr = google_analytics_tool(**{k: v for k, v in _tb.input.items() if v is not None})
+                elif _tb.name == "manage_email":
+                    _inp = {k: v for k, v in _tb.input.items() if v is not None and k != "user_id"}
+                    _tr  = email_tool(user_id=user_id, **_inp)
+                elif _tb.name == "manage_calendar":
+                    _owner_id = os.environ.get("CALENDAR_OWNER_SLACK_ID")
+                    if _owner_id and user_id != _owner_id:
+                        _tr = {"error": "Brak dostępu — kalendarz jest prywatny."}
                     else:
-                        _tr = {"reminders": [], "message": "Brak zaplanowanych przypomnień."}
-                else:
-                    _r_date = _tb.input.get("remind_date")
-                    _r_msg  = _tb.input.get("message", "")
-                    if not _r_date or not _r_msg:
-                        _tr = {"error": "Wymagane pola: remind_date (YYYY-MM-DD) i message."}
+                        _tr = icloud_calendar_tool(**{k: v for k, v in _tb.input.items() if v is not None})
+                elif _tb.name == "save_reminder":
+                    _action = _tb.input.get("action", "save")
+                    _r_chan = _tb.input.get("channel_id") or event.get("channel", "")
+                    if _action == "list":
+                        _pending = list_reminders(app.client, _r_chan)
+                        if _pending:
+                            _tr = {"reminders": _pending, "count": len(_pending)}
+                        else:
+                            _tr = {"reminders": [], "message": "Brak zaplanowanych przypomnień."}
                     else:
-                        try:
-                            _rid = schedule_reminder(app.client, _r_chan, _r_date, _r_msg)
-                            _tr = {"ok": True, "id": _rid, "remind_date": _r_date, "message": "Reminder zapisany — Slack wyśle o 9:00 tego dnia."}
-                        except Exception as _re:
-                            logger.error("schedule_reminder error: %s", _re)
-                            _tr = {"error": str(_re)}
-            else:
-                _tr = {"error": "Nieznane narzędzie"}
+                        _r_date = _tb.input.get("remind_date")
+                        _r_msg  = _tb.input.get("message", "")
+                        if not _r_date or not _r_msg:
+                            _tr = {"error": "Wymagane pola: remind_date (YYYY-MM-DD) i message."}
+                        else:
+                            try:
+                                _rid = schedule_reminder(app.client, _r_chan, _r_date, _r_msg)
+                                _tr = {"ok": True, "id": _rid, "remind_date": _r_date, "message": "Reminder zapisany — Slack wyśle o 9:00 tego dnia."}
+                            except Exception as _re:
+                                logger.error("schedule_reminder error: %s", _re)
+                                _tr = {"error": str(_re)}
+                else:
+                    _tr = {"error": "Nieznane narzędzie"}
+                _tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": _tb.id,
+                    "content": str(_tr),
+                })
             _merged.append({"role": "assistant", "content": _resp.content})
-            _merged.append({"role": "user", "content": [{"type": "tool_result", "tool_use_id": _tb.id, "content": str(_tr)}]})
+            _merged.append({"role": "user", "content": _tool_results})
             _resp = anthropic.messages.create(
                 model="claude-sonnet-4-20250514",
                 max_tokens=2000,
@@ -1610,20 +2626,6 @@ def handle_message_events(body, say, logger):
     except Exception as e:
         logger.error(f"Błąd DM handler: {e}")
         _say_dm(text=f"Przepraszam, wystąpił błąd: {str(e)}")
-
-
-# ── /tokeny slash command ─────────────────────────────────────────────────────
-
-@app.command("/tokeny")
-def handle_tokeny_slash(ack, respond, command):
-    """Pokazuje koszt tokenów Anthropic API z ostatnich N dni."""
-    ack()
-    text = (command.get("text") or "").strip()
-    try:
-        days = int(text) if text else 30
-    except ValueError:
-        days = 30
-    respond(_token_cost_summary(days))
 
 
 # ── /standup slash command ────────────────────────────────────────────────────
@@ -3434,6 +4436,98 @@ def _handle_google_campaign_wizard(user_id: str, user_message: str | None, files
     return True
 
 
+# ── email → iCloud calendar auto-sync ────────────────────────────────────────
+
+def _get_synced_invite_ids() -> set:
+    """Load set of already-synced invite IDs (title+start) from disk."""
+    path = os.path.join(os.path.dirname(__file__), "data", "synced_invites.json")
+    try:
+        if os.path.exists(path):
+            with open(path) as f:
+                return set(json.load(f))
+    except Exception:
+        pass
+    return set()
+
+
+def _save_synced_invite_ids(ids: set):
+    """Persist synced invite IDs to disk."""
+    path = os.path.join(os.path.dirname(__file__), "data", "synced_invites.json")
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(list(ids), f)
+    except Exception as e:
+        logger.warning("_save_synced_invite_ids failed: %s", e)
+
+
+def sync_calendar_from_email():
+    """
+    Co godzinę: skanuje skrzynkę email w poszukiwaniu zaproszeń kalendarzowych (.ics),
+    dodaje nowe do iCloud i wysyła powiadomienie na Slack.
+    """
+    cal_owner = os.environ.get("CALENDAR_OWNER_SLACK_ID")
+    if not cal_owner:
+        return
+
+    email_config = get_user_email_config(cal_owner)
+    if not email_config:
+        return
+
+    try:
+        from tools.email_tools import find_calendar_invites
+        result = find_calendar_invites(email_config, days_back=2)
+    except Exception as e:
+        logger.warning("sync_calendar_from_email: błąd odczytu emaila: %s", e)
+        return
+
+    invites = result.get("invites", [])
+    if not invites:
+        return
+
+    synced_ids = _get_synced_invite_ids()
+    newly_added = []
+
+    for invite in invites:
+        inv_id = f"{invite.get('title','')}|{invite.get('start','')}"
+        if inv_id in synced_ids:
+            continue
+
+        try:
+            cal_result = icloud_calendar_tool(
+                action="create",
+                title=invite.get("title"),
+                start=invite.get("start"),
+                end=invite.get("end"),
+                location=invite.get("location"),
+                description=invite.get("description"),
+            )
+            if "error" not in cal_result:
+                synced_ids.add(inv_id)
+                newly_added.append(invite)
+                logger.info("sync_calendar_from_email: dodano '%s' (%s)", invite.get("title"), invite.get("start"))
+            else:
+                logger.warning("sync_calendar_from_email: błąd tworzenia '%s': %s", invite.get("title"), cal_result.get("error"))
+        except Exception as e:
+            logger.warning("sync_calendar_from_email: wyjątek dla '%s': %s", invite.get("title"), e)
+
+    if not newly_added:
+        return
+
+    _save_synced_invite_ids(synced_ids)
+
+    # Notify owner on Slack
+    lines = ["📅 *Nowe zaproszenia z maila → iCloud:*"]
+    for inv in newly_added:
+        loc = f" | 📍 {inv['location']}" if inv.get("location") else ""
+        org = f" _(od: {inv['organizer']})_" if inv.get("organizer") else ""
+        lines.append(f"• *{inv['title']}* — {inv.get('start','?')}{loc}{org}")
+    try:
+        app.client.chat_postMessage(channel=cal_owner, text="\n".join(lines))
+    except Exception as e:
+        logger.warning("sync_calendar_from_email: nie udało się wysłać powiadomienia Slack: %s", e)
+
+
 # ── scheduler ─────────────────────────────────────────────────────────────────
 
 scheduler = BackgroundScheduler(timezone=pytz.timezone('Europe/Warsaw'))
@@ -3446,12 +4540,17 @@ scheduler.add_job(check_budget_alerts,       'cron', minute=0, id='budget_alerts
 scheduler.add_job(weekly_report_dre,         'cron', day_of_week='fri', hour=16, minute=0, id='weekly_reports')
 scheduler.add_job(weekly_learnings_dre,      'cron', day_of_week='mon,thu', hour=8, minute=30, id='weekly_learnings')
 scheduler.add_job(daily_email_summary_slack, 'cron', hour=16, minute=0, id='daily_email_summary')
-scheduler.add_job(send_daily_team_availability, 'cron', day_of_week='mon-fri', hour=17, minute=0, id='team_availability')
+# send_daily_team_availability disabled — real-time notification on absence submit is enough
 scheduler.add_job(check_stale_onboardings,   'cron', hour=9, minute=30, id='stale_onboardings')
 # STANDUP wyłączony — nikt nie robi
 # scheduler.add_job(send_standup_questions,    'cron', day_of_week='mon-fri', hour=9, minute=0,  id='standup_send')
 # scheduler.add_job(post_standup_summary,      'cron', day_of_week='mon-fri', hour=9, minute=30, id='standup_summary')
 scheduler.add_job(weekly_industry_news,      'cron', day_of_week='mon',     hour=9, minute=0,  id='industry_news')
+scheduler.add_job(weekly_cost_report,        'cron', day_of_week='mon',     hour=9,  minute=5,  id='weekly_cost_report')
+scheduler.add_job(send_weekly_setups,        'cron', day_of_week='fri',     hour=16, minute=0,  id='weekly_setups')
+scheduler.add_job(send_narrative_radar,      'cron', day_of_week='fri',     hour=16, minute=30, id='narrative_radar')
+# stock_digest disabled — uruchamiać ręcznie przez /digest
+scheduler.add_job(sync_calendar_from_email,  'cron', minute=0,                                id='email_calendar_sync')
 # reminders job removed — Slack chat.scheduleMessage handles delivery natively
 scheduler.start()
 
