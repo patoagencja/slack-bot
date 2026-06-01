@@ -453,32 +453,34 @@ def _analyze_setup_ticker(ticker: str, prescreen: dict | None = None,
     fetch_catalyst=False skips Tavily to allow parallel batch analysis.
     """
     try:
-        t    = yf.Ticker(ticker)
-        info = t.info
-        price = info.get("currentPrice") or info.get("regularMarketPrice") or (
-            prescreen["price"] if prescreen else 0
-        )
-        if not price:
-            return None
+        t = yf.Ticker(ticker)
 
-        # ── Freshness check: reject if pre/post-market gap > -5% ──────────────
-        # Catches gap-downs like QCOM -9% pre-market before regular session
+        # ── Price: use prescreen (from batch download) + freshness via fast_info ──
+        # Avoid t.info — it's the slowest yfinance call and frequently hangs
+        price = prescreen["price"] if prescreen else 0.0
+
+        # Freshness check: pre/post-market gap via fast_info (fast, non-blocking)
         try:
-            fi = t.fast_info
-            live_price = getattr(fi, "last_price", None)
-            if live_price and live_price > 0:
-                gap_pct = (live_price - price) / price * 100
+            live_price = getattr(t.fast_info, "last_price", None)
+            if live_price and live_price > 1:
+                gap_pct = (live_price - price) / price * 100 if price else 0
                 if gap_pct < -5:
-                    logger.info("Skip %s: pre/post-market gap %.1f%% (%s→%s)",
-                                ticker, gap_pct, price, live_price)
+                    logger.info("Skip %s: gap %.1f%% (%s→%s)", ticker, gap_pct, price, live_price)
                     return None
-                # Use the fresher price as actual entry
                 price = live_price
         except Exception:
             pass
 
-        hist   = t.history(period="1y")
-        if hist.empty or len(hist) < 22:
+        if not price:
+            return None
+
+        # ── History: use pre-fetched df if passed, else fetch ────────────────────
+        hist = prescreen.get("_hist") if prescreen else None
+        if hist is None or (hasattr(hist, "empty") and hist.empty):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                hist = t.history(period="1y", timeout=15)
+        if hist is None or hist.empty or len(hist) < 22:
             return None
         closes = hist["Close"].tolist()
 
@@ -766,27 +768,61 @@ def _scan_candidates(mode: str = "all") -> tuple[list[dict], dict, float | None]
 
     if mode == "all" and len(universe) > len(WATCHLIST) + 10:
         # ── Large universe: batch pre-screen → parallel full analysis ──────────
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
         logger.info("Batch pre-screening %d tickers...", len(universe))
         prescreened = _batch_prescreen(universe, qqq_30d=qqq_30d)
 
-        # Sort by momentum + volume spike, keep top 25 for full analysis
+        # Sort by momentum + volume spike, keep top 30 for full analysis
         prescreened.sort(
             key=lambda x: x.get("rs_vs_qqq", 0) + x.get("vol_spike", 1) * 5,
             reverse=True,
         )
-        top_prescreened = prescreened[:25]
-        logger.info("Pre-screen: %d → %d for full analysis (parallel)", len(universe), len(top_prescreened))
+        top_prescreened = prescreened[:30]
+        logger.info("Pre-screen: %d → %d for full analysis", len(universe), len(top_prescreened))
+
+        # Batch-download 1y history for all top candidates in ONE call
+        # This avoids 30 individual t.history() calls in the parallel phase
+        top_tickers = [p["ticker"] for p in top_prescreened]
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                bulk_hist = yf.download(
+                    top_tickers, period="1y", progress=False,
+                    auto_adjust=True, timeout=30,
+                )
+        except Exception as e:
+            logger.warning("Bulk history download failed: %s", e)
+            bulk_hist = None
+
+        if bulk_hist is not None and not bulk_hist.empty and isinstance(bulk_hist.columns, pd.MultiIndex):
+            for p in top_prescreened:
+                try:
+                    t_hist = bulk_hist.xs(p["ticker"], axis=1, level=1).dropna(how="all")
+                    if len(t_hist) >= 22:
+                        p["_hist"] = t_hist
+                except Exception:
+                    pass
 
         # Parallel full analysis — no Tavily yet (fetch_catalyst=False)
+        # max_workers=4 to avoid Yahoo Finance rate limiting
         def _full_no_catalyst(p):
-            return _analyze_setup_ticker(p["ticker"], prescreen=p, fetch_catalyst=False)
+            try:
+                return _analyze_setup_ticker(p["ticker"], prescreen=p, fetch_catalyst=False)
+            except Exception as e:
+                logger.warning("Parallel analysis error %s: %s", p["ticker"], e)
+                return None
 
-        with ThreadPoolExecutor(max_workers=8) as pool:
-            for result in pool.map(_full_no_catalyst, top_prescreened):
-                if result:
-                    candidates.append(result)
+        from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeout
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = {pool.submit(_full_no_catalyst, p): p["ticker"] for p in top_prescreened}
+            for fut in as_completed(futures, timeout=120):
+                try:
+                    result = fut.result(timeout=20)
+                    if result:
+                        candidates.append(result)
+                except FuturesTimeout:
+                    logger.warning("Ticker %s timed out (20s)", futures[fut])
+                except Exception as e:
+                    logger.warning("Ticker %s future error: %s", futures[fut], e)
 
         # Fetch catalyst only for top 10 by score (sequential, after parallel analysis)
         if _tavily and candidates:
