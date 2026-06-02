@@ -1802,12 +1802,31 @@ def handle_cleanup_slash(ack, respond, command, client):
         respond(f"❌ Nie udało się pobrać auth info: {e}")
         return
 
-    respond(f"🧹 Szukam wiadomości bota z ostatnich {days} dni... chwilka.")
+    respond(f"🧹 Szukam wiadomości bota z ostatnich {days} dni (kanał + wątki)... chwilka.")
+
+    deleted = 0
+    errors  = 0
+
+    def _is_bot(msg):
+        return (
+            bool(msg.get("bot_id"))
+            or (bot_user_id and msg.get("user") == bot_user_id)
+            or msg.get("subtype") == "bot_message"
+        )
+
+    def _delete(ts):
+        nonlocal deleted, errors
+        try:
+            client.chat_delete(channel=channel_id, ts=ts)
+            deleted += 1
+            time.sleep(0.3)
+        except Exception as e:
+            logger.warning(f"cleanup: nie udało się usunąć {ts}: {e}")
+            errors += 1
 
     def _do_cleanup():
-        deleted = 0
-        errors  = 0
-        cursor  = None
+        nonlocal deleted, errors
+        cursor = None
         while True:
             kwargs = {"channel": channel_id, "limit": 200, "oldest": oldest}
             if cursor:
@@ -1819,27 +1838,43 @@ def handle_cleanup_slash(ack, respond, command, client):
                 break
 
             for msg in resp.get("messages", []):
-                is_bot_msg = (
-                    bool(msg.get("bot_id"))                              # dowolna wiadomość bota/apki
-                    or (bot_user_id and msg.get("user") == bot_user_id)  # wiadomość jako user bota
-                    or msg.get("subtype") == "bot_message"               # legacy bot message
-                )
-                if not is_bot_msg:
-                    continue
-                try:
-                    client.chat_delete(channel=channel_id, ts=msg["ts"])
-                    deleted += 1
-                    time.sleep(0.3)
-                except Exception as e:
-                    logger.warning(f"cleanup: nie udało się usunąć {msg['ts']}: {e}")
-                    errors += 1
+                # Delete top-level bot message
+                if _is_bot(msg):
+                    _delete(msg["ts"])
+
+                # Also scan thread replies if this message has a thread
+                if msg.get("reply_count", 0) > 0:
+                    thread_cursor = None
+                    while True:
+                        try:
+                            tkwargs = {
+                                "channel": channel_id,
+                                "ts": msg["ts"],
+                                "limit": 200,
+                                "oldest": oldest,
+                            }
+                            if thread_cursor:
+                                tkwargs["cursor"] = thread_cursor
+                            tresp = client.conversations_replies(**tkwargs)
+                        except Exception as e:
+                            logger.warning(f"cleanup: replies error {msg['ts']}: {e}")
+                            break
+                        for reply in tresp.get("messages", []):
+                            if reply["ts"] == msg["ts"]:
+                                continue  # skip parent, already handled
+                            if _is_bot(reply):
+                                _delete(reply["ts"])
+                        if tresp.get("has_more") and tresp.get("response_metadata", {}).get("next_cursor"):
+                            thread_cursor = tresp["response_metadata"]["next_cursor"]
+                        else:
+                            break
 
             if resp.get("has_more") and resp.get("response_metadata", {}).get("next_cursor"):
                 cursor = resp["response_metadata"]["next_cursor"]
             else:
                 break
 
-        status = f"✅ Usunięto *{deleted}* wiadomości bota (zakres: {days} dni)"
+        status = f"✅ Usunięto *{deleted}* wiadomości bota (kanał + wątki, zakres: {days} dni)"
         if errors:
             status += f" _(błędy przy {errors} wiadomościach)_"
         respond(status)
