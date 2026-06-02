@@ -4583,9 +4583,12 @@ scheduler.add_job(weekly_checkin,            'cron', day_of_week='fri', hour=14,
 scheduler.add_job(send_checkin_reminders,    'cron', day_of_week='fri', hour=17, minute=30, id='checkin_reminders')
 scheduler.add_job(checkin_summary,           'cron', day_of_week='mon', hour=9,  minute=0)
 scheduler.add_job(check_budget_alerts,       'cron', minute=0, id='budget_alerts')
-scheduler.add_job(weekly_report_dre,         'cron', day_of_week='fri', hour=16, minute=0, id='weekly_reports')
-scheduler.add_job(weekly_learnings_dre,      'cron', day_of_week='mon,thu', hour=8, minute=30, id='weekly_learnings')
-scheduler.add_job(daily_email_summary_slack, 'cron', hour=16, minute=0, id='daily_email_summary')
+# weekly_report_dre wyłączony — nikt nie korzysta
+# scheduler.add_job(weekly_report_dre,         'cron', day_of_week='fri', hour=16, minute=0, id='weekly_reports')
+# weekly_learnings_dre wyłączony — nikt nie korzysta
+# scheduler.add_job(weekly_learnings_dre,      'cron', day_of_week='mon,thu', hour=8, minute=30, id='weekly_learnings')
+# daily_email_summary wyłączony — nikt nie korzysta
+# scheduler.add_job(daily_email_summary_slack, 'cron', hour=16, minute=0, id='daily_email_summary')
 # send_daily_team_availability disabled — real-time notification on absence submit is enough
 scheduler.add_job(check_stale_onboardings,   'cron', hour=9, minute=30, id='stale_onboardings')
 # STANDUP wyłączony — nikt nie robi
