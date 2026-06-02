@@ -1741,8 +1741,11 @@ def handle_swing_slash(ack, respond, command):
 
         def _full_limit(lim=limit):
             try:
-                send_weekly_setups(limit=lim, mode="all")
-                respond(f"✅ TOP {lim} swing setups wysłane na #inwestowanie!")
+                n = send_weekly_setups(limit=lim, mode="all")
+                if n:
+                    respond(f"✅ Wysłano {n} setup{'y' if n in (2,3,4) else 'ów'} na #inwestowanie!")
+                else:
+                    respond("⚠️ Brak setups spełniających kryteria tym tygodniu.")
             except Exception as e:
                 respond(f"❌ Błąd: {e}")
 
@@ -1769,8 +1772,11 @@ def handle_swing_slash(ack, respond, command):
 
     def _full():
         try:
-            send_weekly_setups(mode="all")
-            respond("✅ Swing setups wysłane na #inwestowanie!")
+            n = send_weekly_setups(mode="all")
+            if n:
+                respond(f"✅ Wysłano {n} setup{'y' if n in (2,3,4) else 'ów'} na #inwestowanie!")
+            else:
+                respond("⚠️ Brak setups spełniających kryteria tym tygodniu.")
         except Exception as e:
             respond(f"❌ Błąd: {e}")
 

@@ -501,9 +501,11 @@ def _batch_prescreen(tickers: list[str], qqq_30d: float | None = None,
                 if price < 5:
                     continue  # penny stock filter
 
-                # Trend: must be above MA50
+                # Trend: price above MA50 OR pulling back to MA50 (within -5%)
+                # Relaxed to catch MA50 bounce setups in RISK-OFF conditions
                 ma50 = float(c.rolling(50).mean().iloc[-1]) if len(c) >= 50 else float(c.mean())
-                if price < ma50:
+                pct_vs_ma50 = (price / ma50 - 1) * 100 if ma50 else 0
+                if pct_vs_ma50 < -5:
                     continue
 
                 # ATH filter: skip stocks within 5% of 52-week high (early reject)
@@ -511,9 +513,9 @@ def _batch_prescreen(tickers: list[str], qqq_30d: float | None = None,
                 if (price / high52 - 1) * 100 > -5:
                     continue
 
-                # RSI filter
+                # RSI filter — widened to 35-73 to catch more setups in choppy markets
                 rsi = round(_calc_rsi(c.tolist()), 1)
-                if not (40 <= rsi <= 70):
+                if not (35 <= rsi <= 73):
                     continue
 
                 # Liquidity check
@@ -760,10 +762,11 @@ def _analyze_setup_ticker(ticker: str, prescreen: dict | None = None,
         # Potential move: ATR × 3 (what target % would be)
         potential_pct = round(atr_pct * 3, 1)
 
-        # Hard filters
-        if not (40 <= rsi <= 70):
+        # Hard filters — relaxed to match prescreen (35-73 RSI, MA50 ±5%)
+        if not (35 <= rsi <= 73):
             return None
-        if not tech.get("above_ma50"):
+        ma50_val = tech.get("ma50", 0)
+        if ma50_val and (price / ma50_val - 1) * 100 < -5:
             return None
         if pattern["quality"] < 1:
             return None
@@ -973,16 +976,18 @@ def _pick_top_setups(candidates: list[dict], macro: dict, limit: int = 5) -> lis
     try:
         resp = _ctx.claude.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=2000,
+            max_tokens=3000,
             system=_SWING_SYSTEM,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = resp.content[0].text.strip()
         m   = re.search(r"\[.*\]", raw, re.DOTALL)
         rated = json.loads(m.group() if m else "[]")
-        # Sort by Claude's rating, return top_n
-        rated.sort(key=lambda x: x.get("rating", 0), reverse=True)
-        return rated[:top_n]
+        # Sort by Claude's rating, return top_n — only if Claude actually rated anything
+        if rated:
+            rated.sort(key=lambda x: x.get("rating", 0), reverse=True)
+            return rated[:top_n]
+        logger.warning("Claude returned empty ratings list, using score-based fallback")
     except Exception as e:
         logger.warning("Pick top setups error: %s", e)
 
@@ -1298,8 +1303,10 @@ def send_weekly_setups(limit: int = 5, mode: str = "all"):
             ),
         )
         logger.info("send_weekly_setups: done, %d setups (mode=%s)", len(setups), mode)
+        return len(setups)
     except Exception as e:
         logger.error("send_weekly_setups failed: %s", e)
+        return 0
 
 
 def send_scan_setups(mode: str = "all"):
