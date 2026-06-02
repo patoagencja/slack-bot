@@ -505,10 +505,11 @@ def handle_mention(event, say):
             _th.Thread(target=_swing_worker, daemon=True).start()
             return
 
-    # Stock ticker detection
+    # Stock ticker detection — only in #inwestowanie channel
+    _INWESTOWANIE_ID = "C0B5LA4Q064"
     _words = set(re.findall(r'\b[A-Z]{1,5}\b', user_message.upper()))
     _matched_tickers = [t for t in WATCHLIST if t in _words]
-    if _matched_tickers:
+    if _matched_tickers and event.get("channel") == _INWESTOWANIE_ID:
         import threading as _th
         ticker = _matched_tickers[0]
         _captured_thread_ts = thread_ts
