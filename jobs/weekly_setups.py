@@ -631,17 +631,14 @@ def _analyze_setup_coin(coin: dict, btc_dominance: float | None) -> dict | None:
 # ── Claude picks top setups ───────────────────────────────────────────────────
 
 _SWING_SYSTEM = (
-    "Jesteś doświadczonym swing traderem. Wybierasz TOP zagrań tygodniowych.\n"
-    "PRIORYTET: spółki z potencjałem ruchu >10% w ciągu 5-10 sesji.\n"
-    "Wymagania: RSI 40-70, powyżej MA50, wyraźny pattern, R/R ≥ 2:1, płynność ≥ $5M/dzień.\n"
-    "Dla krypto: nie wchodzisz po pompie >20% w 7d.\n"
-    "ODRZUĆ: fake breakout (low volume), earnings w 3 dni (ryzyko), score < 40.\n"
-    "WAŻNE: Makro (RISK-OFF/ON) to tylko kontekst — ZAWSZE zwróć dokładnie tyle setupów ile prosi użytkownik.\n"
-    "Wybierz NAJLEPSZYCH z dostępnych kandydatów, nawet jeśli rynek jest niepewny.\n"
-    "ODPOWIADASZ TYLKO W JSON (tablica):\n"
-    '[{"ticker":"...","pattern":"...","entry":0.0,"target":0.0,"stop":0.0,'
+    "Jesteś doświadczonym swing traderem. Oceniasz setupy techniczne.\n"
+    "Dla każdego kandydata podaj ocenę 1-10 (10 = najlepszy setup tygodnia).\n"
+    "Oceniaj na podstawie: jakości patternu, R/R, momentum, katalizatora.\n"
+    "Makro to tylko kontekst — NIE odrzucaj setupów, zawsze oceniaj wszystkich.\n"
+    "ODPOWIADASZ TYLKO W JSON (tablica, wszystkich kandydatów z oceną):\n"
+    '[{"ticker":"...","rating":8,"pattern":"...","entry":0.0,"target":0.0,"stop":0.0,'
     '"target_pct":0.0,"stop_pct":0.0,"rr":0.0,'
-    '"window_days":7,"catalyst":"...","reason":"1 zdanie po polsku — uwzględnij potencjał %"}]'
+    '"window_days":7,"catalyst":"...","reason":"1 zdanie po polsku"}]'
 )
 
 
@@ -649,7 +646,7 @@ def _pick_top_setups(candidates: list[dict], macro: dict, limit: int = 5) -> lis
     if not candidates:
         return []
 
-    # Sort by score, take top 20 for Claude
+    # Sort by score, take top 20 for Claude to rate
     top20 = sorted(candidates, key=lambda x: x.get("score", 0), reverse=True)[:20]
 
     lines = []
@@ -676,53 +673,46 @@ def _pick_top_setups(candidates: list[dict], macro: dict, limit: int = 5) -> lis
     top_n = max(3, min(limit, 15))
     prompt = (
         f"Makro: {macro.get('sentiment','?')} — {macro.get('main_risk','')}\n\n"
-        "Kandydaci z pełnego skanu rynku (posortowani po score):\n"
+        f"Oceń każdy setup od 1-10 i zwróć JSON dla WSZYSTKICH {len(top20)} kandydatów:\n"
         + "\n".join(lines)
-        + f"\n\nWybierz DOKŁADNIE {top_n} najlepszych zagrań i zwróć JSON. "
-        "Jeśli jest mniej kandydatów — zwróć tylu ilu jest."
     )
 
-    claude_setups: list[dict] = []
     try:
         resp = _ctx.claude.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=1000,
+            max_tokens=2000,
             system=_SWING_SYSTEM,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = resp.content[0].text.strip()
         m   = re.search(r"\[.*\]", raw, re.DOTALL)
-        claude_setups = json.loads(m.group() if m else "[]")
+        rated = json.loads(m.group() if m else "[]")
+        # Sort by Claude's rating, return top_n
+        rated.sort(key=lambda x: x.get("rating", 0), reverse=True)
+        return rated[:top_n]
     except Exception as e:
         logger.warning("Pick top setups error: %s", e)
 
-    # Fallback: if Claude returned fewer than requested, supplement with
-    # top-scored candidates directly so we always hit the target count.
-    if len(claude_setups) < top_n:
-        picked_tickers = {s.get("ticker") for s in claude_setups}
-        for c in top20:
-            if len(claude_setups) >= top_n:
-                break
-            if c.get("ticker") in picked_tickers:
-                continue
-            rr = c.get("rr", {})
-            pat = c.get("pattern", {})
-            claude_setups.append({
-                "ticker":      c["ticker"],
-                "pattern":     pat.get("pattern", "Technical setup"),
-                "entry":       rr.get("entry", c.get("price", 0)),
-                "target":      rr.get("target", 0),
-                "stop":        rr.get("stop", 0),
-                "target_pct":  c.get("potential_pct", rr.get("target_pct", 0)),
-                "stop_pct":    rr.get("stop_pct", 0),
-                "rr":          rr.get("rr_ratio", 0),
-                "window_days": 7,
-                "catalyst":    c.get("catalyst", ""),
-                "reason":      f"Score {c.get('score',0)}/100 — {pat.get('pattern','')}",
-            })
-            picked_tickers.add(c["ticker"])
-
-    return claude_setups
+    # Fallback: return top-scored candidates directly without Claude rating
+    result = []
+    for c in top20[:top_n]:
+        rr  = c.get("rr", {})
+        pat = c.get("pattern", {})
+        result.append({
+            "ticker":      c["ticker"],
+            "rating":      round(c.get("score", 50) / 10, 1),
+            "pattern":     pat.get("pattern", "Technical setup"),
+            "entry":       rr.get("entry", c.get("price", 0)),
+            "target":      rr.get("target", 0),
+            "stop":        rr.get("stop", 0),
+            "target_pct":  c.get("potential_pct", rr.get("target_pct", 0)),
+            "stop_pct":    rr.get("stop_pct", 0),
+            "rr":          rr.get("rr_ratio", 0),
+            "window_days": 7,
+            "catalyst":    c.get("catalyst", ""),
+            "reason":      f"Score {c.get('score',0)}/100 — {pat.get('pattern','')}",
+        })
+    return result
 
 
 # ── Formatting ────────────────────────────────────────────────────────────────
@@ -744,7 +734,9 @@ def _format_setup_attachment(i: int, s: dict, candidate_data: dict | None = None
     narrative_sector = (candidate_data or {}).get("narrative_sector")
     vol_spike       = (candidate_data or {}).get("vol_spike")
 
-    header_text = f"*{i}. {ticker}* — _{s.get('pattern','?')}_"
+    rating = s.get("rating")
+    rating_str = f"  ⭐ {rating}/10" if rating else ""
+    header_text = f"*{i}. {ticker}* — _{s.get('pattern','?')}_{rating_str}"
     if narrative_sector:
         header_text += f"  🔥 _{narrative_sector}_"
 
