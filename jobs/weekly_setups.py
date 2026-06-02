@@ -184,7 +184,260 @@ def _calc_ma50_slope(closes: list) -> bool:
     return ma_now > ma_ago
 
 
-# ── Batch pre-screen ──────────────────────────────────────────────────────────
+# ── Minervini Trend Template ──────────────────────────────────────────────────
+
+def _minervini_template(closes: list) -> tuple[int, dict]:
+    """
+    Minervini Trend Template — 7 criteria, 1 pt each.
+    Returns (score 0-7, criteria dict).
+    """
+    if len(closes) < 150:
+        return 0, {}
+    try:
+        s     = pd.Series(closes)
+        price = closes[-1]
+        ma50  = float(s.rolling(50).mean().iloc[-1])
+        ma150 = float(s.rolling(150).mean().iloc[-1])
+        ma200 = float(s.rolling(200).mean().iloc[-1]) if len(closes) >= 200 else None
+        ma200_ago = float(s.rolling(200).mean().iloc[-21]) if len(closes) >= 221 else None
+        high52 = max(closes[-252:]) if len(closes) >= 252 else max(closes)
+        low52  = min(closes[-252:]) if len(closes) >= 252 else min(closes)
+        criteria = {
+            "c1": price > ma150 and (ma200 is None or price > ma200),
+            "c2": ma200 is None or ma150 > ma200,
+            "c3": (ma200_ago is not None and ma200 is not None and ma200 > ma200_ago),
+            "c4": ma200 is None or (ma50 > ma150 and ma50 > ma200),
+            "c5": price > ma50,
+            "c6": price >= high52 * 0.75,   # within 25% of 52w high
+            "c7": price >= low52 * 1.30,    # at least 30% above 52w low
+        }
+        score = sum(1 for v in criteria.values() if v)
+        return score, criteria
+    except Exception:
+        return 0, {}
+
+
+# ── Weinstein Stage Analysis ──────────────────────────────────────────────────
+
+def _weinstein_stage(hist: "pd.DataFrame") -> int:
+    """
+    Weinstein Stage 1-4 derived from daily history resampled to weekly.
+    Stage 2 (advancing) = only stage worth buying.
+    """
+    if hist is None or len(hist) < 50:
+        return 0
+    try:
+        weekly = hist["Close"].resample("W").last().dropna()
+        if len(weekly) < 10:
+            return 0
+        n = min(30, len(weekly))
+        ma_w = weekly.rolling(n).mean()
+        if pd.isna(ma_w.iloc[-1]):
+            return 0
+        price_w  = float(weekly.iloc[-1])
+        ma_now   = float(ma_w.iloc[-1])
+        ma_prev  = float(ma_w.iloc[-min(5, len(ma_w)-1)])
+        above_ma = price_w > ma_now
+        rising   = ma_now > ma_prev
+        # Higher highs + higher lows check (last 8 weeks)
+        recent = weekly.tail(8).tolist()
+        if len(recent) >= 4:
+            mid = len(recent) // 2
+            higher_highs = max(recent[mid:]) > max(recent[:mid])
+            higher_lows  = min(recent[mid:]) > min(recent[:mid])
+        else:
+            higher_highs = higher_lows = False
+        if above_ma and rising and (higher_highs or higher_lows):
+            return 2
+        elif above_ma and not rising:
+            return 3
+        elif not above_ma and not rising:
+            return 4
+        else:
+            return 1
+    except Exception:
+        return 0
+
+
+# ── VCP Pattern (Minervini) ───────────────────────────────────────────────────
+
+def _vcp_detect(closes: list, volumes: list | None = None) -> bool:
+    """
+    Volatility Contraction Pattern: 3 pullbacks with shrinking depth and volume.
+    """
+    if len(closes) < 60:
+        return False
+    try:
+        recent = closes[-60:]
+        pullbacks: list[float] = []
+        i = 2
+        while i < len(recent) - 2:
+            if recent[i] > recent[i-1] and recent[i] > recent[i+1]:
+                # find trough after this peak
+                j = i + 1
+                while j < len(recent) - 1 and recent[j] > recent[j-1]:
+                    j += 1
+                trough = min(recent[i:min(j+3, len(recent))])
+                depth  = (recent[i] - trough) / recent[i] * 100
+                pullbacks.append(depth)
+                i = j + 1
+            else:
+                i += 1
+        if len(pullbacks) < 3:
+            return False
+        d1, d2, d3 = pullbacks[-3], pullbacks[-2], pullbacks[-1]
+        if not (d1 > d2 > d3 and d1 >= 10 and 2 <= d3 <= 8):
+            return False
+        # Volume confirmation: recent 5d below 20d average
+        if volumes and len(volumes) >= 25:
+            avg_vol = sum(volumes[-25:-5]) / 20
+            rec_vol = sum(volumes[-5:]) / 5
+            if rec_vol > avg_vol * 1.1:
+                return False
+        return True
+    except Exception:
+        return False
+
+
+# ── Wyckoff Spring ────────────────────────────────────────────────────────────
+
+def _wyckoff_spring(closes: list, volumes: list | None = None) -> bool:
+    """
+    Wyckoff Spring: false breakdown below support + quick recovery on low volume.
+    """
+    if len(closes) < 30:
+        return False
+    try:
+        recent  = closes[-30:]
+        support = min(recent[5:25])
+        # Dip below support in days -10..-4, then recovered
+        dipped    = any(p < support * 0.985 for p in recent[18:26])
+        recovered = recent[-1] > support * 1.01
+        if not (dipped and recovered):
+            return False
+        if volumes and len(volumes) >= 30:
+            avg_vol = sum(volumes[-30:-10]) / 20
+            dip_vol = sum(volumes[-10:-3]) / 7
+            if dip_vol > avg_vol * 0.95:
+                return False
+        return True
+    except Exception:
+        return False
+
+
+# ── Anchored VWAP Support ─────────────────────────────────────────────────────
+
+def _avwap_support(hist: "pd.DataFrame") -> bool:
+    """
+    AVWAP anchored at 52-week low. Price within 4% above AVWAP = institutional support.
+    """
+    if hist is None or len(hist) < 30:
+        return False
+    try:
+        closes  = hist["Close"]
+        volumes = hist["Volume"]
+        anchor_idx = closes.tail(252).idxmin()
+        sub = hist.loc[anchor_idx:]
+        if len(sub) < 5:
+            return False
+        cumvp  = (sub["Close"] * sub["Volume"]).cumsum()
+        cumv   = sub["Volume"].cumsum()
+        if float(cumv.iloc[-1]) == 0:
+            return False
+        avwap = float(cumvp.iloc[-1] / cumv.iloc[-1])
+        price = float(closes.iloc[-1])
+        pct   = (price - avwap) / avwap * 100
+        return 0 <= pct <= 4
+    except Exception:
+        return False
+
+
+# ── Multi-timeframe Confirmation ──────────────────────────────────────────────
+
+def _multi_tf_confirmation(closes: list, hist: "pd.DataFrame") -> int:
+    """
+    1 pt per timeframe confirmed: daily (base), weekly trend, short-term (4H proxy).
+    Returns 1-3.
+    """
+    score = 1  # daily is confirmed by the time we reach here
+    try:
+        weekly = hist["Close"].resample("W").last().dropna()
+        if len(weekly) >= 10:
+            n  = min(30, len(weekly))
+            maw = weekly.rolling(n).mean()
+            if (not pd.isna(maw.iloc[-1]) and float(weekly.iloc[-1]) > float(maw.iloc[-1])
+                    and float(maw.iloc[-1]) > float(maw.iloc[-min(4, len(maw)-1)])):
+                score += 1
+    except Exception:
+        pass
+    # Short-term: last 3 closes above 10-day MA
+    if len(closes) >= 12:
+        ma10 = sum(closes[-10:]) / 10
+        if closes[-1] > ma10 and closes[-3] > ma10:
+            score += 1
+    return min(3, score)
+
+
+# ── CAN SLIM Score (simplified — no earnings data needed) ─────────────────────
+
+def _canslim_score(closes: list, rs_rank: int = 50, vol_spike: float = 1.0,
+                   avwap: bool = False, macro_risk_on: bool = False) -> int:
+    """
+    Simplified CAN SLIM (0-7). C and A skipped (require earnings).
+    N, S, L, I, M from available price/volume data.
+    """
+    score = 0
+    if len(closes) < 60:
+        return score
+    high52 = max(closes[-252:]) if len(closes) >= 252 else max(closes)
+    low52  = min(closes[-252:]) if len(closes) >= 252 else min(closes)
+    price  = closes[-1]
+    rng    = high52 - low52
+    pos_in_range = (price - low52) / rng if rng else 0.5
+    pct_from_high = (price / high52 - 1) * 100
+
+    # N — price in top 25% of 52w range but not within 5% of ATH
+    if pos_in_range > 0.75 and pct_from_high < -5:
+        score += 1
+    # S — supply/demand: volume accumulation
+    if vol_spike >= 1.3:
+        score += 1
+    # L — leader: RS rank top 20%
+    if rs_rank >= 80:
+        score += 2
+    elif rs_rank >= 70:
+        score += 1
+    # I — institutional support proxy: AVWAP + tight base
+    if avwap:
+        score += 1
+    recent = closes[-20:]
+    tight  = (max(recent) - min(recent)) / min(recent) * 100 < 8 if min(recent) else False
+    if tight:
+        score += 1
+    # M — market in uptrend
+    if macro_risk_on:
+        score += 1
+    return min(7, score)
+
+
+# ── Final Setup Grade (0-28) ──────────────────────────────────────────────────
+
+def _calc_setup_grade(minervini: int, weinstein: int, canslim: int,
+                      vcp: bool, spring: bool, multi_tf: int,
+                      avwap: bool, rr_ratio: float) -> tuple[str, int]:
+    """Returns (grade A+/B/C/D, score 0-28)."""
+    score  = minervini                          # 0-7
+    score += 3 if weinstein == 2 else 0         # Weinstein Stage 2
+    score += canslim                            # 0-7
+    score += 3 if (vcp or spring) else 0        # pattern premium
+    score += min(3, multi_tf)                   # 1-3
+    score += 2 if avwap else 0                  # AVWAP support
+    if rr_ratio >= 3:    score += 3
+    elif rr_ratio >= 2:  score += 2
+    grade = "A+" if score >= 24 else "B" if score >= 18 else "C" if score >= 12 else "D"
+    return grade, score
+
+
 
 def _batch_prescreen(tickers: list[str], qqq_30d: float | None = None,
                      min_dv_m: float = 5.0) -> list[dict]:
@@ -278,6 +531,8 @@ def _batch_prescreen(tickers: list[str], qqq_30d: float | None = None,
                     continue
 
                 # Momentum vs QQQ (relative strength)
+                r5d  = round((price / float(c.iloc[-5])  - 1) * 100, 2) if len(c) >= 5  else 0.0
+                r20d = round((price / float(c.iloc[-20]) - 1) * 100, 2) if len(c) >= 20 else 0.0
                 momentum_30d = round((price / float(c.iloc[-30]) - 1) * 100, 2) if len(c) >= 30 else 0.0
                 rs_vs_qqq = round(momentum_30d - qqq_30d, 2) if qqq_30d is not None else 0.0
                 if rs_vs_qqq < -10:
@@ -287,6 +542,8 @@ def _batch_prescreen(tickers: list[str], qqq_30d: float | None = None,
                     "ticker":       t,
                     "price":        round(price, 2),
                     "rsi":          rsi,
+                    "r5d":          r5d,
+                    "r20d":         r20d,
                     "momentum_30d": momentum_30d,
                     "rs_vs_qqq":    rs_vs_qqq,
                     "avg_dv_m":     round(avg_dv_m, 1),
@@ -302,36 +559,45 @@ def _batch_prescreen(tickers: list[str], qqq_30d: float | None = None,
 # ── Score calculation ─────────────────────────────────────────────────────────
 
 def _calc_swing_score(c: dict) -> int:
-    """Score 0-100 based on trend, momentum, RSI, catalyst, narrative."""
+    """Score 0-100 combining technical momentum + Minervini/Weinstein/pattern quality."""
     score = 0
 
-    # Trend (30 pts)
-    if c.get("ma50_slope_up"):   score += 10
-    if c.get("above_ma200"):     score += 10
+    # Trend (25 pts)
+    if c.get("ma50_slope_up"):   score += 8
+    if c.get("above_ma200"):     score += 8
     pct50 = c.get("pct_from_ma50", 99)
-    if 0 < pct50 < 5:            score += 10  # tight consolidation near MA50
-    elif 5 <= pct50 < 12:        score += 5
+    if 0 < pct50 < 5:            score += 9
+    elif 5 <= pct50 < 12:        score += 4
 
-    # Momentum (25 pts)
+    # Momentum (20 pts)
     rs = c.get("rs_vs_qqq", 0)
-    if rs > 10:    score += 15
-    elif rs > 2:   score += 10
-    elif rs > -3:  score += 5
+    if rs > 10:    score += 12
+    elif rs > 2:   score += 8
+    elif rs > -3:  score += 3
     vs = c.get("vol_spike", 1.0)
-    if vs >= 1.5:  score += 10
-    elif vs >= 1.2: score += 5
+    if vs >= 1.5:  score += 8
+    elif vs >= 1.2: score += 4
 
-    # RSI (20 pts)
+    # RSI (15 pts)
     rsi = c.get("rsi", 50)
-    if 50 <= rsi <= 65:           score += 20
-    elif 45 <= rsi < 50 or 65 < rsi <= 70: score += 12
-    elif 40 <= rsi < 45:          score += 5
+    if 50 <= rsi <= 65:                         score += 15
+    elif 45 <= rsi < 50 or 65 < rsi <= 70:     score += 9
+    elif 40 <= rsi < 45:                        score += 4
 
-    # Catalyst (15 pts)
-    if c.get("catalyst"):         score += 15
+    # Minervini / Weinstein premium (20 pts)
+    mv = c.get("minervini_score", 0)
+    score += mv * 2                              # 0-14
+    if c.get("weinstein_stage") == 2:            score += 6
+    if c.get("vcp"):                             score += 6
+    elif c.get("spring"):                        score += 5
+    if c.get("avwap"):                           score += 3
+    rs_rank = c.get("rs_rank", 50)
+    if rs_rank >= 80:    score += 5
+    elif rs_rank >= 70:  score += 2
 
-    # Narrative (10 pts)
-    if c.get("narrative_sector"): score += 10
+    # Catalyst + Narrative (20 pts)
+    if c.get("catalyst"):          score += 12
+    if c.get("narrative_sector"):  score += 8
 
     return min(100, score)
 
@@ -526,9 +792,25 @@ def _analyze_setup_ticker(ticker: str, prescreen: dict | None = None,
         if potential_pct < 8.0:
             return None
 
-        # Volume spike
+        # Volume spike + momentum from prescreen
         vol_spike = prescreen.get("vol_spike", 1.0) if prescreen else 1.0
         rs_vs_qqq = prescreen.get("rs_vs_qqq", 0.0) if prescreen else 0.0
+        rs_rank   = prescreen.get("rs_rank", 50) if prescreen else 50
+
+        # ── Advanced scoring: Minervini / Weinstein / VCP / Wyckoff / AVWAP ────
+        minervini_score, _ = _minervini_template(closes)
+        weinstein_stage    = _weinstein_stage(hist)
+        vols_list          = hist["Volume"].tolist() if "Volume" in hist.columns else None
+        vcp                = _vcp_detect(closes, vols_list)
+        spring             = _wyckoff_spring(closes, vols_list)
+        avwap              = _avwap_support(hist)
+        multi_tf           = _multi_tf_confirmation(closes, hist)
+        canslim            = _canslim_score(closes, rs_rank=rs_rank, vol_spike=vol_spike,
+                                            avwap=avwap)
+        setup_grade, setup_score = _calc_setup_grade(
+            minervini_score, weinstein_stage, canslim, vcp, spring, multi_tf, avwap,
+            rr.get("rr_ratio", 0)
+        )
 
         # Catalyst (Tavily) — skipped in parallel batch mode, fetched later for top candidates
         catalyst = ""
@@ -565,12 +847,23 @@ def _analyze_setup_ticker(ticker: str, prescreen: dict | None = None,
             "avg_dv_m":         round(avg_dv_m, 1),
             "vol_spike":        vol_spike,
             "rs_vs_qqq":        rs_vs_qqq,
+            "rs_rank":          rs_rank,
             "ma50_slope_up":    slope_up,
             "above_ma200":      bool(tech.get("above_ma200")),
             "pct_from_ma50":    pattern.get("pct_from_ma50", 0),
             "catalyst":         catalyst,
             "narrative_sector": narrative_sector,
             "source":           source,
+            # Minervini / Weinstein / CAN SLIM fields
+            "minervini_score":  minervini_score,
+            "weinstein_stage":  weinstein_stage,
+            "vcp":              vcp,
+            "spring":           spring,
+            "avwap":            avwap,
+            "multi_tf":         multi_tf,
+            "canslim_score":    canslim,
+            "setup_grade":      setup_grade,
+            "setup_score":      setup_score,
         }
         candidate["score"] = _calc_swing_score(candidate)
         return candidate
@@ -764,6 +1057,38 @@ def _format_setup_attachment(i: int, s: dict, candidate_data: dict | None = None
         blocks.append({"type": "context",
                         "elements": [{"type": "mrkdwn", "text": "  ·  ".join(meta_parts)}]})
 
+    # Minervini / Weinstein / grade line (from candidate_data)
+    cd = candidate_data or {}
+    grade      = cd.get("setup_grade") or s.get("setup_grade")
+    sscore     = cd.get("setup_score") or s.get("setup_score")
+    mv_score   = cd.get("minervini_score")
+    ws_stage   = cd.get("weinstein_stage")
+    rs_rank    = cd.get("rs_rank") or s.get("rs_rank")
+    vcp_flag   = cd.get("vcp") or s.get("vcp")
+    spring_flag= cd.get("spring") or s.get("spring")
+    avwap_flag = cd.get("avwap") or s.get("avwap")
+    if grade:
+        grade_line_parts = []
+        if grade and sscore is not None:
+            grade_line_parts.append(f"Grade: *{grade}* ({sscore}/28)")
+        if mv_score is not None:
+            grade_line_parts.append(f"Minervini: {mv_score}/7")
+        if ws_stage:
+            stage_emoji = "✅" if ws_stage == 2 else "⚠️"
+            grade_line_parts.append(f"Weinstein: Stage {ws_stage} {stage_emoji}")
+        if rs_rank:
+            grade_line_parts.append(f"RS: {rs_rank}/100")
+        pattern_flags = []
+        if vcp_flag:    pattern_flags.append("VCP")
+        if spring_flag: pattern_flags.append("Spring")
+        if avwap_flag:  pattern_flags.append("AVWAP✓")
+        if pattern_flags:
+            grade_line_parts.append(" · ".join(pattern_flags))
+        if grade_line_parts:
+            blocks.append({"type": "context",
+                            "elements": [{"type": "mrkdwn",
+                                          "text": "  ·  ".join(grade_line_parts)}]})
+
     if s.get("reason"):
         blocks.append({"type": "context",
                         "elements": [{"type": "mrkdwn", "text": f"_{s['reason']}_"}]})
@@ -792,6 +1117,20 @@ def _scan_candidates(mode: str = "all") -> tuple[list[dict], dict, float | None]
         # ── Large universe: batch pre-screen → parallel full analysis ──────────
         logger.info("Batch pre-screening %d tickers...", len(universe))
         prescreened = _batch_prescreen(universe, qqq_30d=qqq_30d)
+
+        # Compute RS composite rank (1-100) across all prescreened tickers
+        # RS = 5d*0.4 + 20d*0.35 + 30d*0.25 (Van Tharp relative strength)
+        if prescreened:
+            for p in prescreened:
+                p["_rs_raw"] = (
+                    p.get("r5d", 0) * 0.40 +
+                    p.get("r20d", 0) * 0.35 +
+                    p.get("momentum_30d", 0) * 0.25
+                )
+            sorted_rs = sorted(prescreened, key=lambda x: x["_rs_raw"])
+            n_total = len(sorted_rs)
+            for rank_i, p in enumerate(sorted_rs):
+                p["rs_rank"] = round((rank_i + 1) / n_total * 100)
 
         # Sort by momentum + volume spike, keep top 30 for full analysis
         prescreened.sort(
