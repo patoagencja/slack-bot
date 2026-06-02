@@ -236,65 +236,65 @@ def _batch_prescreen(tickers: list[str], qqq_30d: float | None = None,
             closes_df  = raw[["Close"]].rename(columns={"Close": chunk[0]})
             volumes_df = raw[["Volume"]].rename(columns={"Volume": chunk[0]}) if "Volume" in raw.columns else None
 
-            for t in chunk:
-                try:
-                    if t not in closes_df.columns:
-                        continue
-                    c = closes_df[t].dropna()
-                    if len(c) < 22:
-                        continue
-
-                    price = float(c.iloc[-1])
-                    if price < 5:
-                        continue  # penny stock filter
-
-                    # Trend: must be above MA50
-                    ma50 = float(c.rolling(50).mean().iloc[-1]) if len(c) >= 50 else float(c.mean())
-                    if price < ma50:
-                        continue
-
-                    # ATH filter: skip stocks within 5% of 52-week high (early reject)
-                    high52 = float(c.tail(252).max()) if len(c) >= 252 else float(c.max())
-                    if (price / high52 - 1) * 100 > -5:
-                        continue
-
-                    # RSI filter
-                    rsi = round(_calc_rsi(c.tolist()), 1)
-                    if not (40 <= rsi <= 70):
-                        continue
-
-                    # Liquidity check
-                    avg_dv_m = 0.0
-                    vol_spike = 1.0
-                    if volumes_df is not None and t in volumes_df.columns:
-                        v = volumes_df[t].dropna()
-                        common = c.index.intersection(v.index)
-                        if len(common) >= 20:
-                            avg_dv_m = float((v.loc[common] * c.loc[common]).tail(20).mean()) / 1_000_000
-                            avg_vol = float(v.tail(20).mean())
-                            recent_vol = float(v.tail(3).mean())
-                            vol_spike = round(recent_vol / avg_vol, 2) if avg_vol else 1.0
-                    if avg_dv_m < min_dv_m:
-                        continue
-
-                    # Momentum vs QQQ (relative strength)
-                    momentum_30d = round((price / float(c.iloc[-30]) - 1) * 100, 2) if len(c) >= 30 else 0.0
-                    rs_vs_qqq = round(momentum_30d - qqq_30d, 2) if qqq_30d is not None else 0.0
-                    if rs_vs_qqq < -10:
-                        continue  # badly lagging market
-
-                    candidates.append({
-                        "ticker":       t,
-                        "price":        round(price, 2),
-                        "rsi":          rsi,
-                        "momentum_30d": momentum_30d,
-                        "rs_vs_qqq":    rs_vs_qqq,
-                        "avg_dv_m":     round(avg_dv_m, 1),
-                        "vol_spike":    vol_spike,
-                        "ma50":         round(ma50, 2),
-                    })
-                except Exception:
+        for t in chunk:
+            try:
+                if t not in closes_df.columns:
                     continue
+                c = closes_df[t].dropna()
+                if len(c) < 22:
+                    continue
+
+                price = float(c.iloc[-1])
+                if price < 5:
+                    continue  # penny stock filter
+
+                # Trend: must be above MA50
+                ma50 = float(c.rolling(50).mean().iloc[-1]) if len(c) >= 50 else float(c.mean())
+                if price < ma50:
+                    continue
+
+                # ATH filter: skip stocks within 5% of 52-week high (early reject)
+                high52 = float(c.tail(252).max()) if len(c) >= 252 else float(c.max())
+                if (price / high52 - 1) * 100 > -5:
+                    continue
+
+                # RSI filter
+                rsi = round(_calc_rsi(c.tolist()), 1)
+                if not (40 <= rsi <= 70):
+                    continue
+
+                # Liquidity check
+                avg_dv_m = 0.0
+                vol_spike = 1.0
+                if volumes_df is not None and t in volumes_df.columns:
+                    v = volumes_df[t].dropna()
+                    common = c.index.intersection(v.index)
+                    if len(common) >= 20:
+                        avg_dv_m = float((v.loc[common] * c.loc[common]).tail(20).mean()) / 1_000_000
+                        avg_vol = float(v.tail(20).mean())
+                        recent_vol = float(v.tail(3).mean())
+                        vol_spike = round(recent_vol / avg_vol, 2) if avg_vol else 1.0
+                if avg_dv_m < min_dv_m:
+                    continue
+
+                # Momentum vs QQQ (relative strength)
+                momentum_30d = round((price / float(c.iloc[-30]) - 1) * 100, 2) if len(c) >= 30 else 0.0
+                rs_vs_qqq = round(momentum_30d - qqq_30d, 2) if qqq_30d is not None else 0.0
+                if rs_vs_qqq < -10:
+                    continue  # badly lagging market
+
+                candidates.append({
+                    "ticker":       t,
+                    "price":        round(price, 2),
+                    "rsi":          rsi,
+                    "momentum_30d": momentum_30d,
+                    "rs_vs_qqq":    rs_vs_qqq,
+                    "avg_dv_m":     round(avg_dv_m, 1),
+                    "vol_spike":    vol_spike,
+                    "ma50":         round(ma50, 2),
+                })
+            except Exception:
+                continue
 
     return candidates
 
