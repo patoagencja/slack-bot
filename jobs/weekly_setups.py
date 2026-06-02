@@ -460,8 +460,8 @@ def _batch_prescreen(tickers: list[str], qqq_30d: float | None = None,
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     raw = yf.download(
-                        chunk, period="65d", progress=False,
-                        auto_adjust=True, timeout=30,
+                        chunk, period="1y", progress=False,
+                        auto_adjust=True, timeout=45,
                     )
                 break
             except Exception as e:
