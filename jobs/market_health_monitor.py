@@ -852,7 +852,10 @@ def compute_market_health() -> dict:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _pillar_line(name: str, data: dict) -> str:
-    return f"  {data['label']} {name}: {data['detail']}"
+    detail = data["detail"]
+    if detail == "brak danych":
+        detail = "brak danych FRED (ustaw FRED_API_KEY)"
+    return f"  {data['label']} {name}: {detail}"
 
 
 def format_health_header(result: dict) -> str:
@@ -1059,20 +1062,31 @@ def check_and_send_alerts(new_result: dict):
     if prev_mode and prev_mode != new_result["mode"]:
         alerts.append(f"🔄 Tryb zmieniony: {prev_mode} → {new_result['mode']}")
 
-    # Pillar status change
+    # Pillar status change — ignore grey (= brak danych FRED), only real changes matter
     new_pillars = {k: v["status"] for k, v in new_result["pillars"].items()}
     _NAMES = {
         "industrial_production": "Produkcja przemysłowa",
         "retail_sales":          "Sprzedaż detaliczna",
         "jobless_claims":        "Wnioski o zasiłek",
     }
+    _PILLAR_EXPLAIN = {
+        "industrial_production": "fabryki produkują mniej — wczesny sygnał spowolnienia",
+        "retail_sales":          "Polacy/Amerykanie mniej wydają — konsumpcja hamuje",
+        "jobless_claims":        "coraz więcej osób traci pracę — rynek pracy się psuje",
+    }
     for key, new_status in new_pillars.items():
-        old_status = prev_pillars.get(key, "green")
-        if old_status != new_status:
-            alerts.append(
-                f"{'🔴' if new_status == 'red' else '🟡' if new_status == 'yellow' else '🟢'} "
-                f"Filar *{_NAMES[key]}* zmienił status: {old_status} → {new_status}"
-            )
+        old_status = prev_pillars.get(key, "grey")
+        # Skip grey→grey or any→grey (just missing data, not a real signal)
+        if new_status == "grey":
+            continue
+        if old_status == new_status:
+            continue
+        emoji = "🔴" if new_status == "red" else "🟡" if new_status == "yellow" else "🟢"
+        explain = _PILLAR_EXPLAIN.get(key, "")
+        alerts.append(
+            f"{emoji} Filar *{_NAMES[key]}* zmienił status: {old_status} → {new_status}"
+            + (f"\n    _(co to znaczy: {explain})_" if explain else "")
+        )
 
     # Leading indicator alerts (fire BEFORE VIX spikes)
     try:
@@ -1085,11 +1099,14 @@ def check_and_send_alerts(new_result: dict):
             curr_structure = "backwardation" if diff < 0 else ("flat" if diff < 2 else "contango")
             if prev_structure != "backwardation" and curr_structure == "backwardation":
                 alerts.append(
-                    f"📡 VIX TERM STRUCTURE → BACKWARDATION "
-                    f"(VIX {vix_spot:.1f} > VIX3M {vix3m:.1f}) — rynek boi się TERAZ, alarm 1-3 tyg. przed spadkami"
+                    f"📡 *VIX: krótkoterminowy strach > długoterminowy* (VIX {vix_spot:.1f} > VIX3M {vix3m:.1f})\n"
+                    f"    _(rynek boi się najbliższych tygodni bardziej niż kolejnych miesięcy — historycznie wyprzedza duże spadki o 1-3 tyg.)_"
                 )
             elif prev_structure == "contango" and curr_structure == "flat":
-                alerts.append(f"📡 VIX Structure spłaszczona (VIX {vix_spot:.1f} / VIX3M {vix3m:.1f}) — obserwuj")
+                alerts.append(
+                    f"📡 *VIX się spłaszcza* (VIX {vix_spot:.1f} / VIX3M {vix3m:.1f})\n"
+                    f"    _(normalnie VIX3M > VIX; gdy się wyrównują, rynek zaczyna się niepokoić — warto obserwować)_"
+                )
             state["last_vix_structure"] = curr_structure
             state["last_vix"] = vix_spot
 
@@ -1102,7 +1119,9 @@ def check_and_send_alerts(new_result: dict):
             prev_skew = state.get("last_skew", 120)
             if prev_skew < 140 <= skew_val:
                 alerts.append(
-                    f"📡 SKEW przebił 140 ({skew_val}) — smart money kupuje ochronę przed crash scenariuszem"
+                    f"📡 *SKEW Index przekroczył 140* (obecnie {skew_val})\n"
+                    f"    _(duże fundusze masowo kupują opcje put — ubezpieczają się przed crashem. "
+                    f"To jak wykupowanie ubezpieczenia przed katastrofą. Normalne wartości to 110-130.)_"
                 )
             state["last_skew"] = skew_val
 
@@ -1110,14 +1129,21 @@ def check_and_send_alerts(new_result: dict):
         credit_pts, credit_detail = _score_credit_spreads()
         prev_credit = state.get("last_credit_pts", 2)
         if credit_pts <= -5 and prev_credit > -3:
-            alerts.append(f"📡 CREDIT SPREADS: {credit_detail[:100]}")
+            alerts.append(
+                f"📡 *Spready kredytowe rosną* — {credit_detail[:80]}\n"
+                f"    _(rynek wycenia wyższe ryzyko bankructw firm. Akcje reagują z 2-4 tyg. opóźnieniem.)_"
+            )
         state["last_credit_pts"] = credit_pts
 
         # Rotation — QQQ underperforming defensives
         rot_pts, rot_detail = _score_rotation()
         prev_rot = state.get("last_rotation_pts", 1)
         if rot_pts <= -3 and prev_rot > -1:
-            alerts.append(f"📡 ROTACJA: {rot_detail[:100]}")
+            alerts.append(
+                f"📡 *Kapitał cicho ucieka z growth do defensywnych*\n"
+                f"    _({rot_detail[:80]})\n"
+                f"    Fundusze rotują do prądu/złota/farmacji bez paniki w VIX — to wczesny sygnał.)_"
+            )
         state["last_rotation_pts"] = rot_pts
 
     except Exception as e:
@@ -1132,12 +1158,25 @@ def check_and_send_alerts(new_result: dict):
 
     if alerts:
         body = "\n".join(f"  • {a}" for a in alerts)
+        score_line = (
+            f"Score: {prev_score} → {new_result['score']}/100"
+            if prev_score is not None
+            else f"Score: {new_result['score']}/100"
+        )
+        _MODE_EXPLAIN = {
+            "BULL MODE":      "rynek zdrowy — korekty to okazje do kupna",
+            "CAUTION MODE":   "warto trzymać 10-20% gotówki, być selektywnym",
+            "DEFENSIVE MODE": "redukuj ryzyko do 50-60% ekspozycji, gotówka to pozycja",
+            "BEAR MODE":      "minimalizuj ekspozycję, rozważ hedging",
+        }
+        mode_explain = _MODE_EXPLAIN.get(new_result["mode"], "")
         msg = (
             f"🚨 *MARKET HEALTH ALERT*\n\n"
             f"{body}\n\n"
-            f"Poprzedni score: {prev_score or '?'} → Obecny score: {new_result['score']}\n"
-            f"Tryb: {new_result['mode']}\n"
-            f"Działanie: {new_result['action']}"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"📊 {score_line} — *{new_result['mode']}*\n"
+            + (f"_{mode_explain}_\n" if mode_explain else "")
+            + f"\n💼 *Co robić:* {new_result['action']}"
         )
         try:
             _ctx.app.client.chat_postMessage(channel=STOCK_CHANNEL_ID, text=msg)
