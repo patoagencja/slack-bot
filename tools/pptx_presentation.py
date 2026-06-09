@@ -478,3 +478,623 @@ def share_pptx(pptx_bytes: bytes, filename: str) -> str | None:
         logger.warning(f"0x0.st failed: {_e}")
 
     return None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DRE — BRANDED REPORT GENERATOR (premium dark theme, no Claude API call)
+# ══════════════════════════════════════════════════════════════════════════════
+
+DRE_DARK  = RGBColor(0x1A, 0x1A, 0x1A)
+DRE_WHITE = RGBColor(0xFF, 0xFF, 0xFF)
+DRE_GOLD  = RGBColor(0xE8, 0xA0, 0x50)
+DRE_CARD  = RGBColor(0x2A, 0x2A, 0x2A)
+DRE_GREEN = RGBColor(0x2E, 0xCC, 0x71)
+DRE_RED   = RGBColor(0xE7, 0x4C, 0x3C)
+DRE_GRAY  = RGBColor(0xAA, 0xAA, 0xAA)
+DRE_SHADOW = RGBColor(0x0A, 0x0A, 0x0A)
+DRE_CARD_BORDER = RGBColor(0x3A, 0x3A, 0x3A)
+
+
+def _dre_bg(slide, color: RGBColor):
+    fill = slide.background.fill
+    fill.solid()
+    fill.fore_color.rgb = color
+
+
+def _dre_box(slide, x, y, w, h, text="", font_size=14, bold=False,
+             color=None, align=PP_ALIGN.LEFT, font_name="Calibri"):
+    if color is None:
+        color = DRE_WHITE
+    tb = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
+    tf = tb.text_frame
+    tf.word_wrap = True
+    p = tf.paragraphs[0]
+    p.alignment = align
+    run = p.add_run()
+    run.text = text
+    run.font.size = Pt(font_size)
+    run.font.bold = bold
+    run.font.color.rgb = color
+    run.font.name = font_name
+    return tb
+
+
+def _dre_rect(slide, x, y, w, h, color: RGBColor, border_color=None):
+    shape = slide.shapes.add_shape(1, Inches(x), Inches(y), Inches(w), Inches(h))
+    shape.fill.solid()
+    shape.fill.fore_color.rgb = color
+    if border_color:
+        shape.line.color.rgb = border_color
+        shape.line.width = Pt(0.5)
+    else:
+        shape.line.fill.background()
+    return shape
+
+
+def _dre_stat_card(slide, x, y, w, h, value, label):
+    # Shadow
+    shadow = slide.shapes.add_shape(1, Inches(x + 0.04), Inches(y + 0.04), Inches(w), Inches(h))
+    shadow.fill.solid()
+    shadow.fill.fore_color.rgb = DRE_SHADOW
+    shadow.line.fill.background()
+    # Card
+    card = slide.shapes.add_shape(1, Inches(x), Inches(y), Inches(w), Inches(h))
+    card.fill.solid()
+    card.fill.fore_color.rgb = DRE_CARD
+    card.line.color.rgb = DRE_CARD_BORDER
+    card.line.width = Pt(0.5)
+    # Value
+    vb = slide.shapes.add_textbox(Inches(x), Inches(y + 0.1), Inches(w), Inches(h * 0.58))
+    vtf = vb.text_frame
+    vtf.word_wrap = False
+    vp = vtf.paragraphs[0]
+    vp.alignment = PP_ALIGN.CENTER
+    vr = vp.add_run()
+    vr.text = value
+    vr.font.size = Pt(28)
+    vr.font.bold = True
+    vr.font.color.rgb = DRE_GOLD
+    vr.font.name = "Cambria"
+    # Label
+    lb = slide.shapes.add_textbox(Inches(x), Inches(y + h * 0.62), Inches(w), Inches(h * 0.35))
+    ltf = lb.text_frame
+    ltf.word_wrap = True
+    lp = ltf.paragraphs[0]
+    lp.alignment = PP_ALIGN.CENTER
+    lr = lp.add_run()
+    lr.text = label
+    lr.font.size = Pt(11)
+    lr.font.color.rgb = DRE_GRAY
+    lr.font.name = "Calibri"
+
+
+# ── DRE Data Analysis ──────────────────────────────────────────────────────────
+
+def _dre_normalize_campaign(c, platform="meta"):
+    """Normalize Meta or Google campaign dict to a common schema."""
+    if platform == "google":
+        name = (c.get("campaign_name") or c.get("campaign.name") or
+                c.get("name") or "Nieznana kampania")
+        cost = c.get("spend") or c.get("cost") or c.get("metrics.cost_micros") or 0
+        try:
+            cost = float(cost)
+        except (TypeError, ValueError):
+            cost = 0.0
+        if cost > 100000:  # micros
+            cost /= 1_000_000
+        impressions = int(c.get("impressions") or c.get("metrics.impressions") or 0)
+        clicks = int(c.get("clicks") or c.get("metrics.clicks") or 0)
+        ctr = float(c.get("ctr") or c.get("metrics.ctr") or 0)
+        # Google API returns fraction 0-1; normalize tool might already be %
+        if 0 < ctr <= 1.0:
+            ctr *= 100
+        cpc = float(c.get("average_cpc") or c.get("cpc") or c.get("metrics.average_cpc") or 0)
+        if cpc > 1000:
+            cpc /= 1_000_000
+        conversions = float(c.get("conversions") or c.get("metrics.conversions") or 0)
+        return {"name": name, "spend": cost, "impressions": impressions,
+                "clicks": clicks, "ctr": ctr, "cpc": cpc, "conversions": conversions,
+                "reach": 0, "platform": "Google"}
+    else:
+        name = c.get("campaign_name") or c.get("name") or "Nieznana kampania"
+        return {
+            "name": name,
+            "spend": float(c.get("spend", 0) or 0),
+            "impressions": int(c.get("impressions", 0) or 0),
+            "clicks": int(c.get("clicks", 0) or 0),
+            "ctr": float(c.get("ctr", 0) or 0),
+            "cpc": float(c.get("cpc", 0) or 0),
+            "conversions": float(c.get("conversions", 0) or 0),
+            "reach": int(c.get("reach", 0) or 0),
+            "platform": "Meta",
+        }
+
+
+def _dre_to_list(d):
+    if not d:
+        return []
+    if isinstance(d, list):
+        return d
+    if isinstance(d, dict):
+        return d.get("data", [])
+    return []
+
+
+def _dre_analyze(meta_ads_data, google_ads_data):
+    """Aggregate campaign data and produce KPIs, alerts, top3, recommendations."""
+    meta_raw = [_dre_normalize_campaign(c, "meta") for c in _dre_to_list(meta_ads_data)]
+    google_raw = [_dre_normalize_campaign(c, "google") for c in _dre_to_list(google_ads_data)]
+    all_camps = meta_raw + google_raw
+
+    meta_spend = sum(c["spend"] for c in meta_raw)
+    google_spend = sum(c["spend"] for c in google_raw)
+    total_spend = meta_spend + google_spend
+    total_reach = sum(c["reach"] for c in meta_raw)
+    total_impressions = sum(c["impressions"] for c in all_camps)
+    total_clicks = sum(c["clicks"] for c in all_camps)
+    cpc = total_spend / total_clicks if total_clicks > 0 else 0.0
+    cpm = total_spend / total_impressions * 1000 if total_impressions > 0 else 0.0
+
+    # Alerts
+    alerts = []
+    seen_alerts = set()
+
+    def _add_alert(level, text):
+        key = text[:60]
+        if key not in seen_alerts:
+            seen_alerts.add(key)
+            alerts.append({"level": level, "text": text})
+
+    for c in google_raw:
+        if c["clicks"] > 500 and c["conversions"] == 0:
+            _add_alert("critical",
+                f"KRYTYCZNY: problem z trackingiem — {c['name']} "
+                f"({c['clicks']} klikniec, 0 konwersji)")
+        if c["ctr"] > 0 and c["ctr"] < 0.10 and c["impressions"] > 100:
+            _add_alert("stop", f"STOP: {c['name']} — nieefektywna (CTR {c['ctr']:.2f}%)")
+        if 0 < c["cpc"] > 3.0:
+            _add_alert("review",
+                f"REVIEW: wysoki koszt kliknięcia — {c['name']} ({c['cpc']:.2f} zł/klik)")
+
+    for c in meta_raw:
+        if c["ctr"] > 0 and c["ctr"] < 0.10 and c["impressions"] > 100:
+            _add_alert("stop", f"STOP: {c['name']} — nieefektywna (CTR {c['ctr']:.2f}%)")
+        if 0 < c["cpc"] > 3.0:
+            _add_alert("review",
+                f"REVIEW: wysoki koszt kliknięcia — {c['name']} ({c['cpc']:.2f} zł/klik)")
+
+    # Top 3 by CTR (include only campaigns with impressions > 0)
+    ranked = sorted([c for c in all_camps if c["impressions"] > 0],
+                    key=lambda x: x["ctr"], reverse=True)
+    top3 = ranked[:3]
+
+    # Recommendations (max 4, prioritized)
+    recs = []
+    # FIX: critical tracking first
+    if any(a["level"] == "critical" for a in alerts):
+        recs.append({"action": "FIX",
+                     "text": "Napraw tracking konwersji Google Ads — brak danych o wynikach kampanii"})
+    # STOP: worst CTR
+    worst = sorted([c for c in all_camps if c["ctr"] > 0 and c["ctr"] < 0.10
+                    and c["impressions"] > 200], key=lambda x: x["ctr"])
+    if worst:
+        w = worst[0]
+        recs.append({"action": "STOP",
+                     "text": f"{w['name']} — CTR {w['ctr']:.2f}%, brak efektywnosci. Wstrzymaj kampanię."})
+    # SCALE: best CTR
+    if top3 and top3[0]["ctr"] >= 1.0:
+        b = top3[0]
+        recs.append({"action": "SCALE",
+                     "text": f"{b['name']} — CTR {b['ctr']:.2f}%. Zwiększ budżet o 20-30%."})
+    # OPTYMALIZUJ: budget split
+    if google_spend > 0 and meta_spend > 0 and total_spend > 0:
+        if google_spend / total_spend > 0.6:
+            shift = google_spend * 0.10
+            recs.append({"action": "OPTYMALIZUJ",
+                         "text": f"Przesuń ~{shift:.0f} zł z Google na Meta — niższy CPM, szerszy zasięg."})
+        elif meta_spend / total_spend > 0.8:
+            recs.append({"action": "OPTYMALIZUJ",
+                         "text": "Przetestuj Google Search dla kampanii brandowych DRE."})
+    # Fallback recommendation
+    while len(recs) < 2:
+        recs.append({"action": "OPTYMALIZUJ",
+                     "text": "Monitoruj frequency kampanii Meta — nie przekraczaj 4.0 w tygodniu."})
+
+    return {
+        "total_reach": total_reach,
+        "total_impressions": total_impressions,
+        "total_clicks": total_clicks,
+        "total_spend": total_spend,
+        "meta_spend": meta_spend,
+        "google_spend": google_spend,
+        "cpc": cpc,
+        "cpm": cpm,
+        "top3": top3,
+        "alerts": alerts,
+        "recommendations": recs[:4],
+    }
+
+
+# ── DRE Slide Builders ─────────────────────────────────────────────────────────
+
+def _dre_gold_rule(slide, x, y, w=3.0):
+    _dre_rect(slide, x, y, w, 0.04, DRE_GOLD)
+
+
+def _dre_slide_title(prs, title, date_range=""):
+    slide = _add_slide(prs)
+    _dre_bg(slide, DRE_DARK)
+
+    # DRE logo label
+    _dre_box(slide, 0.5, 0.45, 3, 1.1, "DRE",
+             font_size=52, bold=True, color=DRE_WHITE, font_name="Cambria")
+
+    # Main title
+    _dre_box(slide, 0.5, 1.75, 10, 1.9, title,
+             font_size=36, bold=True, color=DRE_WHITE, font_name="Cambria")
+
+    # Date range (gold)
+    if date_range:
+        _dre_box(slide, 0.5, 3.75, 9, 0.75, date_range,
+                 font_size=20, color=DRE_GOLD, font_name="Calibri")
+
+    # Gold accent line
+    _dre_gold_rule(slide, 0.5, 5.1, 4.0)
+
+    # PATO AGENCY corner label
+    _dre_box(slide, 0.5, 6.95, 4, 0.4, "PATO AGENCY",
+             font_size=9, bold=True, color=DRE_GOLD, font_name="Calibri")
+
+
+def _dre_slide_kpis(prs, d):
+    slide = _add_slide(prs)
+    _dre_bg(slide, DRE_DARK)
+
+    _dre_box(slide, 0.5, 0.22, 12, 0.75, "Podsumowanie KPI",
+             font_size=24, bold=True, color=DRE_WHITE, font_name="Cambria")
+    _dre_gold_rule(slide, 0.5, 0.97)
+
+    def _fmt_num(n):
+        if n >= 1_000_000:
+            return f"{n / 1_000_000:.1f}M"
+        if n >= 1_000:
+            return f"{n / 1_000:.1f}K"
+        return str(int(n))
+
+    def _fmt_pln(v):
+        s = f"{v:,.0f}".replace(",", " ")
+        return f"{s} zł"
+
+    kpis = [
+        (_fmt_num(d["total_reach"]) if d["total_reach"] > 0 else "N/A", "Zasięg"),
+        (_fmt_num(d["total_impressions"]) if d["total_impressions"] > 0 else "N/A", "Wyświetlenia"),
+        (_fmt_num(d["total_clicks"]) if d["total_clicks"] > 0 else "N/A", "Kliknięcia"),
+        (_fmt_pln(d["total_spend"]) if d["total_spend"] > 0 else "N/A", "Wydatek"),
+        (f"{d['cpc']:.2f} zł" if d["cpc"] > 0 else "N/A", "CPC"),
+        (f"{d['cpm']:.2f} zł" if d["cpm"] > 0 else "N/A", "CPM"),
+    ]
+
+    card_w, card_h = 3.9, 2.85
+    gap_x, gap_y  = 0.265, 0.4
+    sx, sy        = 0.5, 1.2
+
+    for i, (value, label) in enumerate(kpis):
+        row, col = divmod(i, 3)
+        _dre_stat_card(slide,
+                       sx + col * (card_w + gap_x),
+                       sy + row * (card_h + gap_y),
+                       card_w, card_h, value, label)
+
+
+def _dre_slide_budget(prs, d, date_range=""):
+    slide = _add_slide(prs)
+    _dre_bg(slide, DRE_WHITE)
+
+    # Header bar (dark)
+    _dre_rect(slide, 0, 0, 13.33, 1.1, DRE_DARK)
+    _dre_box(slide, 0.5, 0.18, 12, 0.75, "Budżet & Kanały",
+             font_size=24, bold=True, color=DRE_WHITE, font_name="Cambria")
+
+    total = d["total_spend"]
+    meta_s = d["meta_spend"]
+    google_s = d["google_spend"]
+    meta_pct = meta_s / total * 100 if total > 0 else 0
+    google_pct = google_s / total * 100 if total > 0 else 0
+
+    bar_max_w = 5.5
+    bar_x_start = 2.3
+    bar_h = 0.75
+
+    # Meta row
+    _dre_box(slide, 0.6, 1.7, 1.6, 0.45, "META ADS",
+             font_size=11, bold=True, color=DRE_DARK, font_name="Calibri")
+    meta_bar_w = max(0.08, bar_max_w * meta_pct / 100)
+    _dre_rect(slide, bar_x_start, 1.55, meta_bar_w, bar_h, DRE_GOLD)
+    _dre_box(slide, bar_x_start + meta_bar_w + 0.2, 1.55, 2.5, bar_h,
+             f"{meta_pct:.0f}%  {meta_s:,.0f} zł".replace(",", " "),
+             font_size=13, bold=True, color=DRE_DARK, font_name="Calibri")
+
+    # Google row
+    _dre_box(slide, 0.6, 3.0, 1.6, 0.45, "GOOGLE ADS",
+             font_size=11, bold=True, color=DRE_DARK, font_name="Calibri")
+    google_bar_w = max(0.08, bar_max_w * google_pct / 100)
+    _dre_rect(slide, bar_x_start, 2.85, google_bar_w, bar_h, RGBColor(0x33, 0x33, 0x33))
+    _dre_box(slide, bar_x_start + google_bar_w + 0.2, 2.85, 2.5, bar_h,
+             f"{google_pct:.0f}%  {google_s:,.0f} zł".replace(",", " "),
+             font_size=13, bold=True, color=DRE_DARK, font_name="Calibri")
+
+    # Separator
+    _dre_rect(slide, 9.3, 1.2, 0.03, 5.8, RGBColor(0xDD, 0xDD, 0xDD))
+
+    # Summary column (right)
+    sx = 9.6
+    _dre_box(slide, sx, 1.3, 3.5, 0.35, "TOTAL SPEND",
+             font_size=10, color=RGBColor(0x88, 0x88, 0x88), font_name="Calibri")
+    _dre_box(slide, sx, 1.65, 3.5, 0.65,
+             f"{total:,.0f} zł".replace(",", " ") if total > 0 else "N/A",
+             font_size=22, bold=True, color=DRE_DARK, font_name="Cambria")
+
+    _dre_rect(slide, sx, 2.45, 3.1, 0.03, RGBColor(0xDD, 0xDD, 0xDD))
+
+    _dre_box(slide, sx, 2.6, 3.5, 0.32, "Meta Ads",
+             font_size=10, color=RGBColor(0x88, 0x88, 0x88), font_name="Calibri")
+    _dre_box(slide, sx, 2.92, 3.5, 0.4,
+             f"{meta_pct:.0f}% — {meta_s:,.0f} zł".replace(",", " "),
+             font_size=13, bold=True, color=DRE_DARK, font_name="Calibri")
+
+    _dre_box(slide, sx, 3.45, 3.5, 0.32, "Google Ads",
+             font_size=10, color=RGBColor(0x88, 0x88, 0x88), font_name="Calibri")
+    _dre_box(slide, sx, 3.77, 3.5, 0.4,
+             f"{google_pct:.0f}% — {google_s:,.0f} zł".replace(",", " "),
+             font_size=13, bold=True, color=DRE_DARK, font_name="Calibri")
+
+    _dre_rect(slide, sx, 4.3, 3.1, 0.03, RGBColor(0xDD, 0xDD, 0xDD))
+
+    # Monthly projection
+    days = 7
+    if date_range:
+        import re as _re
+        parts = _re.findall(r'(\d{2})\.(\d{2})(?:\.(\d{4}))?', date_range)
+        if len(parts) >= 2:
+            try:
+                from datetime import datetime as _dt
+                year = parts[-1][2] or "2026"
+                d1 = _dt.strptime(f"{parts[0][0]}.{parts[0][1]}.{year}", "%d.%m.%Y")
+                d2 = _dt.strptime(f"{parts[-1][0]}.{parts[-1][1]}.{year}", "%d.%m.%Y")
+                days = max(1, abs((d2 - d1).days) + 1)
+            except Exception:
+                days = 7
+    monthly_proj = total / days * 30 if days > 0 and total > 0 else 0
+
+    _dre_box(slide, sx, 4.45, 3.5, 0.32, "Projekcja miesięczna",
+             font_size=10, color=RGBColor(0x88, 0x88, 0x88), font_name="Calibri")
+    _dre_box(slide, sx, 4.77, 3.5, 0.55,
+             f"~{monthly_proj:,.0f} zł".replace(",", " ") if monthly_proj > 0 else "N/A",
+             font_size=18, bold=True, color=DRE_GOLD, font_name="Cambria")
+
+
+def _dre_slide_top_performers(prs, d):
+    slide = _add_slide(prs)
+    _dre_bg(slide, DRE_DARK)
+
+    _dre_box(slide, 0.5, 0.22, 12, 0.75, "Top Performers",
+             font_size=24, bold=True, color=DRE_WHITE, font_name="Cambria")
+    _dre_gold_rule(slide, 0.5, 0.97)
+
+    top3 = d.get("top3", [])
+
+    if not top3:
+        _dre_box(slide, 0.5, 2.5, 12, 0.8, "Brak danych o kampaniach.",
+                 font_size=16, color=DRE_GRAY)
+        return
+
+    def _ctr_color(ctr, platform):
+        if platform == "Meta":
+            return DRE_GREEN if ctr >= 1.0 else (DRE_RED if ctr < 0.5 else DRE_WHITE)
+        return DRE_GREEN if ctr >= 10.0 else (DRE_RED if ctr < 0.5 else DRE_WHITE)
+
+    def _cpc_color(cpc):
+        return DRE_GREEN if cpc <= 0.5 else (DRE_RED if cpc > 2.0 else DRE_WHITE)
+
+    card_ys = [1.25, 3.05, 4.85]
+    card_h  = 1.6
+
+    for i, camp in enumerate(top3):
+        cy = card_ys[i]
+        # Shadow + card
+        shadow = slide.shapes.add_shape(1, Inches(0.54), Inches(cy + 0.04),
+                                        Inches(12.25), Inches(card_h))
+        shadow.fill.solid()
+        shadow.fill.fore_color.rgb = DRE_SHADOW
+        shadow.line.fill.background()
+
+        card = slide.shapes.add_shape(1, Inches(0.5), Inches(cy),
+                                      Inches(12.3), Inches(card_h))
+        card.fill.solid()
+        card.fill.fore_color.rgb = DRE_CARD
+        card.line.color.rgb = DRE_CARD_BORDER
+        card.line.width = Pt(0.5)
+
+        # Gold left accent for rank #1
+        acc = slide.shapes.add_shape(1, Inches(0.5), Inches(cy),
+                                     Inches(0.08), Inches(card_h))
+        acc.fill.solid()
+        acc.fill.fore_color.rgb = DRE_GOLD if i == 0 else RGBColor(0x44, 0x44, 0x44)
+        acc.line.fill.background()
+
+        # Campaign name + platform
+        _dre_box(slide, 0.75, cy + 0.18, 6.5, 0.55, camp["name"],
+                 font_size=14, bold=True, color=DRE_WHITE, font_name="Cambria")
+        _dre_box(slide, 0.75, cy + 0.75, 2, 0.4, camp["platform"],
+                 font_size=10, color=DRE_GRAY, font_name="Calibri")
+
+        # Metrics
+        ctr_c = _ctr_color(camp["ctr"], camp["platform"])
+        _dre_box(slide, 7.6, cy + 0.18, 1.8, 0.35, "CTR",
+                 font_size=10, color=DRE_GRAY, font_name="Calibri")
+        _dre_box(slide, 7.6, cy + 0.55, 1.8, 0.65, f"{camp['ctr']:.2f}%",
+                 font_size=20, bold=True, color=ctr_c, font_name="Cambria")
+
+        cpc_c = _cpc_color(camp["cpc"])
+        _dre_box(slide, 9.6, cy + 0.18, 1.8, 0.35, "CPC",
+                 font_size=10, color=DRE_GRAY, font_name="Calibri")
+        _dre_box(slide, 9.6, cy + 0.55, 1.8, 0.65,
+                 f"{camp['cpc']:.2f} zł" if camp["cpc"] > 0 else "N/A",
+                 font_size=20, bold=True, color=cpc_c, font_name="Cambria")
+
+        _dre_box(slide, 11.5, cy + 0.18, 1.3, 0.35, "SPEND",
+                 font_size=10, color=DRE_GRAY, font_name="Calibri")
+        _dre_box(slide, 11.5, cy + 0.55, 1.3, 0.65,
+                 f"{camp['spend']:.0f} zł",
+                 font_size=14, bold=True, color=DRE_WHITE, font_name="Cambria")
+
+    # Key insight (gold, bottom)
+    if top3:
+        b = top3[0]
+        _dre_box(slide, 0.5, 6.7, 12.3, 0.5,
+                 f"Najlepszy wynik: {b['name']} — CTR {b['ctr']:.2f}%, CPC {b['cpc']:.2f} zł",
+                 font_size=12, bold=True, color=DRE_GOLD, font_name="Calibri")
+
+
+def _dre_slide_alerts(prs, d):
+    slide = _add_slide(prs)
+    _dre_bg(slide, DRE_WHITE)
+
+    _dre_rect(slide, 0, 0, 13.33, 1.1, DRE_DARK)
+    _dre_box(slide, 0.5, 0.18, 12, 0.75, "Problemy & Alerty",
+             font_size=24, bold=True, color=DRE_WHITE, font_name="Cambria")
+
+    alerts = d.get("alerts", [])
+
+    if not alerts:
+        ok = slide.shapes.add_shape(1, Inches(0.5), Inches(1.5), Inches(12.3), Inches(1.2))
+        ok.fill.solid()
+        ok.fill.fore_color.rgb = RGBColor(0xE8, 0xF8, 0xF0)
+        ok.line.color.rgb = DRE_GREEN
+        ok.line.width = Pt(1.5)
+        _dre_box(slide, 0.75, 1.72, 11.8, 0.8,
+                 "Brak krytycznych problemow — wszystkie kampanie w normie.",
+                 font_size=16, color=RGBColor(0x1A, 0x7A, 0x45), font_name="Calibri")
+        return
+
+    y = 1.3
+    level_styles = {
+        "critical": (RGBColor(0xFD, 0xED, 0xED), DRE_RED, True),
+        "stop":     (RGBColor(0xFF, 0xF0, 0xF0), DRE_RED, False),
+        "review":   (RGBColor(0xFF, 0xF9, 0xED), RGBColor(0xE0, 0x90, 0x10), False),
+    }
+
+    for alert in alerts[:5]:
+        level = alert["level"]
+        bg, border, is_bold = level_styles.get(level, level_styles["review"])
+
+        card = slide.shapes.add_shape(1, Inches(0.5), Inches(y), Inches(12.3), Inches(0.85))
+        card.fill.solid()
+        card.fill.fore_color.rgb = bg
+        card.line.color.rgb = border
+        card.line.width = Pt(1.5)
+
+        ind = slide.shapes.add_shape(1, Inches(0.5), Inches(y), Inches(0.1), Inches(0.85))
+        ind.fill.solid()
+        ind.fill.fore_color.rgb = border
+        ind.line.fill.background()
+
+        _dre_box(slide, 0.75, y + 0.15, 11.8, 0.58, alert["text"],
+                 font_size=13, bold=is_bold, color=DRE_DARK, font_name="Calibri")
+        y += 1.0
+
+
+def _dre_slide_recommendations(prs, d):
+    slide = _add_slide(prs)
+    _dre_bg(slide, DRE_DARK)
+
+    _dre_box(slide, 0.5, 0.22, 12, 0.75, "Rekomendacje na nastepny tydzien",
+             font_size=24, bold=True, color=DRE_WHITE, font_name="Cambria")
+    _dre_gold_rule(slide, 0.5, 0.97)
+
+    ACTION_COLORS = {
+        "STOP":       DRE_RED,
+        "SCALE":      DRE_GREEN,
+        "FIX":        RGBColor(0xE0, 0x90, 0x10),
+        "OPTYMALIZUJ": RGBColor(0x5B, 0xB5, 0xFF),
+    }
+
+    recs = d.get("recommendations", [])
+    y = 1.25
+
+    for i, rec in enumerate(recs[:4]):
+        action = rec.get("action", "OPTYMALIZUJ")
+        text   = rec.get("text", "")
+        action_color = ACTION_COLORS.get(action, DRE_GOLD)
+        is_top = (i == 0)
+
+        card_bg = RGBColor(0x2A, 0x24, 0x18) if is_top else DRE_CARD
+        card_border = DRE_GOLD if is_top else DRE_CARD_BORDER
+
+        card = slide.shapes.add_shape(1, Inches(0.5), Inches(y), Inches(12.3), Inches(1.05))
+        card.fill.solid()
+        card.fill.fore_color.rgb = card_bg
+        card.line.color.rgb = card_border
+        card.line.width = Pt(1.5 if is_top else 0.5)
+
+        # Action badge
+        badge = slide.shapes.add_shape(1, Inches(0.65), Inches(y + 0.3),
+                                       Inches(1.65), Inches(0.45))
+        badge.fill.solid()
+        badge.fill.fore_color.rgb = action_color
+        badge.line.fill.background()
+        btf = badge.text_frame
+        bp  = btf.paragraphs[0]
+        bp.alignment = PP_ALIGN.CENTER
+        br = bp.add_run()
+        br.text = action
+        br.font.size = Pt(10)
+        br.font.bold = True
+        br.font.color.rgb = DRE_WHITE
+        br.font.name = "Calibri"
+
+        _dre_box(slide, 2.5, y + 0.25, 10.0, 0.6, text,
+                 font_size=13, color=DRE_GOLD if is_top else DRE_WHITE,
+                 font_name="Calibri")
+
+        if is_top:
+            _dre_box(slide, 0.65, y + 0.82, 6, 0.2, "MOST IMPORTANT ACTION",
+                     font_size=8, color=DRE_GOLD, font_name="Calibri")
+
+        y += 1.22
+
+
+# ── DRE Main Entry Point ───────────────────────────────────────────────────────
+
+def generate_pptx_dre(title=None, date_range=None,
+                      meta_ads_data=None, google_ads_data=None):
+    """
+    Generate a DRE-branded PPTX report (6 slides, dark premium theme).
+    Does NOT call Claude API — builds slides directly from ads data.
+    Returns bytes.
+    """
+    try:
+        from pptx import Presentation as _Prs  # noqa: verify import
+    except ImportError:
+        raise RuntimeError("python-pptx nie zainstalowany — uruchom: pip install python-pptx")
+
+    if not title:
+        title = "Wyniki kampanii DRE"
+
+    d = _dre_analyze(meta_ads_data, google_ads_data)
+
+    prs = Presentation()
+    prs.slide_width  = SLIDE_W
+    prs.slide_height = SLIDE_H
+
+    _dre_slide_title(prs, title, date_range or "")
+    _dre_slide_kpis(prs, d)
+    _dre_slide_budget(prs, d, date_range or "")
+    _dre_slide_top_performers(prs, d)
+    _dre_slide_alerts(prs, d)
+    _dre_slide_recommendations(prs, d)
+
+    buf = io.BytesIO()
+    prs.save(buf)
+    buf.seek(0)
+    return buf.read()

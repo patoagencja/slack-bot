@@ -71,7 +71,7 @@ from tools.campaign_creator import (
 from tools.voice_transcription import transcribe_slack_audio, SLACK_AUDIO_MIMES
 from tools.marketing_skills import load_marketing_skill, SKILLS_INDEX
 from tools.icloud_calendar import icloud_calendar_tool
-from tools.pptx_presentation import generate_pptx, share_pptx
+from tools.pptx_presentation import generate_pptx, share_pptx, generate_pptx_dre
 from tools.memory import init_memory, remember, recall_as_context, get_history
 from tools.reminders import init_reminders, schedule_reminder, list_reminders
 from tools.token_log import init_token_log, TrackedAnthropicClient, get_summary, get_user_summary, set_current_user, USD_TO_PLN
@@ -655,6 +655,20 @@ Pytanie o kampanie/metryki/spend/ROAS/CTR → WYWOŁAJ narzędzie:
   3. Czy jest brief, dane, liczby, argumenty do uwzględnienia?
   4. Jaki ton/styl? (formalny dla klienta, wewnętrzny dla teamu?)
   Dopiero gdy masz odpowiedzi — sam napisz pełną treść każdego slajdu i wywołaj create_presentation z extra_slides wypełnionymi gotowym contentem.
+  ⚡ WYJĄTEK — RAPORT DRE (autonomiczny tryb):
+  Gdy klient to DRE i prosisz o raport/prezentację wyników → NIE pytaj o nic, działaj od razu:
+  1. Pobierz dane Meta (get_meta_ads_data, klient: "drzwi dre", ostatnie 7 dni lub podany zakres)
+  2. Pobierz dane Google (get_google_ads_data, klient: "dre", ten sam zakres)
+  3. Wywołaj create_presentation z client_name="DRE", pobranymi danymi i date_range
+  4. Po wygenerowaniu WYŚLIJ wiadomość z podsumowaniem w formacie:
+     ✅ Raport DRE gotowy — [zakres dat]
+     📊 KEY INSIGHTS:
+     🟢 [najlepszy wynik] — [liczba]
+     🟢 [drugi dobry wynik] — [liczba]
+     🔴 [główny problem] — [liczba]
+     🔴 [drugi problem] — [liczba]
+     💰 Potencjalne oszczędności: ~[X] zł/tydzień
+  Placeholder jeśli brak danych — nie czekaj na potwierdzenie, nie pytaj o zakres dat (domyślnie ostatnie 7 dni).
 NIGDY nie mów "nie mam dostępu" - zawsze najpierw użyj narzędzi!
 ⛔ BEZWZGLĘDNY ZAKAZ HALUCYNOWANIA DANYCH:
 - Gdy narzędzie (get_ga4_data, get_google_ads_data, meta_ads_tool) zwróci błąd lub "no_data: true" → STOP. Powiedz użytkownikowi wprost: "Nie mam danych dla tego klienta w systemie." NIE podawaj żadnych liczb, estymacji, "przykładowych" ani "orientacyjnych" wartości.
@@ -1146,16 +1160,27 @@ Pytanie → Direct answer → Context → Actionable next step
                     )
                 elif tool_name == "create_presentation":
                     try:
-                        _pptx_bytes = generate_pptx(
-                            title=tool_input.get("title"),
-                            client_name=tool_input.get("client_name"),
-                            subtitle=tool_input.get("subtitle"),
-                            brief=tool_input.get("brief"),
-                            date_range=tool_input.get("date_range"),
-                            meta_ads_data=tool_input.get("meta_ads_data"),
-                            google_ads_data=tool_input.get("google_ads_data"),
-                            extra_slides=tool_input.get("extra_slides"),
-                        )
+                        _client_normalized = (tool_input.get("client_name") or "").lower().strip()
+                        _is_dre = _client_normalized in ("dre", "drzwi dre", "dre drzwi",
+                                                         "dre klient", "drzwi")
+                        if _is_dre:
+                            _pptx_bytes = generate_pptx_dre(
+                                title=tool_input.get("title"),
+                                date_range=tool_input.get("date_range"),
+                                meta_ads_data=tool_input.get("meta_ads_data"),
+                                google_ads_data=tool_input.get("google_ads_data"),
+                            )
+                        else:
+                            _pptx_bytes = generate_pptx(
+                                title=tool_input.get("title"),
+                                client_name=tool_input.get("client_name"),
+                                subtitle=tool_input.get("subtitle"),
+                                brief=tool_input.get("brief"),
+                                date_range=tool_input.get("date_range"),
+                                meta_ads_data=tool_input.get("meta_ads_data"),
+                                google_ads_data=tool_input.get("google_ads_data"),
+                                extra_slides=tool_input.get("extra_slides"),
+                            )
                     except Exception as _pe:
                         logger.error(f"Błąd generowania PPTX: {_pe}")
                         tool_result = {"error": f"Błąd generowania prezentacji: {_pe}"}
