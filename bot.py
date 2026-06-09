@@ -1079,15 +1079,34 @@ Pytanie → Direct answer → Context → Actionable next step
                         client_name=tool_input.get('client_name')
                     )
                 elif tool_name == "manage_email":
-                    tool_result = email_tool(
-                        user_id=event.get('user'),
-                        action=tool_input.get('action'),
-                        limit=tool_input.get('limit', 10),
-                        to=tool_input.get('to'),
-                        subject=tool_input.get('subject'),
-                        body=tool_input.get('body'),
-                        query=tool_input.get('query')
-                    )
+                    if tool_input.get('action') == 'send':
+                        # Never send without explicit user confirmation
+                        uid = event.get('user')
+                        draft = {
+                            'to':        tool_input.get('to', ''),
+                            'subject':   tool_input.get('subject', ''),
+                            'body':      tool_input.get('body', ''),
+                            'channel':   event.get('channel'),
+                            'thread_ts': event.get('thread_ts') or event.get('ts'),
+                        }
+                        _ctx.pending_emails[uid] = draft
+                        tool_result = (
+                            "EMAIL NIE ZOSTAŁ WYSŁANY. Pokaż użytkownikowi poniższy draft "
+                            "i zapytaj czy chce go wysłać (odpowiedz 'tak' lub 'wyślij' żeby potwierdzić):\n\n"
+                            f"Do: {draft['to']}\n"
+                            f"Temat: {draft['subject']}\n\n"
+                            f"{draft['body']}"
+                        )
+                    else:
+                        tool_result = email_tool(
+                            user_id=event.get('user'),
+                            action=tool_input.get('action'),
+                            limit=tool_input.get('limit', 10),
+                            to=tool_input.get('to'),
+                            subject=tool_input.get('subject'),
+                            body=tool_input.get('body'),
+                            query=tool_input.get('query')
+                        )
                 elif tool_name == "get_google_ads_data":
                     tool_result = google_ads_tool(
                         date_from=tool_input.get('date_from'),
@@ -2157,6 +2176,30 @@ def handle_message_events(body, say, logger):
         return
 
     text_lower = user_message.lower()
+
+    # === POTWIERDZENIE WYSYŁKI MAILA ===
+    if user_id and user_id in _ctx.pending_emails:
+        _confirm_words = ["tak", "wyślij", "send", "wyślij to", "ok wyślij", "potwierdź",
+                          "potwierdzam", "śmiało", "wysyłaj", "yes", "yep", "ok"]
+        _cancel_words  = ["nie", "anuluj", "cancel", "stop", "zrezygnuj", "nie wysyłaj"]
+        if any(w in text_lower for w in _confirm_words):
+            _draft = _ctx.pending_emails.pop(user_id)
+            try:
+                _send_result = email_tool(
+                    user_id=user_id,
+                    action='send',
+                    to=_draft['to'],
+                    subject=_draft['subject'],
+                    body=_draft['body'],
+                )
+                _say_dm(f"✅ **Email wysłany!**\nDo: {_draft['to']}\nTemat: {_draft['subject']}")
+            except Exception as _e:
+                _say_dm(f"❌ Błąd wysyłki: {_e}")
+            return
+        elif any(w in text_lower for w in _cancel_words):
+            _ctx.pending_emails.pop(user_id, None)
+            _say_dm("❌ Anulowano wysyłkę maila.")
+            return
 
     # === ONBOARDING: "done N" w wątku onboardingowym ===
     if _handle_onboarding_done(event, say):

@@ -50,6 +50,9 @@ muted_alerts: dict = {}
 # Pending calendar invite confirmations: action_id → {user_id, title, start, end, location, channel, thread_ts}
 calendar_pending: dict = {}
 
+# Pending email sends awaiting user confirmation: user_id → {to, subject, body, channel, thread_ts}
+pending_emails: dict = {}
+
 
 # ── Wizard state persistence ──────────────────────────────────────────────────
 import json as _json
