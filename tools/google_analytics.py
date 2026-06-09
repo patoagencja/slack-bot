@@ -81,10 +81,16 @@ def google_analytics_tool(
             break
 
     if not property_id:
+        available = list(properties_map.keys())
         return {
-            "error": f"Nie znaleziono property GA4 dla klienta '{client_name}'",
-            "available_clients": list(properties_map.keys()),
-            "hint": "Sprawdź pisownię lub dodaj klienta do GA4_PROPERTY_IDS",
+            "error": (
+                f"BRAK DANYCH GA4 DLA '{client_name}'. "
+                f"Ten klient NIE MA podłączonego konta GA4 w systemie. "
+                f"NIE WOLNO podawać żadnych liczb ani statystyk — to byłoby wymyślanie danych. "
+                f"Powiedz użytkownikowi wprost że nie masz dostępu do GA4 dla tego klienta."
+            ),
+            "available_clients": available,
+            "no_data": True,
         }
 
     # Daty
