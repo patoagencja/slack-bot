@@ -655,11 +655,11 @@ Pytanie o kampanie/metryki/spend/ROAS/CTR → WYWOŁAJ narzędzie:
   3. Czy jest brief, dane, liczby, argumenty do uwzględnienia?
   4. Jaki ton/styl? (formalny dla klienta, wewnętrzny dla teamu?)
   Dopiero gdy masz odpowiedzi — sam napisz pełną treść każdego slajdu i wywołaj create_presentation z extra_slides wypełnionymi gotowym contentem.
-  ⚡ WYJĄTEK — RAPORT DRE (autonomiczny tryb):
-  Gdy klient to DRE i prosisz o raport/prezentację wyników → NIE pytaj o nic, działaj od razu:
+  ⚡ WYJĄTEK — KRÓTKI RAPORT DRE (autonomiczny tryb, 6 slajdów):
+  Gdy klient to DRE i chodzi o raport wyników / weekly summary → NIE pytaj o nic, działaj od razu:
   1. Pobierz dane Meta (get_meta_ads_data, klient: "drzwi dre", ostatnie 7 dni lub podany zakres)
   2. Pobierz dane Google (get_google_ads_data, klient: "dre", ten sam zakres)
-  3. Wywołaj create_presentation z client_name="DRE", pobranymi danymi i date_range
+  3. Wywołaj create_presentation z client_name="DRE", pobranymi danymi i date_range (BEZ extra_slides i brief)
   4. Po wygenerowaniu WYŚLIJ wiadomość z podsumowaniem w formacie:
      ✅ Raport DRE gotowy — [zakres dat]
      📊 KEY INSIGHTS:
@@ -669,6 +669,7 @@ Pytanie o kampanie/metryki/spend/ROAS/CTR → WYWOŁAJ narzędzie:
      🔴 [drugi problem] — [liczba]
      💰 Potencjalne oszczędności: ~[X] zł/tydzień
   Placeholder jeśli brak danych — nie czekaj na potwierdzenie, nie pytaj o zakres dat (domyślnie ostatnie 7 dni).
+  ℹ️ Większa prezentacja DRE (pitch deck, oferta, strategia, wiele slajdów) → normalna ścieżka (zbierz kontekst, przygotuj extra_slides, bez limitu slajdów).
 NIGDY nie mów "nie mam dostępu" - zawsze najpierw użyj narzędzi!
 ⛔ BEZWZGLĘDNY ZAKAZ HALUCYNOWANIA DANYCH:
 - Gdy narzędzie (get_ga4_data, get_google_ads_data, meta_ads_tool) zwróci błąd lub "no_data: true" → STOP. Powiedz użytkownikowi wprost: "Nie mam danych dla tego klienta w systemie." NIE podawaj żadnych liczb, estymacji, "przykładowych" ani "orientacyjnych" wartości.
@@ -1163,7 +1164,15 @@ Pytanie → Direct answer → Context → Actionable next step
                         _client_normalized = (tool_input.get("client_name") or "").lower().strip()
                         _is_dre = _client_normalized in ("dre", "drzwi dre", "dre drzwi",
                                                          "dre klient", "drzwi")
-                        if _is_dre:
+                        # Use DRE branded 6-slide generator only for short data reports
+                        # (ads data present, no custom content / extra slides / brief)
+                        _is_dre_data_report = (
+                            _is_dre
+                            and not tool_input.get("extra_slides")
+                            and not tool_input.get("brief")
+                            and (tool_input.get("meta_ads_data") or tool_input.get("google_ads_data"))
+                        )
+                        if _is_dre_data_report:
                             _pptx_bytes = generate_pptx_dre(
                                 title=tool_input.get("title"),
                                 date_range=tool_input.get("date_range"),
