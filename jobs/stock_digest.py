@@ -461,7 +461,7 @@ _BASE_JSON_SCHEMA = (
     'Odpowiadasz TYLKO w JSON bez żadnego tekstu przed/po:\n'
     '{"fundamentals_score": 1-5, "timing_score": 1-5, "macro_risk": "low"/"medium"/"high",\n'
     ' "reasoning": "max 2 zdania po polsku",\n'
-    ' "verdict": "KUP"/"CZEKAJ"/"OMIJAJ",\n'
+    ' "verdict": "KUP"/"CZEKAJ"/"OMIJAJ"/"OBSERWUJ",\n'
     ' "confidence": "LOW"/"MEDIUM"/"HIGH",\n'
     ' "bull_case": "1 zdanie — co musi się wydarzyć żeby spółka urosła",\n'
     ' "bear_case": "1 zdanie — co może pójść źle",\n'
@@ -476,7 +476,22 @@ _BASE_JSON_SCHEMA = (
     'revision_momentum: POSITIVE = analitycy podnosili EPS w ostatnich tygodniach; NEGATIVE = obniżali.\n'
     'narrative_strength: STRONG = spółka ma aktywną narrację (AI wdrożenia, agentic AI, nuclear, space, GLP-1, fintech EM); NONE = brak aktywnej narracji.\n'
     'basket: POZYTYWNY = spółka w koszyku narracyjnym który rynek teraz nagradza; NEGATYWNY = w koszyku który rynek karze.\n'
-    'business_quality_intact: true jeśli problemy są przejściowe (reinwestycje, sezonowość) NIE fundamentalne.'
+    'business_quality_intact: true jeśli problemy są przejściowe (reinwestycje, sezonowość) NIE fundamentalne.\n'
+    '\n'
+    'ZASADY VERDYKTU — stosuj precyzyjnie:\n'
+    'KUP   = fundamentals≥3 AND timing≥3 AND macro_risk≠high AND NIE (blisko ATH + RSI>75 jednocześnie)\n'
+    '        LUB (revision_momentum=POSITIVE AND narrative_strength=STRONG AND timing≥2 AND macro_risk≠high)\n'
+    'CZEKAJ = dobra spółka (fundamentals≥3) ale timing≤2\n'
+    '         LUB timing OK ale fundamenty 2-3 bez wyraźnych tailwindów\n'
+    '         LUB macro_risk=high niezależnie od reszty\n'
+    'OBSERWUJ = dobra spółka (fundamentals≥3) w fazie akumulacji (Stage 1 lub narracja się buduje)\n'
+    '           ale timing≤2 — masz ją na radarze gdy technikalia się poprawią\n'
+    'OMIJAJ = fundamentals≤2\n'
+    '         LUB (guidance obniżony + fundamenty się pogarszają)\n'
+    '         LUB business_quality_intact=false przy fundamentals≤3\n'
+    'SPODZIEWANY ROZKŁAD: KUP 10-20% | CZEKAJ 50-60% | OMIJAJ 10-20% | OBSERWUJ 10-20%\n'
+    'NIE dawaj CZEKAJ gdy spółka jest dobra fundamentalnie i ma aktywną narrację — daj KUP lub OBSERWUJ.\n'
+    'NIE bój się KUP przy RSI 60-70 jeśli trend jest wzrostowy i fundamenty mocne.'
 )
 
 _SYSTEM_PROMPTS = {
@@ -741,6 +756,65 @@ def _claude_analyze(ticker: str, fin: dict, news: list, category: str = "STANDAR
         return dict(_FALLBACK_ANALYSIS)
 
 
+def _apply_verdict_rules(analysis: dict, fin: dict) -> dict:
+    """Deterministic verdict override applied after all score adjustments.
+
+    Ensures KUP/CZEKAJ/OMIJAJ/OBSERWUJ matches the defined scoring rules,
+    regardless of how conservative Claude's initial assessment was.
+    """
+    fs    = analysis.get("fundamentals_score", 3)
+    ts    = analysis.get("timing_score", 3)
+    mr    = analysis.get("macro_risk", "medium")
+    rm    = analysis.get("revision_momentum", "NEUTRAL")
+    ns    = analysis.get("narrative_strength", "NONE")
+    bqi   = analysis.get("business_quality_intact", True)
+    flags = analysis.get("flags", [])
+
+    near_ath    = fin.get("near_ath", False)
+    rsi         = fin.get("rsi") or 0
+    death_cross = fin.get("technicals", {}).get("death_cross", False)
+
+    flags_upper = " ".join(flags).upper()
+    has_guidance_cut  = "GUIDANCE" in flags_upper and "OBNIŻONY" in flags_upper.replace("OBNI", "OBNI")
+    has_deteriorating = "DETERIORATING" in flags_upper
+    has_outflow       = "SECTOR_OUTFLOW" in flags_upper
+
+    # Normalise: treat any "GUIDANCE" flag as a cut signal (they're only added on negative text)
+    has_guidance_cut = any("GUIDANCE" in f.upper() for f in flags)
+
+    # ── OMIJAJ ────────────────────────────────────────────────────────────────
+    if fs <= 2:
+        return {**analysis, "verdict": "OMIJAJ"}
+    if has_guidance_cut and has_deteriorating:
+        return {**analysis, "verdict": "OMIJAJ"}
+    if death_cross and has_outflow and rsi > 70:
+        return {**analysis, "verdict": "OMIJAJ"}
+    if not bqi and fs <= 3:
+        return {**analysis, "verdict": "OMIJAJ"}
+
+    # ── CZEKAJ — macro too risky regardless of everything else ───────────────
+    if mr == "high":
+        return {**analysis, "verdict": "CZEKAJ"}
+
+    # ── KUP — primary condition ───────────────────────────────────────────────
+    if fs >= 3 and ts >= 3:
+        if not (near_ath and rsi > 75):
+            return {**analysis, "verdict": "KUP"}
+
+    # ── KUP — alternative: strong narrative + positive revisions ─────────────
+    if rm == "POSITIVE" and ns == "STRONG" and ts >= 2:
+        return {**analysis, "verdict": "KUP"}
+
+    # ── OBSERWUJ — good fundamentals but timing not ready ────────────────────
+    if fs >= 3 and ts <= 2 and ns in ("STRONG", "WEAK"):
+        return {**analysis, "verdict": "OBSERWUJ"}
+    if fs >= 3 and ns == "STRONG" and ts <= 2:
+        return {**analysis, "verdict": "OBSERWUJ"}
+
+    # ── Default: CZEKAJ ───────────────────────────────────────────────────────
+    return {**analysis, "verdict": "CZEKAJ"}
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def analyze_ticker(ticker: str, qqq_30d: float | None = None, btc_data: dict | None = None) -> dict:
@@ -964,6 +1038,12 @@ def analyze_ticker(ticker: str, qqq_30d: float | None = None, btc_data: dict | N
                 f"⚠️ LOW_LIQUIDITY — avg ${avg_dv_m:.1f}M/dzień, max pozycja ~${max_pos_m}M (1% vol)"
             ]
 
+    # ── Final verdict override (rule-based, runs after all adjustments) ───────
+    old_verdict = analysis.get("verdict")
+    analysis = _apply_verdict_rules(analysis, fin)
+    if analysis["verdict"] != old_verdict:
+        logger.info("%s: verdict overridden %s→%s by rule engine", ticker, old_verdict, analysis["verdict"])
+
     return {**fin, "news": news, "analysis": analysis}
 
 
@@ -1013,8 +1093,8 @@ def format_ticker_attachment(ticker: str, data: dict) -> dict:
         cat_label = CATEGORY_LABELS.get(category, category)
         analysis = data.get("analysis") or dict(_FALLBACK_ANALYSIS)
         verdict  = analysis.get("verdict", "CZEKAJ")
-        verdict_emoji = {"KUP": "🟢", "CZEKAJ": "🟡", "OMIJAJ": "🔴"}.get(verdict, "⚪")
-        color    = {"KUP": "#2eb886", "CZEKAJ": "#e6b833", "OMIJAJ": "#e01e5a"}.get(verdict, "#aaaaaa")
+        verdict_emoji = {"KUP": "🟢", "CZEKAJ": "🟡", "OMIJAJ": "🔴", "OBSERWUJ": "🔵"}.get(verdict, "⚪")
+        color    = {"KUP": "#2eb886", "CZEKAJ": "#e6b833", "OMIJAJ": "#e01e5a", "OBSERWUJ": "#1d9bd1"}.get(verdict, "#aaaaaa")
 
         sign   = "+" if cp >= 0 else ""
         ma_str = _ticker_ma_str(tech)
@@ -1130,7 +1210,7 @@ def format_ticker_slack(ticker: str, data: dict) -> str:
         tech = data.get("technicals", {})
         analysis = data.get("analysis") or dict(_FALLBACK_ANALYSIS)
         verdict = analysis.get("verdict", "CZEKAJ")
-        verdict_emoji = {"KUP": "🟢", "CZEKAJ": "🟡", "OMIJAJ": "🔴"}.get(verdict, "⚪")
+        verdict_emoji = {"KUP": "🟢", "CZEKAJ": "🟡", "OMIJAJ": "🔴", "OBSERWUJ": "🔵"}.get(verdict, "⚪")
         sign = "+" if cp >= 0 else ""
 
         lines = [
@@ -1166,7 +1246,7 @@ def _concentration_risk_section(results: list[tuple]) -> str:
     total = sum(verdicts.values())
     lines = ["", "📊 *Watchlist breakdown:*"]
     lines.append(
-        f"🟢 KUP: {verdicts['KUP']} | 🟡 CZEKAJ: {verdicts['CZEKAJ']} | 🔴 OMIJAJ: {verdicts['OMIJAJ']}"
+        f"🟢 KUP: {verdicts['KUP']} | 🟡 CZEKAJ: {verdicts['CZEKAJ']} | 🔴 OMIJAJ: {verdicts['OMIJAJ']} | 🔵 OBSERWUJ: {verdicts['OBSERWUJ']}"
     )
 
     top_sectors = sectors.most_common(3)
@@ -1376,12 +1456,15 @@ FILOZOFIA DNA RYNKÓW (stosuj przy każdej spółce):
 - Siła narracji: AI, nuclear, space, GLP-1, fintech EM = rynek nagradza premią
 - Koszyk narracyjny: czy spółka w koszyku który rynek TERAZ nagradza?
 - Jakość biznesu: problemy przejściowe (reinwestycje) vs fundamentalne (utrata rynku)
-- Timing: RSI>75 lub near ATH = CZEKAJ nawet przy dobrych fundamentach
+- Timing: RSI>75 i near ATH jednocześnie = CZEKAJ; samo RSI 60-70 z trendem wzrostowym = OK
 
-Napisz JEDEN raport inwestycyjny w formacie Slack markdown. Pogrupuj wszystkie spółki w trzy sekcje:
+Napisz JEDEN raport inwestycyjny w formacie Slack markdown. Pogrupuj wszystkie spółki w CZTERY sekcje:
 
 🟢 *WARTE UWAGI — dobre wejście teraz:*
 • *TICKER* $cena — 1 zdanie uzasadnienia (uwzględnij rewizje EPS i narrację)
+
+🔵 *OBSERWUJ — dobra spółka, za wcześnie na wejście (Stage 1 / narracja się buduje):*
+• *TICKER* $cena — 1 zdanie co czekać
 
 🟡 *CZEKAJ — dobra spółka, zły timing lub za drogo:*
 • *TICKER* $cena — 1 zdanie uzasadnienia
@@ -1389,20 +1472,30 @@ Napisz JEDEN raport inwestycyjny w formacie Slack markdown. Pogrupuj wszystkie s
 🔴 *OMIJAJ:*
 • *TICKER* $cena — 1 zdanie uzasadnienia
 
-ZASADY GRUPOWANIA PER KATEGORIA:
-- STANDARD_TECH: RSI<65 + nie blisko ATH + fundamenty OK + pozytywne rewizje EPS = WARTE UWAGI
-- CRYPTO_PROXY (MSTR, MARA, HOOD): oceniaj TYLKO przez BTC trend (nie PE/marże). BTC bullish+RSI_BTC<70=KUP. Zaznacz aktualny kurs BTC w reasoning.
-- URANIUM (UEC,DNN,UUUU,CCJ): oceniaj przez spot uranu i nuclear renaissance, nie przez PE. Tailwind = rosnący popyt AI/data centers.
-- DEFENSE (NOC,BA,TDG): geopolityka=TAILWIND, backlog kontraktów, budżety NATO rosnące.
-- SPACE_DEFENSE (RKLB,ASTS,LUNR,PL,RDW,IRDM): pre-profit = oceniaj EV/Revenue nie PE. Kluczowe: backlog NASA/DoD, burn rate, kamienie milowe misji.
-- BIOTECH_HEALTH (TEM,ISRG,UNH,NVO,TDOC): pipeline/FDA/GLP-1 market share. NVO przez ekspozycję na GLP-1.
-- EMERGING_MARKETS (BABA,SE,GRAB,MELI,NU,DLO): uwzględnij ryzyko USD i kraju. Chiny=osobna flaga ryzyka regulacyjnego.
-- CONSUMER_DISCRETIONARY (LULU,NKE,DECK,CMG,RACE): comparable sales, zapasy, cła Chiny. RACE=osobna liga (pricing power, order book). Jeśli cały sektor consumer słabo — kontekstualizuj.
-FLAGI AUTOMATYCZNE (jeśli widoczne w danych): ⚠️ DETERIORATING FUNDAMENTALS, 🔴 GUIDANCE OBNIŻONY, ⚠️ RYZYKO CEŁ — uwzględnij je w uzasadnieniu.
+ZASADY GRUPOWANIA:
+KUP/WARTE UWAGI = fundamenty OK (3+) + timing OK (3+) + macro nie high
+                  LUB (rewizje EPS pozytywne + narracja STRONG + timing 2+)
+OBSERWUJ = fundamenty OK + narracja się buduje + poniżej MA50/MA200 lub timing≤2 — dobra spółka ale jeszcze nie gotowa
+CZEKAJ = dobra spółka ale samo RSI>75 blisko ATH, lub makro high
+OMIJAJ = fundamenty słabe (1-2), guidance obniżony + fundamenty się pogarszają, brak narracji i słabe technikalia
+
+KATEGORIA PER SPÓŁKA:
+- STANDARD_TECH: RSI<75 + fundamenty OK + narracja/rewizje pozytywne = WARTE UWAGI
+- CRYPTO_PROXY (MSTR, MARA, HOOD): BTC bullish+RSI_BTC<70=KUP. Zaznacz kurs BTC.
+- URANIUM (UEC,DNN,UUUU,CCJ): spot uranu + nuclear renaissance. NIE przez PE.
+- DEFENSE (NOC,BA,TDG): geopolityka=TAILWIND, backlog, NATO budżety.
+- SPACE_DEFENSE (RKLB,ASTS,LUNR,PL,RDW,IRDM): pre-profit = EV/Revenue, burn rate, backlog.
+- BIOTECH_HEALTH (TEM,ISRG,UNH,NVO,TDOC): pipeline/FDA/GLP-1.
+- EMERGING_MARKETS (BABA,SE,GRAB,MELI,NU,DLO): ryzyko USD i kraju. Chiny=flaga regulacyjna.
+- CONSUMER_DISCRETIONARY (LULU,NKE,DECK,CMG,RACE): comp sales, zapasy, cła.
+FLAGI (uwzględnij w uzasadnieniu): ⚠️ DETERIORATING FUNDAMENTALS, 🔴 GUIDANCE OBNIŻONY, ⚠️ RYZYKO CEŁ
+
+SPODZIEWANY ROZKŁAD: 10-20% WARTE UWAGI | 10-20% OBSERWUJ | 50-60% CZEKAJ | 10-20% OMIJAJ
+NIE dawaj CZEKAJ wszystkiemu — to znak że jesteś za restrykcyjny.
 
 Na końcu ZAWSZE:
 ⚠️ *Blisko ATH (<5%):* [lista lub "brak"]
-📊 *Watchlist:* X warte uwagi | Y czekaj | Z omijaj
+📊 *Watchlist:* X warte uwagi | Y obserwuj | Z czekaj | W omijaj
 
 Pisz po polsku. Krótko, konkretnie, liczby z danych."""
     )
