@@ -323,25 +323,30 @@ def _score_vix_structure() -> tuple[int, str]:
     vix_spot = _yf_latest("^VIX")
     vix3m    = _yf_latest("^VIX3M")
 
-    # Term structure signal
+    # Term structure signal — graduated by depth
     structure_pts = 0
     structure_label = "brak danych"
     if vix_spot and vix3m:
-        diff = vix3m - vix_spot  # positive = contango (normal), negative = backwardation (alarm)
+        diff = vix3m - vix_spot  # positive = contango, negative = backwardation
         if diff > 2:
             structure_pts   = 4
             structure_label = f"🟢 Contango VIX {vix_spot:.1f} / VIX3M {vix3m:.1f} (+{diff:.1f}) — rynek spokojny"
-        elif diff > 0:
-            structure_pts   = 1
-            structure_label = f"🟡 Contango płaski VIX {vix_spot:.1f} / VIX3M {vix3m:.1f} (+{diff:.1f}) — uwaga"
-        elif diff > -2:
+        elif diff > 0.5:
+            structure_pts   = 2
+            structure_label = f"🟢 Lekki contango VIX {vix_spot:.1f} / VIX3M {vix3m:.1f} (+{diff:.1f})"
+        elif diff >= -0.5:
+            structure_pts   = 0
+            structure_label = f"🟡 VIX ≈ VIX3M ({vix_spot:.1f} / {vix3m:.1f}, diff {diff:+.1f}) — struktury zbliżone"
+        elif diff >= -2:
             structure_pts   = -2
-            structure_label = f"⚠️ VIX zbliża się do VIX3M ({vix_spot:.1f} / {vix3m:.1f}) — krótkoterm. strach rośnie"
-        else:
+            structure_label = f"⚠️ Lekka backwardation VIX {vix_spot:.1f} > VIX3M {vix3m:.1f} ({diff:.1f}) — krótkoterm. strach rośnie"
+        elif diff >= -5:
             structure_pts   = -4
-            structure_label = f"🔴 BACKWARDATION VIX {vix_spot:.1f} > VIX3M {vix3m:.1f} ({diff:.1f}) — rynek boi się TERAZ (alarm 1-3 tyg.)"
+            structure_label = f"🔴 Wyraźna backwardation VIX {vix_spot:.1f} >> VIX3M {vix3m:.1f} ({diff:.1f}) — alarm 1-3 tyg."
+        else:
+            structure_pts   = -6
+            structure_label = f"🔴🔴 GŁĘBOKA BACKWARDATION VIX {vix_spot:.1f} >> VIX3M {vix3m:.1f} ({diff:.1f}) — rynek w panice"
     elif vix_spot:
-        # Fallback: VIX spot level as rough proxy if VIX3M unavailable
         if vix_spot < 18:
             structure_pts, structure_label = 3, f"🟢 VIX {vix_spot:.1f} (VIX3M niedostępne)"
         elif vix_spot < 25:
@@ -349,7 +354,7 @@ def _score_vix_structure() -> tuple[int, str]:
         else:
             structure_pts, structure_label = -3, f"🔴 VIX {vix_spot:.1f} — podwyższony"
 
-    # SKEW signal — tail risk / smart money buying OTM puts
+    # SKEW signal — graduated by level (old: flat >140 = -3; new: 6-step scale)
     skew_pts = 0
     skew_label = ""
     skew_snippet = _tavily_snippet("CBOE SKEW index tail risk options latest 2026", 200)
@@ -357,16 +362,26 @@ def _score_vix_structure() -> tuple[int, str]:
     m = _re.search(r'\b(1[0-9][0-9]|[2-9][0-9])\b', skew_snippet)
     skew_val = int(m.group()) if m else None
     if skew_val:
-        if skew_val > 140:
-            skew_pts   = -3
-            skew_label = f" | SKEW {skew_val} 🔴 — smart money kupuje ochronę przed crash"
-        elif skew_val >= 130:
+        if skew_val > 160:
+            skew_pts   = -4
+            skew_label = f" | SKEW {skew_val} 🔴🔴 — ekstremalny poziom (historycznie >170 poprzedza większe korekty)"
+        elif skew_val > 150:
+            skew_pts   = -2
+            skew_label = f" | SKEW {skew_val} 🔴 — instytucje się zabezpieczają (podwyższony, nie ekstremalny)"
+        elif skew_val > 140:
             skew_pts   = -1
-            skew_label = f" | SKEW {skew_val} 🟡 — instytucje zaczynają się zabezpieczać"
-        else:
+            skew_label = f" | SKEW {skew_val} 🟡 — lekko podwyższony, monitoruj"
+        elif skew_val >= 130:
+            skew_pts   = 0
+            skew_label = f" | SKEW {skew_val} 🟡 — na górnej granicy normy"
+        elif skew_val >= 120:
+            skew_pts   = 1
             skew_label = f" | SKEW {skew_val} 🟢 — normalny poziom ochrony"
+        else:
+            skew_pts   = 2
+            skew_label = f" | SKEW {skew_val} 🟢 — niski poziom strachu"
 
-    total_pts = max(-5, structure_pts + skew_pts)
+    total_pts = max(-8, structure_pts + skew_pts)
     return total_pts, f"{structure_label}{skew_label}"
 
 
@@ -813,13 +828,13 @@ def compute_market_health() -> dict:
     score = int(round((raw_weighted - norm_min) / (norm_max - norm_min) * 100))
     score = max(0, min(100, score))
 
-    if score >= 75:
+    if score >= 70:
         mode = "🟢 BULL MODE"
         action = "Rynek zdrowy. Korekty to okazje do kupna. Trzymaj pełną ekspozycję."
-    elif score >= 55:
+    elif score >= 50:
         mode = "🟡 CAUTION MODE"
         action = "Rynek OK ale są ryzyka. Redukuj najbardziej ryzykowne pozycje. Trzymaj 10-20% gotówki."
-    elif score >= 35:
+    elif score >= 30:
         mode = "🟠 DEFENSIVE MODE"
         action = "Wiele sygnałów ostrzegawczych. Redukuj ekspozycję do 50-60%. Gotówka jest pozycją."
     else:
@@ -845,6 +860,43 @@ def compute_market_health() -> dict:
         "top_negatives":    negatives[:3],
         "timestamp":        datetime.datetime.now().isoformat(),
     }
+
+
+def _build_trend_context(state: dict, new_score: int) -> str:
+    """Compute 4-week score trend from history. Returns 1-line summary."""
+    history = state.get("score_history", [])
+    if not history:
+        return ""
+    prev_score = history[-1].get("score")
+    delta = new_score - prev_score if prev_score is not None else None
+    delta_str = (f"{delta:+d} pkt" if delta is not None else "")
+
+    # 4-week trend: compare oldest vs newest in history
+    trend = ""
+    if len(history) >= 2:
+        oldest = history[0].get("score", new_score)
+        if new_score > oldest + 5:
+            trend = "📈 rosnący"
+        elif new_score < oldest - 5:
+            trend = "📉 spadający"
+        else:
+            trend = "➡️ stabilny"
+
+    parts = []
+    if prev_score is not None:
+        parts.append(f"Poprzedni odczyt: {prev_score}")
+    if delta_str:
+        parts.append(f"Zmiana: {delta_str}")
+    if trend:
+        parts.append(f"Trend 4 tygodnie: {trend}")
+    return " | ".join(parts)
+
+
+def _update_score_history(state: dict, score: int, timestamp: str):
+    """Append score to rolling 5-entry history (≈ 4 weeks of daily readings)."""
+    history = state.get("score_history", [])
+    history.append({"score": score, "ts": timestamp})
+    state["score_history"] = history[-5:]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -885,9 +937,14 @@ def format_health_full(result: dict) -> str:
     today = datetime.date.today().strftime("%d.%m.%Y")
     recession_line = "\n\n⚠️ *RECESJA ALERT — 2+ filary czerwone! Zmień strategię.*" if result["recession_alert"] else ""
 
+    # Trend line from persisted history
+    state = _load_state()
+    trend_ctx = _build_trend_context(state, result["score"])
+    trend_line = f"\n_{trend_ctx}_" if trend_ctx else ""
+
     lines = [
         f"🏥 *Market Health Monitor — {today}*",
-        f"*Score: {result['score']}/100 — {result['mode']}*{recession_line}",
+        f"*Score: {result['score']}/100 — {result['mode']}*{recession_line}{trend_line}",
         "",
         "*3 Filary Recesji DNA Rynków:*",
         _pillar_line("Produkcja przemysłowa", p["industrial_production"]),
@@ -989,12 +1046,20 @@ def format_vix_analysis() -> str:
     m_skew = _re.search(r'\b(1[0-9][0-9])\b', skew_snippet)
     skew_val = int(m_skew.group()) if m_skew else None
     if skew_val:
-        if skew_val > 140:
-            skew_line = f"🔴 SKEW {skew_val} — smart money kupuje ochronę przed crash"
+        if skew_val > 160:
+            skew_line = (f"🔴🔴 SKEW {skew_val} — ekstremalny poziom "
+                         f"(historycznie >170 poprzedza większe korekty; obecny poziom = poważny sygnał)")
+        elif skew_val > 150:
+            skew_line = (f"🔴 SKEW {skew_val} — podwyższony ale nie ekstremalny "
+                         f"(historycznie SKEW >170 poprzedza większe korekty; obecny poziom = ostrożność, nie panika)")
+        elif skew_val > 140:
+            skew_line = f"🟡 SKEW {skew_val} — lekko podwyższony, monitoruj (norma 110-130)"
         elif skew_val >= 130:
-            skew_line = f"🟡 SKEW {skew_val} — instytucje zaczynają się zabezpieczać"
-        else:
+            skew_line = f"🟡 SKEW {skew_val} — na górnej granicy normy"
+        elif skew_val >= 120:
             skew_line = f"🟢 SKEW {skew_val} — normalny poziom ochrony"
+        else:
+            skew_line = f"🟢 SKEW {skew_val} — spokój, niski poziom strachu"
     else:
         skew_line = "SKEW: brak danych"
 
@@ -1090,48 +1155,66 @@ def check_and_send_alerts(new_result: dict):
 
     # Leading indicator alerts (fire BEFORE VIX spikes)
     try:
-        # VIX term structure — backwardation is the real signal
+        # VIX term structure — alert only on meaningful backwardation (>2 pts)
         vix_spot = _yf_latest("^VIX")
         vix3m    = _yf_latest("^VIX3M")
         prev_structure = state.get("last_vix_structure", "contango")
         if vix_spot and vix3m:
             diff = vix3m - vix_spot
-            curr_structure = "backwardation" if diff < 0 else ("flat" if diff < 2 else "contango")
-            if prev_structure != "backwardation" and curr_structure == "backwardation":
+            # Granular structure classification
+            if diff > 2:
+                curr_structure = "contango"
+            elif diff >= -0.5:
+                curr_structure = "flat"
+            elif diff >= -2:
+                curr_structure = "backwardation_light"
+            elif diff >= -5:
+                curr_structure = "backwardation_strong"
+            else:
+                curr_structure = "backwardation_deep"
+
+            # Alert only when meaningful backwardation: diff < -2
+            if curr_structure in ("backwardation_strong", "backwardation_deep") and \
+               prev_structure not in ("backwardation_strong", "backwardation_deep"):
                 alerts.append(
-                    f"📡 *VIX: krótkoterminowy strach > długoterminowy* (VIX {vix_spot:.1f} > VIX3M {vix3m:.1f})\n"
-                    f"    _(rynek boi się najbliższych tygodni bardziej niż kolejnych miesięcy — historycznie wyprzedza duże spadki o 1-3 tyg.)_"
+                    f"📡 *VIX: wyraźna backwardation* — VIX {vix_spot:.1f} > VIX3M {vix3m:.1f} (różnica {abs(diff):.1f} pkt)\n"
+                    f"    _(rynek boi się najbliższych tygodni bardziej niż kolejnych miesięcy. "
+                    f"Lekka backwardation <2 pkt to szum; wyraźna >2 pkt to wczesny sygnał — historycznie wyprzedza duże spadki o 1-3 tyg.)_"
                 )
-            elif prev_structure == "contango" and curr_structure == "flat":
-                alerts.append(
-                    f"📡 *VIX się spłaszcza* (VIX {vix_spot:.1f} / VIX3M {vix3m:.1f})\n"
-                    f"    _(normalnie VIX3M > VIX; gdy się wyrównują, rynek zaczyna się niepokoić — warto obserwować)_"
-                )
+            elif prev_structure in ("contango",) and curr_structure == "flat":
+                # Gentle heads-up — don't fire an alarm, just note
+                logger.info("VIX structure flattening: %s → %s (diff %.1f), no alert", prev_structure, curr_structure, diff)
+
             state["last_vix_structure"] = curr_structure
             state["last_vix"] = vix_spot
 
-        # SKEW alert
+        # SKEW alert — only at extreme levels (>160), with historical context
         skew_snippet = _tavily_snippet("CBOE SKEW index tail risk latest 2026", 150)
         import re as _re
         m_skew = _re.search(r'\b(1[0-9][0-9])\b', skew_snippet)
         if m_skew:
             skew_val = int(m_skew.group())
             prev_skew = state.get("last_skew", 120)
-            if prev_skew < 140 <= skew_val:
+            if prev_skew < 160 <= skew_val:
                 alerts.append(
-                    f"📡 *SKEW Index przekroczył 140* (obecnie {skew_val})\n"
-                    f"    _(duże fundusze masowo kupują opcje put — ubezpieczają się przed crashem. "
-                    f"To jak wykupowanie ubezpieczenia przed katastrofą. Normalne wartości to 110-130.)_"
+                    f"📡 *SKEW Index przekroczył 160* (obecnie {skew_val})\n"
+                    f"    _SKEW {skew_val} — podwyższony ale historycznie dopiero >170 poprzedzało większe korekty. "
+                    f"Obecny poziom = ostrożność, nie panika. "
+                    f"Duże fundusze kupują opcje put — ubezpieczają się. Normalne wartości: 110-130._"
                 )
+            elif 140 < skew_val <= 160 and prev_skew <= 140:
+                # Only log, no alert — this was the old threshold, now just informational
+                logger.info("SKEW entered 140-160 zone (%d→%d), below 160 alert threshold", prev_skew, skew_val)
             state["last_skew"] = skew_val
 
-        # Credit spreads — 2-week trend
+        # Credit spreads — alert only on significant 2-week widening
         credit_pts, credit_detail = _score_credit_spreads()
         prev_credit = state.get("last_credit_pts", 2)
         if credit_pts <= -5 and prev_credit > -3:
             alerts.append(
-                f"📡 *Spready kredytowe rosną* — {credit_detail[:80]}\n"
-                f"    _(rynek wycenia wyższe ryzyko bankructw firm. Akcje reagują z 2-4 tyg. opóźnieniem.)_"
+                f"📡 *Spready kredytowe istotnie rosną* — {credit_detail[:80]}\n"
+                f"    _(rynek wycenia wyższe ryzyko bankructw firm. Akcje reagują z 2-4 tyg. opóźnieniem. "
+                f"Alert tylko przy silnym 2-tygodniowym trendzie — graniczna zmiana nie wystarczy.)_"
             )
         state["last_credit_pts"] = credit_pts
 
@@ -1156,6 +1239,9 @@ def check_and_send_alerts(new_result: dict):
     elif not new_result["recession_alert"]:
         state["recession_alert_sent"] = False
 
+    # Build trend context string
+    trend_ctx = _build_trend_context(state, new_result["score"])
+
     if alerts:
         body = "\n".join(f"  • {a}" for a in alerts)
         score_line = (
@@ -1176,6 +1262,7 @@ def check_and_send_alerts(new_result: dict):
             f"━━━━━━━━━━━━━━━━━━\n"
             f"📊 {score_line} — *{new_result['mode']}*\n"
             + (f"_{mode_explain}_\n" if mode_explain else "")
+            + (f"📈 _{trend_ctx}_\n" if trend_ctx else "")
             + f"\n💼 *Co robić:* {new_result['action']}"
         )
         try:
@@ -1183,7 +1270,8 @@ def check_and_send_alerts(new_result: dict):
         except Exception as e:
             logger.error("Alert post failed: %s", e)
 
-    # Persist new state
+    # Persist new state (including rolling score history)
+    _update_score_history(state, new_result["score"], new_result["timestamp"])
     state.update({
         "last_score":   new_result["score"],
         "last_mode":    new_result["mode"],
