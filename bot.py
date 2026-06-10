@@ -59,8 +59,9 @@ from jobs.capital_flow import send_capital_flow_snapshot
 from jobs.narrative_scanner import send_narrative_radar, run_narrative_scan, run_sector_dive
 from jobs.market_health_monitor import (
     run_zdrowie_command, run_recesja_command, run_vix_command,
-    send_daily_health_header, run_market_health,
+    run_market_health,
 )
+from jobs.morning_brief import send_morning_brief
 # jobs.reminders removed — reminders now use Slack chat.scheduleMessage
 from tools.campaign_creator import (
     download_slack_files, upload_creative_to_meta, parse_campaign_request,
@@ -4685,7 +4686,7 @@ scheduler.add_job(check_stale_onboardings,   'cron', hour=9, minute=30, id='stal
 # scheduler.add_job(post_standup_summary,      'cron', day_of_week='mon-fri', hour=9, minute=30, id='standup_summary')
 scheduler.add_job(weekly_industry_news,      'cron', day_of_week='mon',     hour=9, minute=0,  id='industry_news')
 scheduler.add_job(weekly_cost_report,        'cron', day_of_week='mon',     hour=9,  minute=5,  id='weekly_cost_report')
-scheduler.add_job(send_daily_health_header,  'cron', day_of_week='mon-fri', hour=8,  minute=30, id='market_health_daily')
+scheduler.add_job(send_morning_brief,        'cron', day_of_week='mon-fri', hour=15, minute=0,  id='market_health_daily')  # 15:00 Warsaw ≈ 13:00 UTC (CEST)
 scheduler.add_job(send_weekly_setups,        'cron', day_of_week='fri',     hour=16, minute=0,  id='weekly_setups')
 scheduler.add_job(send_narrative_radar,      'cron', day_of_week='fri',     hour=16, minute=30, id='narrative_radar')
 # stock_digest disabled — uruchamiać ręcznie przez /digest
