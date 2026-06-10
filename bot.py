@@ -55,6 +55,16 @@ from jobs.industry_news import weekly_industry_news
 from jobs.cost_report import weekly_cost_report
 from jobs.stock_digest import send_stock_digest, send_summary_digest, run_stock_digest, run_summary_digest, analyze_ticker, format_ticker_slack, format_ticker_attachment, WATCHLIST, send_macro_briefing, send_crypto_digest
 from jobs.weekly_setups import send_weekly_setups, analyze_single_swing, send_scan_setups
+from jobs.capital_flow import send_capital_flow_snapshot
+from jobs.narrative_scanner import send_narrative_radar, run_narrative_scan, run_sector_dive
+from jobs.market_health_monitor import (
+    run_zdrowie_command, run_recesja_command, run_vix_command,
+    run_market_health,
+)
+from jobs.morning_brief import send_morning_brief
+from jobs.correction_probability import (
+    compute_correction_probability, format_correction_dashboard, format_history_table,
+)
 # jobs.reminders removed — reminders now use Slack chat.scheduleMessage
 from tools.campaign_creator import (
     download_slack_files, upload_creative_to_meta, parse_campaign_request,
@@ -1522,6 +1532,185 @@ def handle_makro_slash(ack, respond, command):
             respond(f"❌ Błąd: {e}")
 
     _th.Thread(target=_worker, daemon=True).start()
+
+
+@app.command("/kapital")
+def handle_kapital_slash(ack, respond, command):
+    """Sektor rotation snapshot — gdzie płynie kapitał."""
+    import threading as _th
+    ack()
+    force = (command.get("text") or "").strip().lower() == "refresh"
+    respond("💰 Pobieram dane o przepływach kapitału... chwilę (~2 min).")
+
+    def _worker():
+        try:
+            send_capital_flow_snapshot(force=force)
+            respond("✅ Capital flow snapshot wysłany na #inwestowanie!")
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
+@app.command("/narracje")
+def handle_narracje_slash(ack, respond, command):
+    """Narrative momentum radar: /narracje | /narracje {sektor}"""
+    import threading as _th
+    ack()
+    arg = (command.get("text") or "").strip().lower()
+
+    if arg:
+        respond(f"🔭 Szukam narracji dla sektora *{arg}*... (~1 min)")
+        def _worker():
+            try:
+                result = run_sector_dive(arg)
+                for chunk in [result[i:i+3900] for i in range(0, len(result), 3900)]:
+                    respond(chunk)
+            except Exception as e:
+                respond(f"❌ Błąd: {e}")
+    else:
+        respond("🔭 Uruchamiam Narrative Radar... (~2 min)")
+        def _worker():
+            try:
+                result = run_narrative_scan()
+                for chunk in [result[i:i+3900] for i in range(0, len(result), 3900)]:
+                    respond(chunk)
+            except Exception as e:
+                respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
+@app.command("/zdrowie")
+def handle_zdrowie_slash(ack, respond, command):
+    """/zdrowie — full Market Health Score with all 20 indicators."""
+    import threading as _th
+    ack()
+    respond("🏥 Obliczam Market Health Score... (~3 min)")
+
+    def _worker():
+        try:
+            respond(run_zdrowie_command())
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
+@app.command("/recesja")
+def handle_recesja_slash(ack, respond, command):
+    """/recesja — 3 filary recesji DNA Rynków + trend."""
+    import threading as _th
+    ack()
+    respond("🔍 Sprawdzam 3 filary recesji...")
+
+    def _worker():
+        try:
+            respond(run_recesja_command())
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
+@app.command("/vix")
+def handle_vix_slash(ack, respond, command):
+    """/vix — aktualny VIX z interpretacją."""
+    ack()
+    try:
+        respond(run_vix_command())
+    except Exception as e:
+        respond(f"❌ Błąd: {e}")
+
+
+@app.command("/korekta")
+def handle_korekta_slash(ack, respond, command):
+    """/korekta — Correction Probability Dashboard (0-100). /korekta historia = tabela historyczna."""
+    import threading as _th
+    ack()
+    text = (command.get("text") or "").strip().lower()
+
+    if text == "historia":
+        try:
+            respond(format_history_table())
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+        return
+
+    respond("📉 Obliczam ryzyko korekty >20%... (~60 sek.)")
+
+    def _worker():
+        try:
+            result = compute_correction_probability()
+            respond(format_correction_dashboard(result))
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
+@app.command("/supercykle")
+def handle_supercykle_slash(ack, respond, command):
+    """Active supercycles and their beneficiaries."""
+    import threading as _th
+    ack()
+    respond("🌊 Analizuję aktywne supercykle... (~2 min)")
+
+    def _worker():
+        try:
+            result = run_supercycle_scan()
+            respond(result)
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
+@app.command("/cyklicznosc")
+def handle_cyklicznosc_slash(ack, respond, command):
+    """/cyklicznosc {TICKER} — cyclicality and cycle position analysis."""
+    import threading as _th
+    ack()
+    ticker = (command.get("text") or "").strip().upper()
+    if not ticker:
+        respond("Podaj ticker, np. `/cyklicznosc MU` lub `/cyklicznosc ASML`")
+        return
+    respond(f"🔄 Analizuję cykliczność *{ticker}*...")
+
+    def _worker(t=ticker):
+        try:
+            respond(run_cyclicality_analysis(t))
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
+@app.command("/insider")
+def handle_insider_slash(ack, respond, command):
+    """/insider {TICKER} — insider transaction quality analysis."""
+    import threading as _th
+    ack()
+    ticker = (command.get("text") or "").strip().upper()
+    if not ticker:
+        respond("Podaj ticker, np. `/insider NVDA` lub `/insider MSTR`")
+        return
+    respond(f"👤 Szukam transakcji insiderów dla *{ticker}*...")
+
+    def _worker(t=ticker):
+        try:
+            respond(run_insider_analysis(t))
+        except Exception as e:
+            respond(f"❌ Błąd: {e}")
+
+    _th.Thread(target=_worker, daemon=True).start()
+
+
+_SWING_SECTOR_NAMES = {
+    "space", "nuclear", "defense", "ai", "biotech", "fintech", "cyber", "semis", "energy", "consumer",
+    "kosmiczny", "kosmos", "nuklear", "uranium", "uran", "obronny", "obrona", "sztuczna",
+    "glp1", "em", "cybersecurity", "chips", "semiconductor", "energia", "konsument",
+}
 
 
 @app.command("/swing")
