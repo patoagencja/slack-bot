@@ -782,11 +782,6 @@ def generate_daily_digest_dre():
             mtd_google_spend = sum(float(c.get("cost", c.get("spend", 0)) or 0) for c in google_mtd_combined)
             mtd_google_conversions = sum(int(c.get("conversions", 0) or 0) for c in google_mtd_combined)
 
-        # Annotacja celu per kampania (Meta)
-        for c in meta_campaigns:
-            c['_objective'] = _detect_campaign_objective(c.get('campaign_name', ''))
-            c['_engagement'] = _extract_engagement_actions(c)
-
         # Zapisz do historii
         for c in meta_campaigns_raw:
             name = c.get("campaign_name", "")
