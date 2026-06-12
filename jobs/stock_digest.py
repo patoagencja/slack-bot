@@ -13,6 +13,18 @@ import datetime
 import time as _time
 from collections import Counter
 
+# Capital flow — imported lazily to avoid circular imports at module level
+_capital_flow = None
+
+def _get_capital_flow():
+    global _capital_flow
+    if _capital_flow is None:
+        try:
+            import jobs.capital_flow as _capital_flow
+        except Exception:
+            pass
+    return _capital_flow
+
 import requests as _requests
 import pandas as pd
 import numpy as np
@@ -39,6 +51,8 @@ WATCHLIST = [
     "ALAB", "LITE", "UNH", "IBM", "APH", "NOC", "CCJ", "UEC", "DNN", "UUUU",
     "SE", "GRAB", "TDOC", "PGY", "DECK", "USAR", "EOSE", "S", "DLO", "RYCEY",
     "SYNA", "GFS", "PRM", "PSIX", "BA",
+    # Space & Defense
+    "RKLB", "ASTS", "LUNR", "PL", "RDW", "IRDM",
 ]
 
 # ── Sector mapping ────────────────────────────────────────────────────────────
@@ -61,6 +75,8 @@ TICKER_SECTORS = {
     "ISRG": "Healthcare", "UNH": "Healthcare", "TDOC": "Healthcare", "NVO": "Healthcare",
     "MCO": "Financial", "NU": "Financial", "DLO": "Financial", "PGY": "Financial",
     "NOC": "Defense", "TDG": "Defense", "AXON": "Defense",
+    "RKLB": "Space/Defense", "ASTS": "Space/Defense", "LUNR": "Space/Defense",
+    "PL": "Space/Defense", "RDW": "Space/Defense", "IRDM": "Space/Defense",
     "CCJ": "Nuclear/Energy", "UEC": "Nuclear/Energy", "DNN": "Nuclear/Energy",
     "UUUU": "Nuclear/Energy", "EOSE": "Nuclear/Energy",
     "RYCEY": "Aerospace", "BA": "Aerospace",
@@ -175,12 +191,36 @@ _CATEGORY_MAP = {
     "CRYPTO_PROXY":          ["MSTR", "MARA", "HOOD"],
     "URANIUM":               ["UEC", "DNN", "UUUU", "CCJ"],
     "DEFENSE":               ["NOC", "BA", "TDG"],
+    "SPACE_DEFENSE":         ["RKLB", "ASTS", "LUNR", "PL", "RDW", "IRDM"],
     "BIOTECH_HEALTH":        ["TEM", "ISRG", "UNH", "NVO", "TDOC"],
     "EMERGING_MARKETS":      ["BABA", "SE", "GRAB", "MELI", "NU", "DLO"],
     "CONSUMER_DISCRETIONARY":["LULU", "NKE", "DECK", "CMG", "RACE"],
 }
 # Tickers with tariff/supply-chain risk beyond CONSUMER_DISCRETIONARY
 _TARIFF_RISK_TICKERS = {"LULU", "NKE", "DECK", "RACE", "SNAP", "AAPL", "CMG"}
+
+# Tickers that are inherently cyclical (don't penalize one bad quarter)
+_CYCLICAL_TICKERS = {
+    "ASML", "MU", "AMAT", "KLAC", "LRCX", "GFS",  # semis capex cycle
+    "CCJ", "UEC", "DNN", "UUUU",                    # uranium cycle
+    "BA", "RYCEY",                                   # aerospace cycle
+}
+
+# Active supercycles: name → {query, tickers}
+_SUPERCYCLE_MAP = {
+    "HBM/DRAM Memory":     {"query": "memory DRAM HBM supercycle AI demand 2026",           "tickers": ["MU", "ALAB", "ASML", "NVDA", "AMD"]},
+    "Nuclear Renaissance": {"query": "nuclear renaissance SMR orders utility contracts 2026", "tickers": ["CCJ", "UEC", "DNN", "UUUU"]},
+    "Defense Supercycle":  {"query": "defense spending NATO supercycle procurement 2026",     "tickers": ["NOC", "TDG", "AXON", "BA"]},
+    "GLP-1/Obesity":       {"query": "GLP-1 obesity drug market expansion supply chain 2026","tickers": ["NVO", "ISRG", "TEM"]},
+    "Agentic AI":          {"query": "agentic AI enterprise deployment revenue 2026",        "tickers": ["NOW", "CRM", "PATH", "CRWD", "APP", "MSFT"]},
+    "Power Grid/Energy":   {"query": "power grid energy AI datacenter infrastructure 2026",  "tickers": ["EOSE", "VST", "CEG"]},
+}
+
+# Reverse map: ticker → list of supercycle names it belongs to
+_TICKER_SUPERCYCLES: dict[str, list[str]] = {}
+for _sc_name, _sc_data in _SUPERCYCLE_MAP.items():
+    for _t in _sc_data["tickers"]:
+        _TICKER_SUPERCYCLES.setdefault(_t, []).append(_sc_name)
 
 ASSET_CATEGORY: dict[str, str] = {}
 for _cat, _tickers in _CATEGORY_MAP.items():
@@ -191,6 +231,7 @@ CATEGORY_LABELS = {
     "CRYPTO_PROXY":          "₿ Crypto Proxy",
     "URANIUM":               "☢️ Uranium",
     "DEFENSE":               "🛡 Defense",
+    "SPACE_DEFENSE":         "🚀 Space/Defense",
     "BIOTECH_HEALTH":        "💊 Biotech/Health",
     "EMERGING_MARKETS":      "🌍 Emerging Markets",
     "CONSUMER_DISCRETIONARY":"🛍 Consumer",
@@ -333,6 +374,7 @@ def _fetch_news(ticker: str, category: str = "STANDARD_TECH") -> list:
         "CRYPTO_PROXY":          f"{ticker} bitcoin holdings NAV premium discount 2026",
         "URANIUM":               f"uranium spot price 2026 {ticker} nuclear SMR contracts production",
         "DEFENSE":               f"{ticker} defense contracts NATO budget 2026 backlog",
+        "SPACE_DEFENSE":         f"{ticker} launch manifest contracts NASA DoD 2026",
         "BIOTECH_HEALTH":        f"{ticker} FDA pipeline GLP-1 approval clinical trial 2026",
         "EMERGING_MARKETS":      f"{ticker} regulatory risk USD currency geopolitical 2026",
         "CONSUMER_DISCRETIONARY":f"{ticker} same store sales inventory comparable sales 2026",
@@ -353,8 +395,11 @@ def _fetch_news(ticker: str, category: str = "STANDARD_TECH") -> list:
         return []
 
 
-def _fetch_extra_signals(ticker: str, category: str) -> dict:
-    """Additional targeted Tavily calls for guidance, tariffs, US sales."""
+def _fetch_extra_signals(ticker: str, category: str,
+                         short_pct: float | None = None,
+                         margin_declining: bool = False,
+                         is_cyclical: bool = False) -> dict:
+    """Additional targeted Tavily calls: guidance, EPS revisions, insider, catalyst, etc."""
     if _tavily is None:
         return {}
     out = {}
@@ -366,44 +411,100 @@ def _fetch_extra_signals(ticker: str, category: str) -> dict:
         except Exception as e:
             logger.warning("Extra signal %s for %s: %s", key, ticker, e)
 
-    # Guidance — all tickers
-    _search("guidance", f"{ticker} guidance lowered raised outlook forecast 2026")
+    # Core signals — all tickers
+    _search("guidance",       f"{ticker} guidance lowered raised outlook forecast 2026")
+    _search("eps_revisions",  f"{ticker} EPS estimates revision analysts upgrade downgrade 2026")
+    _search("insider_quality",f"{ticker} insider purchase open market CEO CFO director 2026")
+    _search("catalyst_window",f"{ticker} upcoming catalyst event conference earnings product launch 2026")
 
-    # Tariffs — consumer & other exposed tickers
+    # Conditional signals
+    if (short_pct or 0) > 15:
+        _search("convertible_debt", f"{ticker} convertible notes zero coupon debt hedge 2026")
+
+    if margin_declining or category == "CONSUMER_DISCRETIONARY":
+        _search("margin_reason", f"{ticker} margin decline reason investment capex reinvest 2026")
+
+    if is_cyclical:
+        _search("cycle_context", f"{ticker} industry cycle recovery inventory correction 2026")
+
     if category == "CONSUMER_DISCRETIONARY" or ticker in _TARIFF_RISK_TICKERS:
-        _search("tariffs", f"{ticker} tariffs supply chain China import costs 2026")
-
-    # US domestic sales — consumer focused
+        _search("tariffs",  f"{ticker} tariffs supply chain China import costs 2026")
     if category == "CONSUMER_DISCRETIONARY":
         _search("us_sales", f"{ticker} US domestic sales revenue decline slowdown 2026")
 
     return out
 
 
+# ── DNA Rynków investment philosophy ─────────────────────────────────────────
+_DNA_PHILOSOPHY = (
+    "FILOZOFIA INWESTYCYJNA (DNA Rynków):\n"
+    "1. REWIZJE EPS > SNAPSHOT: Kierunek zmian prognoz ważniejszy niż bezwzględna wartość PE. "
+    "Analitycy podnosili EPS = POZYTYWNY sygnał nawet przy wysokim PE. Obniżali = NEGATYWNY nawet przy niskim PE.\n"
+    "2. SIŁA NARRACJI: Spółki z aktywną narrację rynek nagradza premią — AI wdrożenia, agentic AI, nuclear renaissance, "
+    "space economy, GLP-1/obesity, fintech EM. Brak narracji = trudniej o re-rating w górę.\n"
+    "3. KOSZYK NARRACYJNY: Oceń czy spółka jest w koszyku który rynek TERAZ nagradza. "
+    "Zmiana koszyka (np. rotacja z AI na defensywne) = ważny sygnał timingowy.\n"
+    "4. JAKOŚĆ BIZNESU: Czy problemy są przejściowe (reinwestycje, sezonowość) czy fundamentalne "
+    "(utrata udziałów, shrinking TAM, commodityzacja)? Przejściowe = buy the dip. Fundamentalne = unikaj.\n"
+    "5. INSIDER BUYING: Zakupy insiderów = silny sygnał confidence w spółkę. "
+    "Sprzedaż insiderów po pompie — mniej istotna (może być planowa dywersyfikacja).\n"
+    "6. DYSKRECJONALNE vs SYSTEMATYCZNE: Szukaj spółek gdzie fundamenty poprawiają się szybciej "
+    "niż konsensus widzi — to przewaga dyskrecjonalnego podejścia nad pasywnym.\n"
+    "7. TIMING: Nie kupuj po pompie (RSI>75, near ATH <5%). "
+    "Najlepsze wejście = dobra spółka w chwilowym dołku bez fundamentalnego powodu.\n"
+    "8. KONCENTRACJA: Lepsze wyniki daje koncentracja na najlepszych ideach niż dywersyfikacja dla spokoju sumienia.\n"
+    "9. ZARZĄDZANIE RYZYKIEM: Każda pozycja ma bull i bear case — obie muszą być realistyczne.\n"
+)
+
 # ── Claude system prompts per category ───────────────────────────────────────
 _BASE_JSON_SCHEMA = (
     'Odpowiadasz TYLKO w JSON bez żadnego tekstu przed/po:\n'
     '{"fundamentals_score": 1-5, "timing_score": 1-5, "macro_risk": "low"/"medium"/"high",\n'
     ' "reasoning": "max 2 zdania po polsku",\n'
-    ' "verdict": "KUP"/"CZEKAJ"/"OMIJAJ",\n'
+    ' "verdict": "KUP"/"CZEKAJ"/"OMIJAJ"/"OBSERWUJ",\n'
     ' "confidence": "LOW"/"MEDIUM"/"HIGH",\n'
     ' "bull_case": "1 zdanie — co musi się wydarzyć żeby spółka urosła",\n'
-    ' "bear_case": "1 zdanie — co może pójść źle"\n'
+    ' "bear_case": "1 zdanie — co może pójść źle",\n'
+    ' "revision_momentum": "POSITIVE"/"NEGATIVE"/"NEUTRAL",\n'
+    ' "narrative_strength": "STRONG"/"WEAK"/"NONE",\n'
+    ' "basket": "POZYTYWNY"/"NEGATYWNY"/"NEUTRALNY",\n'
+    ' "business_quality_intact": true/false\n'
     '}\n'
     'confidence=HIGH gdy wszystkie sygnały zgodne; MEDIUM gdy większość zgodna; '
     'LOW gdy sprzeczne sygnały lub brak kluczowych danych.\n'
-    'bull_case i bear_case ZAWSZE wymagane — wymuszają myślenie w obu kierunkach.'
+    'bull_case i bear_case ZAWSZE wymagane.\n'
+    'revision_momentum: POSITIVE = analitycy podnosili EPS w ostatnich tygodniach; NEGATIVE = obniżali.\n'
+    'narrative_strength: STRONG = spółka ma aktywną narrację (AI wdrożenia, agentic AI, nuclear, space, GLP-1, fintech EM); NONE = brak aktywnej narracji.\n'
+    'basket: POZYTYWNY = spółka w koszyku narracyjnym który rynek teraz nagradza; NEGATYWNY = w koszyku który rynek karze.\n'
+    'business_quality_intact: true jeśli problemy są przejściowe (reinwestycje, sezonowość) NIE fundamentalne.\n'
+    '\n'
+    'ZASADY VERDYKTU — stosuj precyzyjnie:\n'
+    'KUP   = fundamentals≥3 AND timing≥3 AND macro_risk≠high AND NIE (w ciągu 2% ATH) AND NIE (w ciągu 5% ATH + RSI>68)\n'
+    '        LUB (revision_momentum=POSITIVE AND narrative_strength=STRONG AND timing≥2 AND macro_risk≠high + te same limity ATH)\n'
+    'CZEKAJ = dobra spółka (fundamentals≥3) ale timing≤2\n'
+    '         LUB timing OK ale fundamenty 2-3 bez wyraźnych tailwindów\n'
+    '         LUB macro_risk=high niezależnie od reszty\n'
+    'OBSERWUJ = dobra spółka (fundamentals≥3) w fazie akumulacji (Stage 1 lub narracja się buduje)\n'
+    '           ale timing≤2 — masz ją na radarze gdy technikalia się poprawią\n'
+    'OMIJAJ = fundamentals≤2\n'
+    '         LUB (guidance obniżony + fundamenty się pogarszają)\n'
+    '         LUB business_quality_intact=false przy fundamentals≤3\n'
+    'SPODZIEWANY ROZKŁAD: KUP 10-20% | CZEKAJ 50-60% | OMIJAJ 10-20% | OBSERWUJ 10-20%\n'
+    'NIE dawaj CZEKAJ gdy spółka jest dobra fundamentalnie i ma aktywną narrację — daj KUP lub OBSERWUJ.\n'
+    'NIE bój się KUP przy RSI 60-70 jeśli trend jest wzrostowy i fundamenty mocne.'
 )
 
 _SYSTEM_PROMPTS = {
     "CRYPTO_PROXY": (
-        "Jesteś analitykiem krypto i crypto-equity. Ta spółka to CRYPTO PROXY — "
+        _DNA_PHILOSOPHY
+        + "Jesteś analitykiem krypto i crypto-equity. Ta spółka to CRYPTO PROXY — "
         "jej wycena jest zdeterminowana przez Bitcoina, NIE przez P/E ani marże.\n"
         "Oceń wyłącznie:\n"
         "1) Trend BTC: czy BTC > MA200? RSI BTC < 70 = nie przegrzany\n"
         "2) Lewar: ile BTC na akcję (NAV), premium/discount do NAV — wysoki premium = ryzyko\n"
         "3) Scenario: historycznie MSTR rośnie 3-4x gdy BTC x2\n"
         "4) Timing RSI spółki + short interest\n"
+        "5) Rewizje EPS: analitycy podnosili prognozy? (revision_momentum)\n"
         "KUP = BTC bullish (>MA200) + RSI BTC < 70 + rozsądny premium do NAV\n"
         "CZEKAJ = BTC sideways lub wysoki premium do NAV\n"
         "OMIJAJ = BTC poniżej MA200 lub RSI BTC > 80\n"
@@ -411,7 +512,8 @@ _SYSTEM_PROMPTS = {
         + _BASE_JSON_SCHEMA
     ),
     "URANIUM": (
-        "Jesteś analitykiem surowcowym specjalizującym się w uranie i energetyce jądrowej.\n"
+        _DNA_PHILOSOPHY
+        + "Jesteś analitykiem surowcowym specjalizującym się w uranie i energetyce jądrowej.\n"
         "NIE oceniaj przez standardowe P/E — uranium miners mają cykliczną rentowność.\n"
         "Oceń przez:\n"
         "1) Spot price uranu (trend wzrostowy = tailwind)\n"
@@ -419,33 +521,58 @@ _SYSTEM_PROMPTS = {
         "3) Ekspozycja na nuclear renaissance / SMR (Small Modular Reactors)\n"
         "4) Polityczne tailwindy: dekarbonizacja, AI data centers = wzrost popytu na prąd\n"
         "5) Koszty produkcji vs spot price (czy spółka jest profitable przy aktualnych cenach)\n"
+        "6) Rewizje EPS i momentum narracyjne (nuclear koszyk aktywny?)\n"
         "Geopolityka = TAILWIND dla nuclear, nie ryzyko.\n"
         + _BASE_JSON_SCHEMA
     ),
     "DEFENSE": (
-        "Jesteś analitykiem sektora obronnego.\n"
+        _DNA_PHILOSOPHY
+        + "Jesteś analitykiem sektora obronnego.\n"
         "Oceń przez:\n"
         "1) Cykl obronny: budżety NATO, wydatki rządowe (rosnące = tailwind)\n"
         "2) Backlog kontraktów i visibility przychodów\n"
         "3) Geopolityka jako TAILWIND — nie ryzyko\n"
         "4) Wycena vs peers (P/E w defense zwykle 15-25x = normalne)\n"
         "5) Dywidenda i buybacki jako element zwrotu\n"
+        "6) Rewizje EPS: czy analitycy podnosili prognozy w kontekście rosnących budżetów?\n"
         "Nie karz spółki za 'wysokie' P/E jeśli backlog i cykl uzasadniają premię.\n"
         + _BASE_JSON_SCHEMA
     ),
+    "SPACE_DEFENSE": (
+        _DNA_PHILOSOPHY
+        + "Jesteś analitykiem sektora kosmicznego i new-space defense.\n"
+        "WIĘKSZOŚĆ tych spółek to pre-profit lub early-revenue — NIE oceniaj przez P/E.\n"
+        "Używaj EV/Revenue jako głównej metryki wyceny.\n"
+        "Oceń przez:\n"
+        "1) Launch manifest / backlog kontraktów (NASA, DoD, komercyjne) — kluczowy wskaźnik\n"
+        "2) Revenue mix: rządowe (stabilne, przewidywalne) vs komercyjne (wyższy potencjał)\n"
+        "3) Burn rate i runway gotówkowy — ile kwartałów bez dofinansowania\n"
+        "4) Kamienie milowe technologiczne (udane misje = re-rating w górę, awarie = w dół)\n"
+        "5) Konkurencja SpaceX jako benchmark — czy spółka ma realną niszę\n"
+        "6) Tailwindy: Low Earth Orbit economy, satellite broadband, DoD 'proliferated LEO'\n"
+        "7) Narracja space economy aktywna? Insider buying przy niskich cenach?\n"
+        "KUP = rosnący backlog + rządowy kontrakt zakotwiczony + burn rate pod kontrolą\n"
+        "CZEKAJ = dobre perspektywy ale brak konkretnych kontraktów lub wysoki burn\n"
+        "OMIJAJ = burn rate > 4 kwartały runway lub brak realnej niszy vs SpaceX\n"
+        + _BASE_JSON_SCHEMA
+    ),
     "BIOTECH_HEALTH": (
-        "Jesteś analitykiem sektora healthcare i biotech.\n"
+        _DNA_PHILOSOPHY
+        + "Jesteś analitykiem sektora healthcare i biotech.\n"
         "Oceń przez:\n"
         "1) Pipeline produktowy i FDA approvals (catalyst risk/opportunity)\n"
         "2) Dla NVO: ekspozycja na GLP-1 market share, competition from LLY\n"
         "3) Dla insurerów (UNH): medical loss ratio, regulatory risk\n"
         "4) Dla telehealth (TDOC): unit economics, customer retention\n"
         "5) Generics risk dla spółek patentowych\n"
-        "6) Standardowe fundamenty tam gdzie mają sens\n"
+        "6) Rewizje EPS: czy analitycy podnosili/obniżali prognozy po ostatnich danych klinicznych?\n"
+        "7) Czy narracja GLP-1/obesity/AI w medycynie aktywna i wspiera wycenę?\n"
+        "8) Standardowe fundamenty tam gdzie mają sens\n"
         + _BASE_JSON_SCHEMA
     ),
     "EMERGING_MARKETS": (
-        "Jesteś analitykiem rynków wschodzących.\n"
+        _DNA_PHILOSOPHY
+        + "Jesteś analitykiem rynków wschodzących.\n"
         "Oceń przez:\n"
         "1) Fundamenty spółki (wzrost, marże, wycena)\n"
         "2) Ryzyko walutowe USD (silny USD = headwind dla EM)\n"
@@ -454,11 +581,14 @@ _SYSTEM_PROMPTS = {
         "   - Azja SEA (SE, GRAB): ryzyko niższe, ale polityka lokalna\n"
         "   - LATAM (MELI, NU, DLO): ryzyko walutowe, inflation\n"
         "4) Geopolityka (de-coupling USA-Chiny = dodatkowe ryzyko dla spółek chińskich)\n"
+        "5) Rewizje EPS: czy kierunek zmian prognoz pozytywny mimo geopolitycznych headwindów?\n"
+        "6) Koszyk EM fintech/e-commerce aktywny czy rynek go karze?\n"
         "W reasoning zaznacz zawsze ryzyko kraju jako osobną wzmiankę.\n"
         + _BASE_JSON_SCHEMA
     ),
     "CONSUMER_DISCRETIONARY": (
-        "Jesteś analitykiem sektora consumer discretionary.\n"
+        _DNA_PHILOSOPHY
+        + "Jesteś analitykiem sektora consumer discretionary.\n"
         "Oceniaj przez:\n"
         "1) Same-store/comparable sales growth — to ważniejszy wskaźnik niż YoY revenue\n"
         "2) Average selling price trend — czy obniżają ceny żeby sprzedać? (zły znak)\n"
@@ -466,16 +596,21 @@ _SYSTEM_PROMPTS = {
         "4) Cła i supply chain (szczególnie produkcja w Chinach/Azji)\n"
         "5) Siła konsumenta USA (core target market)\n"
         "6) Czy problemy są firmowe czy sektorowe (cały retail słaby = inny kontekst)\n"
+        "7) Rewizje EPS: obniżki prognoz po słabych comp sales = NEGATYWNY sygnał\n"
+        "8) Czy problemy przejściowe (kurs USD, jednorazowe cło) czy fundamentalne (utrata klienta)?\n"
         "Dla RACE (Ferrari): oceniaj przez order book, waitlist, pricing power (inna liga niż NKE/LULU)\n"
         "Dla CMG: comparable restaurant sales, traffic vs ticket size\n"
         + _BASE_JSON_SCHEMA
     ),
     "STANDARD_TECH": (
-        "Jesteś analitykiem inwestycyjnym. Analizujesz spółki pod kątem:\n"
+        _DNA_PHILOSOPHY
+        + "Jesteś analitykiem inwestycyjnym. Analizujesz spółki pod kątem:\n"
         "1) Fundamentów (wycena vs sektor, wzrost, marże, EV/EBITDA)\n"
         "2) Timingu (RSI > 75 = przegrzana, MA50/MA200, golden/death cross, blisko ATH)\n"
         "3) Ryzyka makro (Fed, VIX, sezonowość, short interest, insider activity)\n"
         "4) Relative strength vs QQQ (>20% w 30d = prawdopodobnie przegrzana)\n"
+        "5) Rewizji EPS: kierunek zmian prognoz analityków jest ważniejszy niż bezwzględny PE\n"
+        "6) Siły narracji: AI wdrożenia, agentic AI — spółki w aktywnym koszyku dostają premię\n"
         "Uwzględnij czy spółka ma earnings w ciągu 14 dni.\n"
         + _BASE_JSON_SCHEMA
     ),
@@ -555,18 +690,45 @@ def _build_user_msg(ticker: str, fin: dict, news: list, category: str) -> str:
         if deteriorating_label:
             base += f"{deteriorating_label}\n"
 
-    # ── Extra signals: guidance, tariffs, US sales ──
+    # ── Extra signals: guidance, EPS revisions, tariffs, US sales ──
     if extras.get("guidance"):
         base += f"\nGuidance/outlook: {extras['guidance'][:250]}\n"
+    if extras.get("eps_revisions"):
+        base += f"EPS revision trajectory: {extras['eps_revisions'][:250]}\n"
     if extras.get("tariffs"):
         base += f"Tariff/supply chain risk: {extras['tariffs'][:200]}\n"
     if extras.get("us_sales"):
         base += f"US domestic sales: {extras['us_sales'][:200]}\n"
+    if extras.get("insider_quality"):
+        base += f"Insider activity: {extras['insider_quality'][:250]}\n"
+    if extras.get("catalyst_window"):
+        base += f"Upcoming catalysts: {extras['catalyst_window'][:200]}\n"
+    if extras.get("convertible_debt"):
+        base += f"Convertible debt/hedge context: {extras['convertible_debt'][:200]}\n"
+    if extras.get("margin_reason"):
+        base += f"Margin compression reason: {extras['margin_reason'][:200]}\n"
+    if extras.get("cycle_context"):
+        base += f"Industry cycle context: {extras['cycle_context'][:200]}\n"
+
+    # Supercycle membership
+    supercycles = _TICKER_SUPERCYCLES.get(ticker, [])
+    if supercycles:
+        base += f"Supercykle strukturalne: {', '.join(supercycles)}\n"
+
+    # Cyclical flag
+    if ticker in _CYCLICAL_TICKERS:
+        base += "UWAGA: Spółka CYKLICZNA — nie oceniaj przez jeden słaby kwartał, patrz na cykl.\n"
 
     # ── Sector context ──
     sector_ctx = fin.get("sector_context", "")
     if sector_ctx:
         base += f"\nKontekst sektora ({sector}): {sector_ctx[:200]}\n"
+
+    # ── Capital flow signal ──
+    flow = fin.get("sector_flow", "NEUTRAL")
+    if flow != "NEUTRAL":
+        flow_label = "🟢 SECTOR_INFLOW — kapitał napływa do tego sektora" if flow == "INFLOW" else "🔴 SECTOR_OUTFLOW — kapitał odpływa z tego sektora"
+        base += f"\nCapital flow: {flow_label}\n"
 
     return base + news_text
 
@@ -670,6 +832,10 @@ def analyze_ticker(ticker: str, qqq_30d: float | None = None, btc_data: dict | N
     # ── Sector context (cached per sector) ──
     fin["sector_context"] = _fetch_sector_context(fin["sector"])
 
+    # ── Capital flow signal ──
+    cf = _get_capital_flow()
+    fin["sector_flow"] = cf.get_ticker_flow(ticker) if cf else "NEUTRAL"
+
     # ── Category-specific extras ──
     if category == "CRYPTO_PROXY":
         fin["btc_data"] = btc_data if btc_data is not None else _fetch_btc_data()
@@ -691,8 +857,14 @@ def analyze_ticker(ticker: str, qqq_30d: float | None = None, btc_data: dict | N
             except Exception as e:
                 logger.warning("MSTR NAV fetch error: %s", e)
 
-    # ── Extra signals: guidance + tariffs + US sales ──
-    fin["extra_signals"] = _fetch_extra_signals(ticker, category)
+    # ── Extra signals (guidance, EPS, insider, catalyst, convertible debt, etc.) ──
+    qtrd = fin["quarterly_trends"]
+    fin["extra_signals"] = _fetch_extra_signals(
+        ticker, category,
+        short_pct=short_pct,
+        margin_declining=qtrd.get("margin_declining", False),
+        is_cyclical=ticker in _CYCLICAL_TICKERS,
+    )
 
     news     = _fetch_news(ticker, category)
     analysis = _claude_analyze(ticker, fin, news, category)
@@ -717,7 +889,153 @@ def analyze_ticker(ticker: str, qqq_30d: float | None = None, btc_data: dict | N
     if any(w in tariff_text for w in ("tariff", "cło", "supply chain disruption", "higher costs", "import costs")):
         analysis["flags"] = analysis.get("flags", []) + ["⚠️ RYZYKO CEŁ/SUPPLY CHAIN"]
 
+    # ── Capital flow timing adjustment ──
+    flow = fin.get("sector_flow", "NEUTRAL")
+    if flow == "INFLOW":
+        old_t = analysis.get("timing_score", 3)
+        analysis["timing_score"] = min(5, old_t + 1)
+        analysis["flags"] = analysis.get("flags", []) + ["🟢 SECTOR_INFLOW"]
+    elif flow == "OUTFLOW":
+        old_t = analysis.get("timing_score", 3)
+        analysis["timing_score"] = max(1, old_t - 1)
+        analysis["flags"] = analysis.get("flags", []) + ["🔴 SECTOR_OUTFLOW"]
+
+    # ── Convertible debt decoder (high short ≠ always bearish) ──
+    convertible_text = (fin["extra_signals"].get("convertible_debt") or "").lower()
+    short_val = short_pct or 0
+    if short_val > 15:
+        if any(w in convertible_text for w in ("convertible", "zero coupon", "notes", "hedge", "delta")):
+            analysis["flags"] = analysis.get("flags", []) + [
+                "💡 CONVERTIBLE_DEBT_HEDGE — short to prawdopodobnie delta-hedge, nie teza niedźwiedzia"
+            ]
+        else:
+            analysis["flags"] = analysis.get("flags", []) + [f"⚠️ HIGH_SHORT_INTEREST {short_val:.0f}%"]
+
+    # ── Insider buying quality ──
+    insider_text = (fin["extra_signals"].get("insider_quality") or "").lower()
+    _strong_words = ("ceo", "cfo", "chief executive", "chief financial", "open market", "purchased on", "bought shares")
+    if sum(1 for w in _strong_words if w in insider_text) >= 2:
+        analysis["flags"] = analysis.get("flags", []) + ["🟢 STRONG_INSIDER_BUY — CEO/CFO kupuje na wolnym rynku"]
+        old_f = analysis.get("fundamentals_score", 3)
+        analysis["fundamentals_score"] = min(5, old_f + 1)
+
+    # ── Supercycle tailwind ──
+    supercycles = _TICKER_SUPERCYCLES.get(ticker, [])
+    if supercycles:
+        analysis["flags"] = analysis.get("flags", []) + [f"🌊 SUPERCYCLE: {', '.join(supercycles)}"]
+        old_t = analysis.get("timing_score", 3)
+        analysis["timing_score"] = min(5, old_t + 1)
+
+    # ── Cyclicality: don't penalize mid-cycle correction ──
+    if ticker in _CYCLICAL_TICKERS:
+        cycle_text = (fin["extra_signals"].get("cycle_context") or "").lower()
+        if any(w in cycle_text for w in ("recovery", "upturn", "improving", "accelerating", "trough")):
+            analysis["flags"] = analysis.get("flags", []) + ["🔄 CYCLICAL_RECOVERY — cykl się odwraca w górę"]
+        elif any(w in cycle_text for w in ("peak", "late cycle", "slowdown", "inventory correction", "correction")):
+            analysis["flags"] = analysis.get("flags", []) + ["⚠️ CYCLICAL_PEAK — możliwy szczyt cyklu"]
+
+    # ── Margin compression: reinvestment vs structural ──
+    margin_text = (fin["extra_signals"].get("margin_reason") or "").lower()
+    qtrd2 = fin.get("quarterly_trends", {})
+    if qtrd2.get("margin_declining"):
+        rev_growth = qtrd2.get("revenue_growth_qtrs", [])
+        revenue_still_growing = bool(rev_growth and rev_growth[-1] > 0)
+        invest_words = ("invest", "capex", "expand", "build", "hiring", "r&d", "reinvest")
+        invest_signal = any(w in margin_text for w in invest_words)
+        if revenue_still_growing or invest_signal:
+            analysis["flags"] = analysis.get("flags", []) + [
+                "💡 MARGIN_COMPRESSION_INVESTMENT — marże spadają przez reinwestycję, revenue rośnie"
+            ]
+        else:
+            analysis["flags"] = analysis.get("flags", []) + [
+                "🔴 MARGIN_COMPRESSION_STRUCTURAL — marże spadają bez wzrostu revenue"
+            ]
+            old_f2 = analysis.get("fundamentals_score", 3)
+            analysis["fundamentals_score"] = max(1, old_f2 - 1)
+
+    # ── Catalyst window priority ──
+    catalyst_text = (fin["extra_signals"].get("catalyst_window") or "")
+    ed = fin.get("earnings_days")
+    if ed is not None and 0 <= ed <= 14:
+        analysis["flags"] = analysis.get("flags", []) + [f"⚡ CATALYST_IMMINENT — earnings za {ed} dni (ryzyko/szansa)"]
+    elif ed is not None and 14 < ed <= 60:
+        analysis["flags"] = analysis.get("flags", []) + [f"🎯 CATALYST_SWEET_SPOT — earnings za {ed} dni (optymalne okno)"]
+    elif catalyst_text and len(catalyst_text) > 60:
+        analysis["flags"] = analysis.get("flags", []) + ["🎯 CATALYST_DETECTED — katalizator w horyzoncie"]
+    else:
+        analysis["flags"] = analysis.get("flags", []) + ["📭 NO_CATALYST — brak widocznego katalizatora"]
+
+    # ── Liquidity / position size for small caps ──
+    market_cap = info.get("marketCap") or 0
+    if 0 < market_cap < 2_000_000_000:
+        try:
+            avg_dv_m = float((ticker_obj.history(period="20d")["Volume"] *
+                              ticker_obj.history(period="20d")["Close"]).mean()) / 1_000_000
+        except Exception:
+            avg_dv_m = 0
+        if avg_dv_m > 0 and avg_dv_m < 5:
+            max_pos_m = round(avg_dv_m * 0.01, 3)
+            analysis["flags"] = analysis.get("flags", []) + [
+                f"⚠️ LOW_LIQUIDITY — avg ${avg_dv_m:.1f}M/dzień, max pozycja ~${max_pos_m}M (1% vol)"
+            ]
+
+    analysis = _apply_verdict_rules(analysis, fin)
     return {**fin, "news": news, "analysis": analysis}
+
+
+def _apply_verdict_rules(analysis: dict, fin: dict) -> dict:
+    """Deterministic verdict override — runs after all Claude + auto-flag adjustments."""
+    fs   = analysis.get("fundamentals_score", 3)
+    ts   = analysis.get("timing_score", 3)
+    mr   = analysis.get("macro_risk", "medium")
+    rm   = analysis.get("revision_momentum", "NEUTRAL")
+    ns   = analysis.get("narrative_strength", "NONE")
+    bqi  = analysis.get("business_quality_intact", True)
+    flags = analysis.get("flags", [])
+
+    near_ath     = fin.get("near_ath", False)
+    pct_from_ath = fin.get("pct_from_high") or 0.0  # negative = below ATH
+    rsi          = fin.get("rsi") or 0
+    death_cross  = fin.get("technicals", {}).get("death_cross", False)
+
+    flags_upper      = " ".join(flags).upper()
+    has_guidance_cut = any("GUIDANCE" in f.upper() for f in flags)
+    has_deteriorating = "DETERIORATING" in flags_upper
+    has_outflow       = "SECTOR_OUTFLOW" in flags_upper
+
+    # ── OMIJAJ ────────────────────────────────────────────────────────────────
+    if fs <= 2:
+        return {**analysis, "verdict": "OMIJAJ"}
+    if has_guidance_cut and has_deteriorating:
+        return {**analysis, "verdict": "OMIJAJ"}
+    if death_cross and has_outflow and rsi > 70:
+        return {**analysis, "verdict": "OMIJAJ"}
+    if not bqi and fs <= 3:
+        return {**analysis, "verdict": "OMIJAJ"}
+
+    # ── CZEKAJ — macro too risky ──────────────────────────────────────────────
+    if mr == "high":
+        return {**analysis, "verdict": "CZEKAJ"}
+
+    # ── CZEKAJ — don't chase the top ─────────────────────────────────────────
+    if pct_from_ath >= -2:                # within 2% of ATH: always wait
+        return {**analysis, "verdict": "CZEKAJ"}
+    if near_ath and rsi > 68:             # within 5% of ATH + overbought: wait
+        return {**analysis, "verdict": "CZEKAJ"}
+
+    # ── KUP — primary condition ───────────────────────────────────────────────
+    if fs >= 3 and ts >= 3:
+        return {**analysis, "verdict": "KUP"}
+
+    # ── KUP — alternative: strong narrative + positive revisions ─────────────
+    if rm == "POSITIVE" and ns == "STRONG" and ts >= 2:
+        return {**analysis, "verdict": "KUP"}
+
+    # ── OBSERWUJ — good fundamentals but timing not ready ────────────────────
+    if fs >= 3 and ts <= 2 and ns in ("STRONG", "WEAK"):
+        return {**analysis, "verdict": "OBSERWUJ"}
+
+    return {**analysis, "verdict": "CZEKAJ"}
 
 
 def _ticker_ma_str(tech: dict) -> str:
@@ -766,8 +1084,8 @@ def format_ticker_attachment(ticker: str, data: dict) -> dict:
         cat_label = CATEGORY_LABELS.get(category, category)
         analysis = data.get("analysis") or dict(_FALLBACK_ANALYSIS)
         verdict  = analysis.get("verdict", "CZEKAJ")
-        verdict_emoji = {"KUP": "🟢", "CZEKAJ": "🟡", "OMIJAJ": "🔴"}.get(verdict, "⚪")
-        color    = {"KUP": "#2eb886", "CZEKAJ": "#e6b833", "OMIJAJ": "#e01e5a"}.get(verdict, "#aaaaaa")
+        verdict_emoji = {"KUP": "🟢", "CZEKAJ": "🟡", "OMIJAJ": "🔴", "OBSERWUJ": "🔵"}.get(verdict, "⚪")
+        color    = {"KUP": "#2eb886", "CZEKAJ": "#e6b833", "OMIJAJ": "#e01e5a", "OBSERWUJ": "#1d9bd1"}.get(verdict, "#aaaaaa")
 
         sign   = "+" if cp >= 0 else ""
         ma_str = _ticker_ma_str(tech)
@@ -883,7 +1201,7 @@ def format_ticker_slack(ticker: str, data: dict) -> str:
         tech = data.get("technicals", {})
         analysis = data.get("analysis") or dict(_FALLBACK_ANALYSIS)
         verdict = analysis.get("verdict", "CZEKAJ")
-        verdict_emoji = {"KUP": "🟢", "CZEKAJ": "🟡", "OMIJAJ": "🔴"}.get(verdict, "⚪")
+        verdict_emoji = {"KUP": "🟢", "CZEKAJ": "🟡", "OMIJAJ": "🔴", "OBSERWUJ": "🔵"}.get(verdict, "⚪")
         sign = "+" if cp >= 0 else ""
 
         lines = [
@@ -1124,30 +1442,34 @@ def run_summary_digest(tickers: list = None) -> str:
         + "\n".join(lines_data)
         + """
 
-Napisz JEDEN raport inwestycyjny w formacie Slack markdown. Pogrupuj wszystkie spółki w trzy sekcje:
+FILOZOFIA DNA RYNKÓW (stosuj przy każdej spółce):
+- Rewizje EPS > snapshot: kierunek zmian prognoz ważniejszy niż bezwzględny PE
+- Siła narracji: AI, nuclear, space, GLP-1, fintech EM = rynek nagradza premią
+- Koszyk narracyjny: czy spółka w koszyku który rynek TERAZ nagradza?
+- Jakość biznesu: problemy przejściowe (reinwestycje) vs fundamentalne (utrata rynku)
+- Timing: RSI>75 lub near ATH = CZEKAJ nawet przy dobrych fundamentach
 
-🟢 *WARTE UWAGI — dobre wejście teraz:*
+Napisz JEDEN raport inwestycyjny w formacie Slack markdown. Pogrupuj wszystkie spółki w CZTERY sekcje według pola "verdict":
+
+🟢 *WARTE UWAGI — dobre wejście teraz:* (verdict=KUP)
+• *TICKER* $cena — 1 zdanie uzasadnienia (uwzględnij rewizje EPS i narrację)
+
+🔵 *OBSERWUJ — dobra spółka, za wcześnie na wejście:* (verdict=OBSERWUJ)
+• *TICKER* $cena — 1 zdanie: co musi się zmienić żeby przejść do KUP
+
+🟡 *CZEKAJ — dobra spółka, zły timing lub za drogo:* (verdict=CZEKAJ)
 • *TICKER* $cena — 1 zdanie uzasadnienia
 
-🟡 *CZEKAJ — dobra spółka, zły timing lub za drogo:*
+🔴 *OMIJAJ:* (verdict=OMIJAJ)
 • *TICKER* $cena — 1 zdanie uzasadnienia
 
-🔴 *OMIJAJ:*
-• *TICKER* $cena — 1 zdanie uzasadnienia
-
-ZASADY GRUPOWANIA PER KATEGORIA:
-- STANDARD_TECH: RSI<65 + nie blisko ATH + fundamenty OK = WARTE UWAGI
-- CRYPTO_PROXY (MSTR, MARA, HOOD): oceniaj TYLKO przez BTC trend (nie PE/marże). BTC bullish+RSI_BTC<70=KUP. Zaznacz aktualny kurs BTC w reasoning.
-- URANIUM (UEC,DNN,UUUU,CCJ): oceniaj przez spot uranu i nuclear renaissance, nie przez PE. Tailwind = rosnący popyt AI/data centers.
-- DEFENSE (NOC,BA,TDG): geopolityka=TAILWIND, backlog kontraktów, budżety NATO rosnące.
-- BIOTECH_HEALTH (TEM,ISRG,UNH,NVO,TDOC): pipeline/FDA/GLP-1 market share. NVO przez ekspozycję na GLP-1.
-- EMERGING_MARKETS (BABA,SE,GRAB,MELI,NU,DLO): uwzględnij ryzyko USD i kraju. Chiny=osobna flaga ryzyka regulacyjnego.
-- CONSUMER_DISCRETIONARY (LULU,NKE,DECK,CMG,RACE): comparable sales, zapasy, cła Chiny. RACE=osobna liga (pricing power, order book). Jeśli cały sektor consumer słabo — kontekstualizuj.
+ZASADY GRUPOWANIA: użyj pola "verdict" z danych. Nie nadpisuj werdyktu własną oceną.
+- KUP → sekcja WARTE UWAGI. OBSERWUJ → sekcja OBSERWUJ. CZEKAJ → sekcja CZEKAJ. OMIJAJ → sekcja OMIJAJ.
+- Jeśli verdict=CZEKAJ ale spółka jest przy ATH (<2%) — zaznacz to w uzasadnieniu.
 FLAGI AUTOMATYCZNE (jeśli widoczne w danych): ⚠️ DETERIORATING FUNDAMENTALS, 🔴 GUIDANCE OBNIŻONY, ⚠️ RYZYKO CEŁ — uwzględnij je w uzasadnieniu.
 
 Na końcu ZAWSZE:
-⚠️ *Blisko ATH (<5%):* [lista lub "brak"]
-📊 *Watchlist:* X warte uwagi | Y czekaj | Z omijaj
+📊 *Podsumowanie:* X KUP | Y OBSERWUJ | Z CZEKAJ | W OMIJAJ
 
 Pisz po polsku. Krótko, konkretnie, liczby z danych."""
     )
@@ -1446,9 +1768,185 @@ def send_crypto_digest(limit: int = 20):
         logger.error("send_crypto_digest failed: %s", e)
 
 
-def send_summary_digest(tickers: list = None):
-    """Post one-message summary digest to #inwestowanie."""
+# ── Supercycle scan ───────────────────────────────────────────────────────────
+
+def run_supercycle_scan() -> str:
+    """Scan all active supercycles and return Slack-formatted status report."""
+    if _tavily is None:
+        return "⚠️ Tavily niedostępny — nie można pobrać danych supercykli."
+
+    today = datetime.datetime.now().strftime("%d.%m.%Y")
+    signals: dict[str, str] = {}
+    for name, sc in _SUPERCYCLE_MAP.items():
+        try:
+            r = _tavily.search(sc["query"], max_results=3)
+            signals[name] = " ".join((x.get("content") or "")[:200] for x in (r.get("results") or []))[:500]
+        except Exception:
+            signals[name] = ""
+
+    prompt = (
+        f"Dzisiaj: {today}\n\n"
+        "Poniżej dane o aktywnych supercyklach inwestycyjnych. "
+        "Dla każdego określ gdzie jesteśmy w cyklu i jakie są perspektywy.\n\n"
+        + "\n\n".join(f"[{name}]\n{text}" for name, text in signals.items() if text)
+        + "\n\nOdpowiedz TYLKO w JSON:\n"
+        '{"cycles": [{"name": "...", "status": "WCZESNY/ŚRODKOWY/PÓŹNY/ZAKOŃCZONY", '
+        '"momentum": "PRZYSPIESZA/STABILNY/ZWALNIA", '
+        '"key_signal": "1 zdanie co napędza cykl", '
+        '"watchlist_tickers": ["TICK1", "TICK2"], '
+        '"outlook": "1 zdanie co dalej"}]}'
+    )
+
     try:
+        resp = _ctx.claude.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1200,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw  = resp.content[0].text.strip()
+        m    = re.search(r"\{[\s\S]*\}", raw)
+        data = json.loads(m.group() if m else raw)
+        cycles = data.get("cycles", [])
+    except Exception as e:
+        logger.error("Supercycle scan Claude error: %s", e)
+        return "❌ Błąd analizy supercykli."
+
+    _status_emoji = {"WCZESNY": "🌱", "ŚRODKOWY": "🔥", "PÓŹNY": "⚠️", "ZAKOŃCZONY": "❄️"}
+    _mom_emoji    = {"PRZYSPIESZA": "⬆️", "STABILNY": "➡️", "ZWALNIA": "⬇️"}
+
+    lines = [f"🌊 *Supercykle Inwestycyjne — {today}*\n"]
+    for cy in cycles:
+        name    = cy.get("name", "?")
+        status  = cy.get("status", "?")
+        mom     = cy.get("momentum", "?")
+        se      = _status_emoji.get(status, "📌")
+        me      = _mom_emoji.get(mom, "")
+        tickers = cy.get("watchlist_tickers", [])
+        lines.append(
+            f"{se} *{name}* — {status} {me}\n"
+            f"   {cy.get('key_signal','')}\n"
+            f"   Beneficjenci z watchlisty: {', '.join(tickers) or 'brak'}\n"
+            f"   Perspektywa: _{cy.get('outlook','')}_\n"
+        )
+    return "\n".join(lines)
+
+
+def send_supercycle_scan():
+    """Post supercycle scan to #inwestowanie."""
+    try:
+        text = run_supercycle_scan()
+        _ctx.app.client.chat_postMessage(channel=STOCK_CHANNEL_ID, text=text)
+    except Exception as e:
+        logger.error("send_supercycle_scan failed: %s", e)
+
+
+# ── Cyclicality analysis ──────────────────────────────────────────────────────
+
+def run_cyclicality_analysis(ticker: str) -> str:
+    """Deep cyclicality analysis for one ticker."""
+    ticker = ticker.upper().strip()
+    is_cyclical = ticker in _CYCLICAL_TICKERS
+    supercycles = _TICKER_SUPERCYCLES.get(ticker, [])
+
+    tavily_ctx = ""
+    if _tavily:
+        try:
+            r = _tavily.search(f"{ticker} industry cycle semiconductor memory recovery 2026", max_results=4)
+            tavily_ctx = " | ".join((x.get("content") or "")[:180] for x in (r.get("results") or []))[:600]
+        except Exception:
+            pass
+
+    prompt = (
+        f"Ticker: {ticker}\n"
+        f"Znany jako cykliczny: {'TAK' if is_cyclical else 'NIE (sprawdź)'}\n"
+        f"Powiązane supercykle: {', '.join(supercycles) or 'brak zidentyfikowanych'}\n\n"
+        f"Dane rynkowe:\n{tavily_ctx or '(brak danych Tavily)'}\n\n"
+        "Oceń cykliczność tej spółki i gdzie jesteśmy w jej cyklu branżowym.\n"
+        "Odpowiedz po polsku, max 200 słów. Format:\n"
+        "1. *Typ cykliczności* — cykliczna/defensywna/wzrostowa\n"
+        "2. *Gdzie w cyklu* — wczesny/środkowy/późny/szczyt/dołek\n"
+        "3. *Co napędza cykl* — konkretny czynnik\n"
+        "4. *Implikacja inwestycyjna* — co z tym zrobić teraz\n"
+        "5. *Werdykt* — KUPUJ W DOŁKU / TRZYMAJ / REDUKUJ PRZY SZCZYCIE"
+    )
+
+    try:
+        resp = _ctx.claude.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        analysis = resp.content[0].text.strip()
+    except Exception as e:
+        analysis = f"_(błąd Claude: {e})_"
+
+    header = f"🔄 *Cykliczność: {ticker}*"
+    if supercycles:
+        header += f"  🌊 _{', '.join(supercycles)}_"
+    return f"{header}\n\n{analysis}"
+
+
+# ── Insider analysis ──────────────────────────────────────────────────────────
+
+def run_insider_analysis(ticker: str) -> str:
+    """Deep insider transaction quality analysis."""
+    ticker = ticker.upper().strip()
+
+    tavily_ctx = ""
+    if _tavily:
+        try:
+            r1 = _tavily.search(f"{ticker} insider purchase open market CEO CFO 2026", max_results=3)
+            r2 = _tavily.search(f"{ticker} SEC Form 4 insider buying director 2026", max_results=2)
+            parts  = [(x.get("content") or "")[:180] for x in (r1.get("results") or [])]
+            parts += [(x.get("content") or "")[:180] for x in (r2.get("results") or [])]
+            tavily_ctx = " | ".join(parts)[:700]
+        except Exception:
+            pass
+
+    if not tavily_ctx:
+        return f"⚠️ *{ticker}* — brak danych o transakcjach insiderów w Tavily."
+
+    prompt = (
+        f"Ticker: {ticker}\n\n"
+        f"Dane o transakcjach insiderów:\n{tavily_ctx}\n\n"
+        "Oceń JAKOŚĆ sygnału insider buying. DNA Rynków mówi:\n"
+        "MOCNY SYGNAŁ: CEO lub CFO kupuje na wolnym rynku (not exercise), duże kwoty, przy słabości kursu.\n"
+        "SŁABY SYGNAŁ: rutynowe opcje, małe kwoty, zakup po wzroście.\n\n"
+        "Odpowiedz po polsku, max 150 słów:\n"
+        "1. *Co konkretnie kupił/kupili* (kto, ile, cena)\n"
+        "2. *Ocena jakości sygnału* — MOCNY / SŁABY / BRAK\n"
+        "3. *Dlaczego* — 1 zdanie uzasadnienia\n"
+        "4. *Implikacja* — co to znaczy dla tezy inwestycyjnej"
+    )
+
+    try:
+        resp = _ctx.claude.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=350,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        analysis = resp.content[0].text.strip()
+    except Exception as e:
+        analysis = f"_(błąd Claude: {e})_"
+
+    return f"👤 *Insider Activity: {ticker}*\n\n{analysis}"
+
+
+def send_summary_digest(tickers: list = None):
+    """Post capital flow snapshot + one-message summary digest to #inwestowanie."""
+    try:
+        # ── Capital flow header ──
+        cf = _get_capital_flow()
+        if cf:
+            try:
+                snapshot = cf.build_capital_flow_snapshot()
+                flow_block = cf.format_capital_flow_block(snapshot)
+                if flow_block:
+                    _ctx.app.client.chat_postMessage(channel=STOCK_CHANNEL_ID, text=flow_block)
+            except Exception as e:
+                logger.warning("Capital flow header error: %s", e)
+
+        # ── Main digest ──
         msg = run_summary_digest(tickers)
         chunks = [msg[i:i+3900] for i in range(0, len(msg), 3900)]
         for chunk in chunks:
