@@ -52,3 +52,13 @@ git push -u origin claude/push-changes-H9Q0z
 3. Przeczytaj kontekst przed edycją
 4. Napraw minimal — nie refaktoryzuj przy okazji
 5. `git add <plik> && git commit -m "fix: <opis>" && git push -u origin claude/push-changes-H9Q0z`
+
+## Auto-naprawa błędów
+
+Gdy napotkasz jakikolwiek błąd podczas pracy (runtime error, import error, syntax error, test failure, deployment error):
+1. Przeanalizuj błąd
+2. Napraw go samodzielnie bez pytania
+3. Uruchom kod ponownie żeby zweryfikować że działa
+4. Jeśli po 2 próbach nadal nie działa – dopiero wtedy zapytaj mnie
+
+Nie pytaj mnie o pozwolenie na naprawę błędów. Po prostu je naprawiaj i raportuj co naprawiłeś.
