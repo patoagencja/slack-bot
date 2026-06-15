@@ -18,3 +18,13 @@ jobs:
           password: ${{ secrets.FTP_PASSWORD }}
           local-dir: ./
           server-dir: /public_html/
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/.github/**
+            **/data/**
+            **/.env
+            **/.env.*
+            **/*.log
+            **/__pycache__/**
+            **/*.pyc
