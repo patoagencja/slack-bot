@@ -1,0 +1,1011 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8" />
+<title>Homepage — Patoagencja</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&family=Inter+Tight:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; padding: 0; background: #FAFAF7; }
+  body { font-family: 'Inter Tight', -apple-system, BlinkMacSystemFont, system-ui, sans-serif; -webkit-font-smoothing: antialiased; color: #0A0A0A; }
+  #root { font-feature-settings: "ss01", "cv11"; }
+  h1, h2, h3 { font-weight: 700; }
+  em, i, [style*="italic"] { font-family: 'Instrument Serif', Georgia, serif !important; font-style: italic; font-weight: 400 !important; }
+  ::-webkit-scrollbar { width: 10px; } ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 5px; }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+// ─── DESIGN TOKENS ─────────────────────────────
+const A_COLORS = {
+  bg: '#FAFAF7',
+  ink: '#0A0A0A',
+  ink70: '#3A3A3A',
+  ink40: '#8A8A86',
+  hair: '#E6E3DA',
+  accent: '#2626E0',
+  accentSoft: '#F0B8C4',
+  accentInk: '#FFFFFF',
+  paper: '#FFFFFF',
+};
+
+// ─── MOBILE HOOK + CONTEXT ────────────────────
+const MobileCtx = React.createContext(false);
+function useMobile() {
+  const [m, setM] = React.useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
+  React.useEffect(() => {
+    const h = () => setM(window.innerWidth < 768);
+    window.addEventListener('resize', h);
+    return () => window.removeEventListener('resize', h);
+  }, []);
+  return m;
+}
+
+// ─── SHARED ────────────────────────────────────
+const A_Section = ({ children, style, id, tight }) => {
+  const isMobile = React.useContext(MobileCtx);
+  return (
+    <section id={id} style={{
+      padding: isMobile ? (tight ? '48px 20px' : '72px 20px') : (tight ? '72px 56px' : '120px 56px'),
+      borderTop: `1px solid ${A_COLORS.hair}`,
+      ...style,
+    }}>
+      {children}
+    </section>
+  );
+};
+
+const A_Eyebrow = ({ num, children }) => {
+  const isMobile = React.useContext(MobileCtx);
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'baseline', gap: 16,
+      fontFamily: '"JetBrains Mono", monospace', fontSize: 12, letterSpacing: '0.12em',
+      textTransform: 'uppercase', color: A_COLORS.ink70, marginBottom: isMobile ? 24 : 40,
+    }}>
+      <span style={{ color: A_COLORS.accent, fontWeight: 600 }}>{num}</span>
+      <span style={{ flex: '0 0 auto' }}>{children}</span>
+      <span style={{ flex: 1, height: 1, background: A_COLORS.hair, transform: 'translateY(-3px)' }} />
+    </div>
+  );
+};
+
+// ─── NAV ───────────────────────────────────────
+function A_Nav({ scrolled, activePage }) {
+  const isMobile = React.useContext(MobileCtx);
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const NAV = [['O nas','o-nas.html'],['Usługi','uslugi.html'],['Klienci','klienci.html'],['Kursy','kursy.html'],['Sebol','sebol.html'],['Kontakt','kontakt.html']];
+  return (
+    <>
+      <header style={{
+        position: 'sticky', top: 0, zIndex: 50,
+        padding: isMobile ? (scrolled ? '12px 20px' : '18px 20px') : (scrolled ? '14px 56px' : '22px 56px'),
+        background: scrolled || menuOpen ? 'rgba(250,250,247,0.95)' : 'transparent',
+        backdropFilter: scrolled || menuOpen ? 'blur(16px)' : 'none',
+        borderBottom: scrolled || menuOpen ? `1px solid ${A_COLORS.hair}` : '1px solid transparent',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        transition: 'all .25s ease',
+      }}>
+        <a href="index.html" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }}>
+          <img src="assets/patoagencja-wordmark-ink.png" alt="patoagencja" style={{ height: 20, display: 'block' }} />
+        </a>
+        {isMobile ? (
+          <button onClick={() => setMenuOpen(o => !o)} style={{
+            background: 'none', border: 'none', cursor: 'pointer', padding: 8,
+            display: 'flex', flexDirection: 'column', gap: 5, alignItems: 'center',
+          }}>
+            <span style={{ display: 'block', width: 22, height: 2, background: A_COLORS.ink, transition: 'all .2s', transform: menuOpen ? 'rotate(45deg) translate(5px, 5px)' : 'none' }} />
+            <span style={{ display: 'block', width: 22, height: 2, background: A_COLORS.ink, transition: 'all .2s', opacity: menuOpen ? 0 : 1 }} />
+            <span style={{ display: 'block', width: 22, height: 2, background: A_COLORS.ink, transition: 'all .2s', transform: menuOpen ? 'rotate(-45deg) translate(5px, -5px)' : 'none' }} />
+          </button>
+        ) : (
+          <>
+            <nav style={{ display: 'flex', gap: 40, fontSize: 14, fontWeight: 500 }}>
+              {NAV.map(([l, href]) => {
+                const isActive = activePage === l;
+                return (
+                  <a key={l} href={href} style={{ color: isActive ? A_COLORS.accent : A_COLORS.ink, textDecoration: 'none', position: 'relative' }}
+                    onMouseEnter={e => { if (!isActive) e.currentTarget.querySelector('span').style.width = '100%'; }}
+                    onMouseLeave={e => { if (!isActive) e.currentTarget.querySelector('span').style.width = '0%'; }}>
+                    {l}
+                    <span style={{ position: 'absolute', left: 0, bottom: -4, height: 1, width: isActive ? '100%' : '0%', background: A_COLORS.accent, transition: 'width .2s' }} />
+                  </a>
+                );
+              })}
+            </nav>
+            <a href="kontakt.html" style={{
+              background: A_COLORS.ink, color: '#fff', padding: '10px 18px', fontSize: 13, fontWeight: 600,
+              textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 8, borderRadius: 2,
+              transition: 'background .15s',
+            }}
+            onMouseEnter={e => e.currentTarget.style.background = A_COLORS.accent}
+            onMouseLeave={e => e.currentTarget.style.background = A_COLORS.ink}>
+              Umów rozmowę
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 6h6M7 3l3 3-3 3"/></svg>
+            </a>
+          </>
+        )}
+      </header>
+      {isMobile && menuOpen && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 49,
+          background: 'rgba(250,250,247,0.97)', backdropFilter: 'blur(16px)',
+          display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: 0,
+        }}>
+          {NAV.map(([l, href]) => {
+            const isActive = activePage === l;
+            return (
+              <a key={l} href={href} onClick={() => setMenuOpen(false)} style={{
+                fontSize: 32, fontWeight: 700, letterSpacing: '-0.02em',
+                color: isActive ? A_COLORS.accent : A_COLORS.ink,
+                textDecoration: 'none', padding: '16px 0',
+                borderBottom: `1px solid ${A_COLORS.hair}`, width: '80%', textAlign: 'center',
+              }}>{l}</a>
+            );
+          })}
+          <a href="kontakt.html" onClick={() => setMenuOpen(false)} style={{
+            marginTop: 32, background: A_COLORS.ink, color: '#fff', padding: '16px 32px',
+            fontSize: 16, fontWeight: 600, textDecoration: 'none', borderRadius: 2,
+          }}>Umów rozmowę →</a>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ─── HERO ──────────────────────────────────────
+function A_Hero() {
+  const isMobile = React.useContext(MobileCtx);
+  const [time, setTime] = React.useState('');
+  React.useEffect(() => {
+    const tick = () => {
+      const d = new Date();
+      const opts = { timeZone: 'Europe/Warsaw', hour: '2-digit', minute: '2-digit', second: '2-digit' };
+      setTime(d.toLocaleTimeString('pl-PL', opts));
+    };
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, []);
+  const [mouse, setMouse] = React.useState({ x: 0, y: 0 });
+  const sectionRef = React.useRef(null);
+  React.useEffect(() => {
+    const h = (e) => {
+      if (!sectionRef.current) return;
+      const r = sectionRef.current.getBoundingClientRect();
+      setMouse({
+        x: ((e.clientX - r.left) / r.width - 0.5) * 2,
+        y: ((e.clientY - r.top) / r.height - 0.5) * 2,
+      });
+    };
+    window.addEventListener('mousemove', h);
+    return () => window.removeEventListener('mousemove', h);
+  }, []);
+  const px = (n) => `${mouse.x * n}px`;
+  const py = (n) => `${mouse.y * n}px`;
+
+  return (
+    <section ref={sectionRef} style={{
+      position: 'relative', overflow: 'hidden',
+      minHeight: '92vh', display: 'flex', flexDirection: 'column',
+    }}>
+      <style>{`
+        @keyframes a-kenburns {
+          0%   { transform: scale(1.08) translate(0, 0); }
+          50%  { transform: scale(1.14) translate(-1.5%, -1%); }
+          100% { transform: scale(1.08) translate(0, 0); }
+        }
+        @keyframes a-fog-drift {
+          from { transform: translateX(-5%); }
+          to { transform: translateX(5%); }
+        }
+        @keyframes a-flash {
+          0%, 88%, 92%, 100% { opacity: 0; }
+          90% { opacity: 0.35; }
+        }
+        @keyframes a-scanline {
+          from { transform: translateY(-100%); }
+          to { transform: translateY(100%); }
+        }
+        @keyframes a-hud-blink {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.25; }
+        }
+        @keyframes a-grain {
+          0% { transform: translate(0, 0); }
+          25% { transform: translate(-5%, 3%); }
+          50% { transform: translate(3%, -4%); }
+          75% { transform: translate(-2%, 5%); }
+          100% { transform: translate(0, 0); }
+        }
+      `}</style>
+
+      {/* BG video — ken burns + mouse parallax */}
+      <div style={{
+        position: 'absolute', inset: 0, overflow: 'hidden',
+        animation: 'a-kenburns 22s ease-in-out infinite',
+        transformOrigin: '60% 50%',
+      }}>
+        <video
+          src="assets/hero-jungle.mp4"
+          autoPlay muted loop playsInline
+          style={{
+            position: 'absolute',
+            left: '-4%', top: '-4%', width: '112%', height: '112%',
+            objectFit: 'cover', objectPosition: 'center',
+            transform: `translate(${px(-12)}, ${py(-8)})`,
+            transition: 'transform 0.25s ease-out',
+            filter: 'saturate(1.18) contrast(1.12) brightness(1.02)',
+            imageRendering: 'auto',
+          }}
+        />
+      </div>
+
+      {/* SVG sharpen filter */}
+      <svg width="0" height="0" style={{ position: 'absolute' }}>
+        <defs>
+          <filter id="a-sharpen">
+            <feConvolveMatrix order="3" preserveAlpha="true"
+              kernelMatrix="0 -0.6 0  -0.6 3.4 -0.6  0 -0.6 0" />
+          </filter>
+        </defs>
+      </svg>
+
+      {/* Film grain overlay */}
+      <div style={{
+        position: 'absolute', inset: 0, pointerEvents: 'none',
+        opacity: 0.18, mixBlendMode: 'overlay',
+        backgroundImage: `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.5  0 0 0 0 0.5  0 0 0 0 0.5  0 0 0 0.8 0'/></filter><rect width='220' height='220' filter='url(%23n)' opacity='0.85'/></svg>")`,
+        backgroundSize: '220px 220px',
+        animation: 'a-grain 0.4s steps(3) infinite',
+      }} />
+
+      {/* Fog drift layer */}
+      <div style={{
+        position: 'absolute', inset: '-5%',
+        background: 'radial-gradient(ellipse at 50% 40%, rgba(180, 220, 210, 0.18), transparent 55%)',
+        mixBlendMode: 'screen',
+        animation: 'a-fog-drift 14s ease-in-out infinite alternate',
+        pointerEvents: 'none',
+      }} />
+
+      {/* Periodic neon pulse */}
+      <div style={{
+        position: 'absolute', inset: 0,
+        background: 'radial-gradient(ellipse at 62% 40%, rgba(0,229,255,0.45), transparent 55%)',
+        mixBlendMode: 'screen',
+        animation: 'a-flash 8s ease-out infinite',
+        pointerEvents: 'none',
+      }} />
+
+      {/* Scanline sweep */}
+      <div style={{
+        position: 'absolute', inset: 0, overflow: 'hidden',
+        pointerEvents: 'none', opacity: 0.5,
+      }}>
+        <div style={{
+          position: 'absolute', left: 0, right: 0, height: '30%',
+          background: 'linear-gradient(180deg, transparent, rgba(0,229,255,0.06), transparent)',
+          animation: 'a-scanline 9s linear infinite',
+        }} />
+      </div>
+
+      {/* Left darkening gradient */}
+      <div style={{
+        position: 'absolute', inset: 0,
+        background: 'linear-gradient(100deg, rgba(10,10,10,0.88) 0%, rgba(10,10,10,0.7) 30%, rgba(10,10,10,0.3) 55%, rgba(10,10,10,0) 75%)',
+        pointerEvents: 'none',
+      }} />
+
+      {/* Bottom vignette */}
+      <div style={{
+        position: 'absolute', inset: 0,
+        background: 'linear-gradient(180deg, transparent 50%, rgba(10,10,10,0.75) 100%)',
+        pointerEvents: 'none',
+      }} />
+      <div style={{
+        position: 'absolute', right: 0, bottom: 0, width: '35%', height: '18%',
+        background: 'radial-gradient(ellipse at bottom right, rgba(10,10,10,0.85), transparent 70%)',
+        pointerEvents: 'none',
+      }} />
+
+      {/* Corner HUD overlays — hidden on mobile */}
+      <div style={{
+        position: 'absolute', top: 32, right: 56, zIndex: 4,
+        fontFamily: '"JetBrains Mono", monospace', fontSize: 11,
+        color: 'rgba(250,250,247,0.7)', letterSpacing: '0.12em', textTransform: 'uppercase',
+        textAlign: 'right', lineHeight: 1.6,
+        textShadow: '0 1px 4px rgba(0,0,0,0.6)',
+        display: isMobile ? 'none' : 'block',
+      }}>
+        <div>[CREW/01] TEAM_PATO · RUNTIME</div>
+        <div style={{ color: '#00E5FF', animation: 'a-hud-blink 2s ease-in-out infinite' }}>
+          ● LIVE · 3 BOTY AKTYWNE
+        </div>
+      </div>
+      <div style={{
+        position: 'absolute', bottom: 28, right: 56, zIndex: 4,
+        fontFamily: '"JetBrains Mono", monospace', fontSize: 10,
+        color: 'rgba(250,250,247,0.5)', letterSpacing: '0.15em', textTransform: 'uppercase',
+        textShadow: '0 1px 4px rgba(0,0,0,0.6)',
+        display: isMobile ? 'none' : 'block',
+      }}>
+        PATOAGENCJA · JUNGLE.MODE
+      </div>
+
+      {/* CONTENT — top status bar */}
+      <div style={{ position: 'relative', zIndex: 5, padding: isMobile ? '16px 20px 0' : '32px 56px 0', color: '#FAFAF7' }}>
+        <div style={{
+          display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 56,
+          fontFamily: '"JetBrains Mono", monospace', fontSize: 12,
+          letterSpacing: '0.08em', textTransform: 'uppercase',
+        }}>
+          <div style={{ display: 'flex', gap: 32, color: 'rgba(250,250,247,0.82)' }}>
+            <span style={{ color: '#FF6B4A' }}>● Aktywni</span>
+            <span>Warszawa · {time} CET</span>
+          </div>
+          {!isMobile && <div style={{ textAlign: 'right', color: 'rgba(250,250,247,0.82)' }}>Performance · SEO · Web · AI</div>}
+        </div>
+      </div>
+
+      <div style={{
+        position: 'relative', zIndex: 5, flex: 1,
+        display: 'flex', alignItems: 'center',
+        padding: isMobile ? '20px 20px 48px' : '40px 56px 80px', color: '#FAFAF7',
+      }}>
+        <div style={{ maxWidth: isMobile ? '100%' : '58%' }}>
+          <h1 style={{
+            fontSize: 'clamp(52px, 7.4vw, 128px)',
+            lineHeight: 0.92, letterSpacing: '-0.045em', fontWeight: 700,
+            margin: 0, color: '#FAFAF7', textWrap: 'balance',
+            textShadow: '0 2px 24px rgba(0,0,0,0.55)',
+          }}>
+            Performance<br />
+            marketing<br />
+            <span style={{ fontStyle: 'italic', fontWeight: 500, color: '#FFD84D' }}>bez owijania</span><br />
+            w bawełnę.
+          </h1>
+          <div style={{ marginTop: 44, display: 'grid', gap: 28 }}>
+            <p style={{
+              fontSize: 20, lineHeight: 1.45, color: 'rgba(250,250,247,0.88)', maxWidth: 560,
+              textWrap: 'pretty', margin: 0, fontWeight: 400,
+              textShadow: '0 1px 12px rgba(0,0,0,0.5)',
+            }}>
+              Kampanie, strony, SEO, content i automatyzacje. Bez zbędnego teatru,
+              bez korporacyjnego bełkotu i bez raportów, które nic nie mówią.
+            </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
+              <a href="#kontakt" style={{
+                display: 'inline-flex', alignItems: 'center', gap: 14,
+                background: A_COLORS.accent, color: '#fff', padding: '22px 32px',
+                fontSize: 16, fontWeight: 600, textDecoration: 'none', borderRadius: 2,
+                transition: 'transform .15s',
+                boxShadow: '0 10px 30px rgba(255,74,28,0.35)',
+              }}
+              onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
+              onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}>
+                Umów rozmowę
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 10h12M11 5l5 5-5 5"/></svg>
+              </a>
+              <span style={{ fontSize: 13, color: 'rgba(250,250,247,0.7)' }}>30 min · bez zobowiązań · odpowiadamy w 24h</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── TRUST ─────────────────────────────────────
+function A_Trust() {
+  const logos = ['NORDSTAR', 'Belveo', 'KRAFT/Co', 'Mint&Oak', 'Orbital', 'Hygge', 'Lumen', 'Tatra+'];
+  return (
+    <A_Section tight style={{ padding: '56px 0', overflow: 'hidden' }}>
+      <div style={{ padding: '0 56px 32px', fontFamily: '"JetBrains Mono", monospace', fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase', color: A_COLORS.ink40 }}>
+        Zaufało nam 40+ marek · B2C i B2B · od średnich budżetów po 7-cyfrowe
+      </div>
+      <div style={{
+        display: 'flex', gap: 80, animation: 'a-scroll 40s linear infinite',
+        width: 'max-content', fontWeight: 700, fontSize: 32, letterSpacing: '-0.02em',
+        color: A_COLORS.ink, padding: '0 56px',
+      }}>
+        {[...logos, ...logos].map((l, i) => (
+          <span key={i} style={{ opacity: 0.7, whiteSpace: 'nowrap' }}>{l}</span>
+        ))}
+      </div>
+      <style>{`@keyframes a-scroll { to { transform: translateX(-50%); } }`}</style>
+    </A_Section>
+  );
+}
+
+// ─── METRICS ───────────────────────────────────
+function A_Counter({ end, suffix = '', prefix = '' }) {
+  const [v, setV] = React.useState(0);
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    const io = new IntersectionObserver(([e]) => {
+      if (e.isIntersecting) {
+        const start = performance.now();
+        const dur = 1400;
+        const tick = (t) => {
+          const p = Math.min(1, (t - start) / dur);
+          const eased = 1 - Math.pow(1 - p, 3);
+          setV(Math.round(end * eased));
+          if (p < 1) requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+        io.disconnect();
+      }
+    }, { threshold: 0.3 });
+    if (ref.current) io.observe(ref.current);
+    return () => io.disconnect();
+  }, [end]);
+  return <span ref={ref}>{prefix}{v.toLocaleString('pl-PL')}{suffix}</span>;
+}
+
+function A_Metrics() {
+  const isMobile = React.useContext(MobileCtx);
+  const items = [
+    { k: 'Wydanego budżetu rocznie', v: <><A_Counter end={28} />M <span style={{ fontSize: '0.5em', color: A_COLORS.ink40 }}>PLN</span></> },
+    { k: 'Kampanii od startu agencji', v: <A_Counter end={540} suffix="+" /> },
+    { k: 'Średnia długość współpracy', v: <><A_Counter end={18} /> <span style={{ fontSize: '0.5em', color: A_COLORS.ink40 }}>mies.</span></> },
+    { k: 'Specjalistów w zespole', v: <A_Counter end={5} /> },
+  ];
+  return (
+    <A_Section>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', borderTop: `1px solid ${A_COLORS.hair}` }}>
+        {items.map((it, i) => {
+          const col = i % (isMobile ? 2 : 4);
+          const maxCol = isMobile ? 1 : 3;
+          return (
+            <div key={i} style={{
+              padding: '36px 24px 28px 0',
+              borderRight: col < maxCol ? `1px solid ${A_COLORS.hair}` : 'none',
+              borderBottom: isMobile && i < 2 ? `1px solid ${A_COLORS.hair}` : 'none',
+              paddingLeft: col > 0 ? 24 : 0,
+            }}>
+              <div style={{
+                fontSize: 'clamp(44px, 5vw, 72px)', fontWeight: 700, letterSpacing: '-0.03em',
+                lineHeight: 1, color: A_COLORS.ink, marginBottom: 12, fontVariantNumeric: 'tabular-nums',
+              }}>{it.v}</div>
+              <div style={{ fontSize: 13, color: A_COLORS.ink70, fontFamily: '"JetBrains Mono", monospace', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{it.k}</div>
+            </div>
+          );
+        })}
+      </div>
+    </A_Section>
+  );
+}
+
+// ─── SERVICES ──────────────────────────────────
+function A_Services() {
+  const isMobile = React.useContext(MobileCtx);
+  const [open, setOpen] = React.useState(0);
+  const svcs = [
+    { t: 'Performance marketing', sub: 'Meta · Google · TikTok · YouTube',
+      d: 'Planujemy, uruchamiamy i optymalizujemy kampanie płatne. Pracujemy zarówno przy budżetach testowych, jak i przy dużych kontach, gdzie liczy się refleks.',
+      b: ['Audyt i strategia konta przed startem', 'Struktura kampanii, grupy docelowe, kreacje', 'Bieżąca optymalizacja i testy A/B', 'Raportowanie z wnioskami — nie tylko liczby'] },
+    { t: 'SEO', sub: 'Widoczność organiczna, długoterminowo',
+      d: 'SEO to nie magia i nie obietnica pierwszego miejsca w tydzień. To systematyczna praca nad stroną, treściami i linkami.',
+      b: ['Audyt techniczny i contentowy strony', 'Optymalizacja on-site i struktura treści', 'Link building i budowanie autorytetu', 'Monitoring pozycji i raportowanie'] },
+    { t: 'Strony internetowe', sub: 'Proste, szybkie, z głową',
+      d: 'Budujemy strony, które mają cel — nie tylko dobrze wyglądają. Landing page, strona firmowa, prosta witryna produktowa.',
+      b: ['Projekt i wdrożenie landing page', 'Optymalizacja pod Core Web Vitals', 'Integracja z narzędziami analitycznymi', 'Gotowość pod kampanie i SEO'] },
+    { t: 'AI i automatyzacje', sub: 'Narzędzia, które skracają czas',
+      d: 'Używamy AI tam, gdzie ma to sens — nie dlatego że to modne, ale dlatego że przyspiesza pracę i obniża koszt produkcji.',
+      b: ['Automatyzacja raportowania kampanii', 'Wspomaganie produkcji contentu', 'Budowa agentów i botów wewnętrznych', 'Integracje między narzędziami'] },
+    { t: 'Strategia marketingowa', sub: 'Plan, który da się wdrożyć',
+      d: 'Jeśli chcesz poukładać działania marketingowe albo wejść na nowy rynek — robimy strategię, którą da się realnie wdrożyć.',
+      b: ['Analiza sytuacji i konkurencji', 'Dobór kanałów i alokacja budżetu', 'Plan z priorytetami i harmonogramem', 'Wsparcie przy wdrożeniu'] },
+  ];
+  return (
+    <A_Section>
+      <A_Eyebrow num="§01">Usługi</A_Eyebrow>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: isMobile ? 32 : 80, marginBottom: 80 }}>
+        <h2 style={{
+          fontSize: 'clamp(44px, 5.4vw, 88px)', fontWeight: 700, letterSpacing: '-0.035em',
+          lineHeight: 0.96, margin: 0, color: A_COLORS.ink,
+        }}>
+          Kilka rzeczy,<br />które robimy<br />dobrze.
+        </h2>
+        <p style={{ fontSize: 19, lineHeight: 1.5, color: A_COLORS.ink70, alignSelf: 'end', margin: 0, maxWidth: 520, textWrap: 'pretty' }}>
+          Nie jesteśmy agencją od wszystkiego. Rozliczamy się konkretami,
+          nie slajdami — i mówimy wprost, gdy coś nie ma sensu.
+        </p>
+      </div>
+
+      <div style={{ borderTop: `1px solid ${A_COLORS.ink}` }}>
+        {svcs.map((s, i) => {
+          const isOpen = open === i;
+          return (
+            <div key={i} style={{ borderBottom: `1px solid ${A_COLORS.hair}`, cursor: 'pointer' }}
+                 onClick={() => setOpen(isOpen ? -1 : i)}
+                 onMouseEnter={e => { if (!isOpen) e.currentTarget.style.background = '#F3F2EC'; }}
+                 onMouseLeave={e => { if (!isOpen) e.currentTarget.style.background = 'transparent'; }}>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: isMobile ? '1fr 32px' : '80px 1fr 1fr 40px',
+                alignItems: 'center', padding: '32px 0', gap: 24,
+              }}>
+                {!isMobile && <span style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 13, color: A_COLORS.ink40 }}>0{i+1}</span>}
+                <div style={{
+                  fontSize: 'clamp(28px, 3.4vw, 48px)', fontWeight: 700, letterSpacing: '-0.025em',
+                  color: isOpen ? A_COLORS.accent : A_COLORS.ink, transition: 'color .2s',
+                }}>{s.t}</div>
+                {!isMobile && <div style={{ fontSize: 15, color: A_COLORS.ink70 }}>{s.sub}</div>}
+                <div style={{
+                  textAlign: 'right', fontSize: 28, color: A_COLORS.ink,
+                  transform: isOpen ? 'rotate(45deg)' : 'rotate(0)', transition: 'transform .25s',
+                  lineHeight: 1, fontWeight: 300,
+                }}>+</div>
+              </div>
+              <div style={{
+                maxHeight: isOpen ? 500 : 0, overflow: 'hidden', transition: 'max-height .4s ease',
+              }}>
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: isMobile ? '1fr' : '80px 1fr 1fr 40px',
+                  gap: isMobile ? 20 : 24, paddingBottom: 40,
+                }}>
+                  {!isMobile && <div />}
+                  <p style={{ fontSize: 17, lineHeight: 1.5, color: A_COLORS.ink70, margin: 0, maxWidth: 460 }}>{s.d}</p>
+                  <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: 15, color: A_COLORS.ink70 }}>
+                    {s.b.map((x, j) => (
+                      <li key={j} style={{ padding: '6px 0', borderBottom: j < s.b.length - 1 ? `1px dashed ${A_COLORS.hair}` : 'none', display: 'flex', gap: 12 }}>
+                        <span style={{ color: A_COLORS.accent }}>→</span>{x}
+                      </li>
+                    ))}
+                  </ul>
+                  {!isMobile && <div />}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </A_Section>
+  );
+}
+
+// ─── PROCESS ───────────────────────────────────
+function A_Process() {
+  const isMobile = React.useContext(MobileCtx);
+  const steps = [
+    { n: '01', t: 'Rozmowa wstępna', d: 'Rozumiemy cel i obecną sytuację. Bez prezentacji sprzedażowej.' },
+    { n: '02', t: 'Audyt lub analiza', d: 'Sprawdzamy co już działa, a co nie. Mówimy wprost.' },
+    { n: '03', t: 'Propozycja działań', d: 'Konkretna, bez lania wody. Z budżetami i timeline\'em.' },
+    { n: '04', t: 'Szybki onboarding', d: 'Dostępy, pierwsze działania. Bez miesięcznego przygotowania.' },
+    { n: '05', t: 'Iteracja i raport', d: 'Krótka pętla. Szybkie wnioski. Bez znikania na miesiąc.' },
+  ];
+  return (
+    <A_Section>
+      <A_Eyebrow num="§02">Jak pracujemy</A_Eyebrow>
+      <h2 style={{
+        fontSize: 'clamp(44px, 5.4vw, 88px)', fontWeight: 700, letterSpacing: '-0.035em',
+        lineHeight: 0.96, margin: '0 0 80px', color: A_COLORS.ink, maxWidth: 900,
+      }}>
+        Krótka pętla.<br /><span style={{ fontStyle: 'italic', fontWeight: 500 }}>Szybkie wnioski.</span><br />Bez znikania.
+      </h2>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: isMobile ? '1fr' : 'repeat(5, 1fr)',
+        gap: 0, borderTop: `1px solid ${A_COLORS.ink}`,
+      }}>
+        {steps.map((s, i) => (
+          <div key={i} style={{
+            padding: isMobile ? '28px 0' : '32px 24px 24px 0',
+            borderRight: !isMobile && i < 4 ? `1px solid ${A_COLORS.hair}` : 'none',
+            borderBottom: isMobile && i < steps.length - 1 ? `1px solid ${A_COLORS.hair}` : 'none',
+            paddingLeft: !isMobile && i > 0 ? 24 : 0,
+            minHeight: isMobile ? 'auto' : 220,
+          }}>
+            <div style={{ fontSize: 13, color: A_COLORS.accent, fontFamily: '"JetBrains Mono", monospace', letterSpacing: '0.1em', marginBottom: 24 }}>KROK {s.n}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.02em', marginBottom: 14, color: A_COLORS.ink, textWrap: 'balance' }}>{s.t}</div>
+            <p style={{ fontSize: 14, lineHeight: 1.5, color: A_COLORS.ink70, margin: 0, textWrap: 'pretty' }}>{s.d}</p>
+          </div>
+        ))}
+      </div>
+    </A_Section>
+  );
+}
+
+// ─── AI SECTION ────────────────────────────────
+function A_AI() {
+  const isMobile = React.useContext(MobileCtx);
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => { const t = setInterval(() => setTick(x => x+1), 2400); return () => clearInterval(t); }, []);
+  const logs = [
+    { t: '09:14', m: '🟢 Kampania FB_Konwersje_Q2 — ROAS 4.2x, w normie' },
+    { t: '09:31', m: '⚠️ Google Ads / Brand — CPC +38% w 2h, eskalacja' },
+    { t: '10:02', m: '📊 Raport tygodniowy dla klienta BELVEO gotowy' },
+    { t: '10:15', m: '🟢 TikTok — nowy kreatyw: CTR 3.1% (baseline 1.8%)' },
+    { t: '10:44', m: '🤖 Optymalizacja: wyłączono 3 grupy reklam (CPA > target)' },
+  ];
+  const visible = logs.slice(0, (tick % logs.length) + 1);
+  return (
+    <A_Section style={{ background: A_COLORS.ink, color: '#fff', borderTop: 'none' }}>
+      <div style={{
+        display: 'flex', alignItems: 'baseline', gap: 16,
+        fontFamily: '"JetBrains Mono", monospace', fontSize: 12, letterSpacing: '0.12em',
+        textTransform: 'uppercase', color: 'rgba(255,255,255,0.5)', marginBottom: 40,
+      }}>
+        <span style={{ color: A_COLORS.accent }}>§03</span>
+        <span>Agency powered by AI</span>
+        <span style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.1)', transform: 'translateY(-3px)' }} />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.1fr 1fr', gap: isMobile ? 40 : 80, alignItems: 'start' }}>
+        <div>
+          <h2 style={{
+            fontSize: 'clamp(44px, 5.4vw, 88px)', fontWeight: 700, letterSpacing: '-0.035em',
+            lineHeight: 0.96, margin: '0 0 40px',
+          }}>
+            AI tam, gdzie ma<br />
+            <span style={{ fontStyle: 'italic', fontWeight: 500, color: '#8FB4FF' }}>realny sens.</span>
+          </h2>
+          <p style={{ fontSize: 19, lineHeight: 1.55, color: 'rgba(255,255,255,0.75)', maxWidth: 540, margin: '0 0 48px', textWrap: 'pretty' }}>
+            Nie dlatego, że to modne. Dlatego, że skraca czas pracy, obniża koszt
+            produkcji i daje nam dane szybciej niż ktokolwiek, kto robi to ręcznie.
+            AI to u nas narzędzie robocze — nie slogan w stopce maila.
+          </p>
+
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 0, borderTop: '1px solid rgba(255,255,255,0.15)' }}>
+            {[
+              ['Raportowanie', 'Dzienne i tygodniowe raporty bez ręcznego zbierania danych'],
+              ['Produkcja contentu', 'Briefy, teksty reklamowe, opisy produktów — szybciej i taniej'],
+              ['Alerty budżetowe', 'System pilnuje tempa wydawania i powiadamia zespół'],
+              ['Agregacja danych', 'Meta, Google, GA4 w jeden spójny obraz kampanii'],
+            ].map(([t, d], i) => (
+              <div key={i} style={{
+                padding: '28px 20px 28px 0',
+                borderRight: !isMobile && i % 2 === 0 ? '1px solid rgba(255,255,255,0.15)' : 'none',
+                borderBottom: isMobile ? (i < 3 ? '1px solid rgba(255,255,255,0.15)' : 'none') : (i < 2 ? '1px solid rgba(255,255,255,0.15)' : 'none'),
+                paddingLeft: !isMobile && i % 2 === 1 ? 20 : 0,
+              }}>
+                <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>{t}</div>
+                <div style={{ fontSize: 13, lineHeight: 1.45, color: 'rgba(255,255,255,0.55)' }}>{d}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Sebol terminal */}
+        <div style={{
+          background: '#111', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 4,
+          fontFamily: '"JetBrains Mono", monospace', fontSize: 12.5, overflow: 'hidden',
+        }}>
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {['#ff5f56', '#ffbd2e', '#27c93f'].map(c => <span key={c} style={{ width: 10, height: 10, borderRadius: 5, background: c }} />)}
+            </div>
+            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', letterSpacing: '0.05em' }}>sebol@patoagencja — slack</span>
+            <span style={{ marginLeft: 'auto', fontSize: 11, color: '#27c93f', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ width: 6, height: 6, borderRadius: 3, background: '#27c93f' }} />live
+            </span>
+          </div>
+          <div style={{ padding: 20, minHeight: 340 }}>
+            <div style={{ color: 'rgba(255,255,255,0.4)', marginBottom: 16 }}># Sebol — agent AI zintegrowany ze Slackiem, Meta Ads &amp; Google Ads API</div>
+            {visible.map((l, i) => (
+              <div key={i} style={{
+                display: 'flex', gap: 12, padding: '6px 0',
+                opacity: i === visible.length - 1 ? 1 : 0.55,
+                transition: 'opacity .4s',
+              }}>
+                <span style={{ color: 'rgba(255,255,255,0.35)', width: 48 }}>{l.t}</span>
+                <span style={{ color: '#E6E6E6' }}>{l.m}</span>
+              </div>
+            ))}
+            <div style={{ display: 'flex', gap: 12, padding: '12px 0', borderTop: '1px dashed rgba(255,255,255,0.1)', marginTop: 12 }}>
+              <span style={{ color: A_COLORS.accent }}>$</span>
+              <span style={{ color: '#8FB4FF' }}>sebol status --campaign=Q2_brand_push</span>
+              <span style={{ borderLeft: '2px solid #8FB4FF', height: 16, animation: 'a-blink 1s infinite' }} />
+            </div>
+          </div>
+        </div>
+      </div>
+      <style>{`@keyframes a-blink { 50% { opacity: 0; } }`}</style>
+    </A_Section>
+  );
+}
+
+// ─── CASE STUDIES ──────────────────────────────
+function A_Cases() {
+  const isMobile = React.useContext(MobileCtx);
+  const cases = [
+    { client: 'BELVEO', cat: 'D2C Skincare', headline: 'Skalowanie z 40k do 220k PLN/mies przy utrzymaniu ROAS',
+      metrics: [['ROAS', '4.8x'], ['Wzrost przychodu', '+412%'], ['Okres', '9 mies.']],
+      tint: '#E8EDF7' },
+    { client: 'NORDSTAR', cat: 'B2B SaaS',
+      headline: 'Obniżenie CAC o 37% po rebudowie kont Meta i Google Ads',
+      metrics: [['CAC', '-37%'], ['MQL/mies.', '2.1x'], ['Okres', '6 mies.']],
+      tint: '#F0EDE6' },
+    { client: 'KRAFT/Co', cat: 'E-commerce spożywczy',
+      headline: 'Top 3 w Google dla 42 fraz produktowych — 11 mies. SEO',
+      metrics: [['Ruch org.', '+286%'], ['Fraz top 3', '42'], ['Okres', '11 mies.']],
+      tint: '#EDE9E2' },
+  ];
+  return (
+    <A_Section>
+      <A_Eyebrow num="§04">Case studies</A_Eyebrow>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: 80, gap: 40, flexWrap: 'wrap' }}>
+        <h2 style={{ fontSize: 'clamp(44px, 5.4vw, 88px)', fontWeight: 700, letterSpacing: '-0.035em', lineHeight: 0.96, margin: 0, color: A_COLORS.ink }}>
+          Robota, która<br />się rozlicza.
+        </h2>
+        <a href="klienci.html" style={{ fontSize: 14, color: A_COLORS.ink, borderBottom: `1px solid ${A_COLORS.ink}`, paddingBottom: 2, textDecoration: 'none' }}>Wszystkie case studies →</a>
+      </div>
+
+      {cases.map((c, i) => (
+        <div key={i} style={{
+          display: 'grid',
+          gridTemplateColumns: isMobile ? '1fr' : '80px 1fr 1.2fr 280px',
+          gap: isMobile ? 16 : 40,
+          padding: '48px 0', borderTop: `1px solid ${A_COLORS.hair}`, alignItems: 'center',
+          transition: 'all .25s', cursor: 'pointer',
+        }}
+        onMouseEnter={!isMobile ? (e => { e.currentTarget.style.background = c.tint; e.currentTarget.style.padding = '48px 24px'; e.currentTarget.style.marginLeft = '-24px'; e.currentTarget.style.marginRight = '-24px'; }) : undefined}
+        onMouseLeave={!isMobile ? (e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.padding = '48px 0'; e.currentTarget.style.marginLeft = '0'; e.currentTarget.style.marginRight = '0'; }) : undefined}>
+          {!isMobile && (
+            <div>
+              <div style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 11, color: A_COLORS.ink40 }}>0{i+1}</div>
+            </div>
+          )}
+          <div>
+            <div style={{ fontSize: isMobile ? 24 : 32, fontWeight: 700, letterSpacing: '-0.025em', color: A_COLORS.ink, marginBottom: 6 }}>{c.client}</div>
+            <div style={{ fontSize: 13, color: A_COLORS.ink70, fontFamily: '"JetBrains Mono", monospace', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{c.cat}</div>
+          </div>
+          <p style={{ fontSize: isMobile ? 16 : 20, lineHeight: 1.35, color: A_COLORS.ink, margin: 0, textWrap: 'pretty', fontWeight: 500 }}>{c.headline}</p>
+          <div style={{ display: 'flex', gap: 20 }}>
+            {c.metrics.map(([k, v]) => (
+              <div key={k}>
+                <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.02em', color: A_COLORS.accent, lineHeight: 1 }}>{v}</div>
+                <div style={{ fontSize: 11, color: A_COLORS.ink40, fontFamily: '"JetBrains Mono", monospace', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 4 }}>{k}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </A_Section>
+  );
+}
+
+// ─── ABOUT ─────────────────────────────────────
+function A_About() {
+  const isMobile = React.useContext(MobileCtx);
+  return (
+    <A_Section>
+      <A_Eyebrow num="§05">O zespole</A_Eyebrow>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 80 }}>
+        <div>
+          <h2 style={{
+            fontSize: 'clamp(44px, 5.4vw, 88px)', fontWeight: 700, letterSpacing: '-0.035em',
+            lineHeight: 0.96, margin: '0 0 40px', color: A_COLORS.ink,
+          }}>
+            Mały zespół.<br />
+            <span style={{ fontStyle: 'italic', fontWeight: 500 }}>Duże budżety.</span><br />
+            Pełna odpowiedzialność.
+          </h2>
+          <p style={{ fontSize: 18, lineHeight: 1.55, color: A_COLORS.ink70, margin: '0 0 24px', textWrap: 'pretty' }}>
+            Patoagencja to pięcioosobowy zespół specjalistów od płatnych reklam, SEO,
+            stron internetowych i strategii marketingowej. Obsługujemy zarówno marki
+            dopiero wchodzące w digital, jak i firmy z dużymi budżetami reklamowymi.
+          </p>
+          <p style={{ fontSize: 18, lineHeight: 1.55, color: A_COLORS.ink70, margin: 0, textWrap: 'pretty' }}>
+            Mamy za sobą setki kampanii w Meta Ads, Google Ads, TikToku i YouTube.
+            Wiemy, kiedy wcisnąć gaz, kiedy zmienić podejście i kiedy powiedzieć
+            wprost: <em>ten pomysł nie ma sensu.</em>
+          </p>
+        </div>
+        <div style={{
+          borderLeft: isMobile ? 'none' : `1px solid ${A_COLORS.hair}`,
+          borderTop: isMobile ? `1px solid ${A_COLORS.hair}` : 'none',
+          paddingLeft: isMobile ? 0 : 40,
+          paddingTop: isMobile ? 32 : 0,
+        }}>
+          <div style={{ fontSize: 13, fontFamily: '"JetBrains Mono", monospace', color: A_COLORS.ink40, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 32 }}>
+            Co mówimy wprost
+          </div>
+          {[
+            'Nie obiecujemy konkretnych wyników — obiecujemy solidną robotę i transparentność.',
+            'Jeśli coś nie działa, mówimy o tym wprost i proponujemy zmianę.',
+            'Nie bierzemy klientów, którym nie jesteśmy w stanie realnie pomóc.',
+            'Wolimy długoterminową współpracę niż jednorazowe projekty.',
+            'Nie jesteśmy najtańszą opcją. Jesteśmy opcją dla kogoś, kto chce wiedzieć za co płaci.',
+          ].map((x, i) => (
+            <div key={i} style={{ padding: '20px 0', borderTop: `1px solid ${A_COLORS.hair}`, display: 'grid', gridTemplateColumns: '40px 1fr', gap: 16 }}>
+              <span style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 12, color: A_COLORS.accent }}>0{i+1}</span>
+              <span style={{ fontSize: 16, lineHeight: 1.5, color: A_COLORS.ink }}>{x}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </A_Section>
+  );
+}
+
+// ─── FINAL CTA / FORM ─────────────────────────
+function A_CTA() {
+  const isMobile = React.useContext(MobileCtx);
+  const [form, setForm] = React.useState({ name: '', email: '', budget: '', msg: '' });
+  const [errors, setErrors] = React.useState({});
+  const [sent, setSent] = React.useState(false);
+  const validate = () => {
+    const e = {};
+    if (!form.name.trim()) e.name = 'Podaj imię.';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) e.email = 'Nieprawidłowy email.';
+    if (!form.msg.trim() || form.msg.length < 10) e.msg = 'Napisz przynajmniej zdanie.';
+    setErrors(e);
+    return Object.keys(e).length === 0;
+  };
+  const submit = (ev) => { ev.preventDefault(); if (validate()) setSent(true); };
+  const update = (k, v) => { setForm({ ...form, [k]: v }); if (errors[k]) setErrors({ ...errors, [k]: null }); };
+
+  return (
+    <A_Section id="kontakt" style={{ background: A_COLORS.accent, color: '#fff', borderTop: 'none' }}>
+      <div style={{
+        display: 'flex', alignItems: 'baseline', gap: 16,
+        fontFamily: '"JetBrains Mono", monospace', fontSize: 12, letterSpacing: '0.12em',
+        textTransform: 'uppercase', color: 'rgba(255,255,255,0.7)', marginBottom: 40,
+      }}>
+        <span>§06</span><span>Umów rozmowę</span>
+        <span style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.25)', transform: 'translateY(-3px)' }} />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.1fr 1fr', gap: isMobile ? 40 : 80, alignItems: 'start' }}>
+        <div>
+          <h2 style={{
+            fontSize: 'clamp(52px, 6.4vw, 104px)', fontWeight: 700, letterSpacing: '-0.04em',
+            lineHeight: 0.94, margin: '0 0 40px',
+          }}>
+            Gadamy 30 minut.<br />
+            <span style={{ fontStyle: 'italic', fontWeight: 500 }}>Bez zobowiązań,</span><br />
+            bez prezentacji.
+          </h2>
+          <p style={{ fontSize: 19, lineHeight: 1.5, color: 'rgba(255,255,255,0.9)', maxWidth: 480, margin: '0 0 48px', textWrap: 'pretty' }}>
+            Powiedz co próbujesz osiągnąć i z czym masz problem. Jeśli umiemy pomóc —
+            powiemy jak. Jeśli nie — też powiemy.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 24, borderTop: '1px solid rgba(255,255,255,0.3)', paddingTop: 32 }}>
+            <div>
+              <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.1em', opacity: 0.7, marginBottom: 8 }}>Email</div>
+              <a href="mailto:hej@patoagencja.com" style={{ fontSize: 18, color: '#fff', textDecoration: 'none', borderBottom: '1px solid rgba(255,255,255,0.5)' }}>hej@patoagencja.com</a>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.1em', opacity: 0.7, marginBottom: 8 }}>Odpowiedź</div>
+              <div style={{ fontSize: 18 }}>Do 24h roboczych</div>
+            </div>
+          </div>
+        </div>
+
+        {!sent ? (
+          <form onSubmit={submit} style={{ background: '#fff', color: A_COLORS.ink, padding: 36, borderRadius: 2 }}>
+            {[
+              { k: 'name', label: 'Imię i firma', ph: 'Anna Kowalska, Belveo' },
+              { k: 'email', label: 'Email', ph: 'anna@belveo.com', type: 'email' },
+            ].map(({ k, label, ph, type }) => (
+              <div key={k} style={{ marginBottom: 22 }}>
+                <label style={{ display: 'block', fontSize: 11, fontFamily: '"JetBrains Mono", monospace', textTransform: 'uppercase', letterSpacing: '0.1em', color: A_COLORS.ink70, marginBottom: 8 }}>{label}</label>
+                <input type={type || 'text'} value={form[k]} onChange={e => update(k, e.target.value)} placeholder={ph}
+                  style={{ width: '100%', padding: '12px 0', border: 'none', borderBottom: `1px solid ${errors[k] ? '#D93838' : A_COLORS.hair}`,
+                    background: 'transparent', fontSize: 17, outline: 'none', fontFamily: 'inherit', color: A_COLORS.ink, boxSizing: 'border-box' }} />
+                {errors[k] && <div style={{ fontSize: 12, color: '#D93838', marginTop: 6 }}>{errors[k]}</div>}
+              </div>
+            ))}
+            <div style={{ marginBottom: 22 }}>
+              <label style={{ display: 'block', fontSize: 11, fontFamily: '"JetBrains Mono", monospace', textTransform: 'uppercase', letterSpacing: '0.1em', color: A_COLORS.ink70, marginBottom: 12 }}>Budżet miesięczny</label>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {['< 10k', '10–30k', '30–80k', '80k+'].map(b => (
+                  <button key={b} type="button" onClick={() => update('budget', b)}
+                    style={{
+                      padding: '8px 16px', fontSize: 13, fontWeight: 500, cursor: 'pointer',
+                      border: `1px solid ${form.budget === b ? A_COLORS.ink : A_COLORS.hair}`,
+                      background: form.budget === b ? A_COLORS.ink : '#fff',
+                      color: form.budget === b ? '#fff' : A_COLORS.ink, borderRadius: 2,
+                    }}>{b}</button>
+                ))}
+              </div>
+            </div>
+            <div style={{ marginBottom: 28 }}>
+              <label style={{ display: 'block', fontSize: 11, fontFamily: '"JetBrains Mono", monospace', textTransform: 'uppercase', letterSpacing: '0.1em', color: A_COLORS.ink70, marginBottom: 8 }}>Z czym możemy pomóc</label>
+              <textarea value={form.msg} onChange={e => update('msg', e.target.value)} placeholder="Krótko — co próbujesz osiągnąć i gdzie utknąłeś/aś."
+                rows={4}
+                style={{ width: '100%', padding: '12px 0', border: 'none', borderBottom: `1px solid ${errors.msg ? '#D93838' : A_COLORS.hair}`, background: 'transparent',
+                  fontSize: 17, outline: 'none', fontFamily: 'inherit', color: A_COLORS.ink, resize: 'vertical', boxSizing: 'border-box' }} />
+              {errors.msg && <div style={{ fontSize: 12, color: '#D93838', marginTop: 6 }}>{errors.msg}</div>}
+            </div>
+            <button type="submit" style={{
+              width: '100%', padding: '18px', fontSize: 15, fontWeight: 600, cursor: 'pointer',
+              background: A_COLORS.ink, color: '#fff', border: 'none', borderRadius: 2,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12,
+              transition: 'background .15s',
+            }}
+            onMouseEnter={e => e.currentTarget.style.background = A_COLORS.accent}
+            onMouseLeave={e => e.currentTarget.style.background = A_COLORS.ink}>
+              Wyślij i umów rozmowę
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 8h10M9 3l5 5-5 5"/></svg>
+            </button>
+          </form>
+        ) : (
+          <div style={{ background: '#fff', color: A_COLORS.ink, padding: 48, borderRadius: 2, textAlign: 'center' }}>
+            <div style={{ fontSize: 44, marginBottom: 16 }}>✓</div>
+            <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 12 }}>Mamy twoje zgłoszenie.</div>
+            <p style={{ fontSize: 15, color: A_COLORS.ink70, margin: 0, textWrap: 'pretty' }}>Odezwiemy się maksymalnie w 24h roboczych. Jeśli to pilne — pisz wprost na <strong>hej@patoagencja.com</strong>.</p>
+          </div>
+        )}
+      </div>
+    </A_Section>
+  );
+}
+
+// ─── FOOTER ────────────────────────────────────
+function A_Footer() {
+  const isMobile = React.useContext(MobileCtx);
+  return (
+    <footer style={{ padding: isMobile ? '48px 20px 32px' : '56px 56px 40px', background: A_COLORS.ink, color: '#fff' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.5fr 1fr 1fr 1fr', gap: 40, marginBottom: 80 }}>
+        <div>
+          <img src="assets/patoagencja-wordmark-white.png" alt="patoagencja" style={{ height: 24, display: 'block', marginBottom: 20 }} />
+          <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.6)', lineHeight: 1.55, maxWidth: 360, margin: 0, textWrap: 'pretty' }}>
+            Mały zespół od performance marketingu, SEO, stron i AI.
+            Warszawa, zdalnie dla reszty świata.
+          </p>
+        </div>
+        {[
+          ['Usługi', [['Performance','uslugi.html'],['SEO','uslugi.html'],['Strony','uslugi.html'],['AI i automatyzacje','uslugi.html'],['Strategia','uslugi.html']]],
+          ['Firma', [['O nas','o-nas.html'],['Case studies','klienci.html'],['Kursy','kursy.html'],['Blog','#'],['Kontakt','kontakt.html']]],
+          ['Kontakt', [['hej@patoagencja.com','mailto:hej@patoagencja.com'],['+48 500 000 000','tel:+48500000000'],['Warszawa, PL','#'],['@patoagencja','#']]],
+        ].map(([t, items]) => (
+          <div key={t}>
+            <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'rgba(255,255,255,0.4)', marginBottom: 20 }}>{t}</div>
+            {items.map(([label, href]) => (
+              <div key={label} style={{ fontSize: 14, padding: '5px 0' }}>
+                <a href={href} style={{ color: 'rgba(255,255,255,0.85)', textDecoration: 'none' }}
+                   onMouseEnter={e => e.currentTarget.style.color = '#fff'}
+                   onMouseLeave={e => e.currentTarget.style.color = 'rgba(255,255,255,0.85)'}>{label}</a>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      <div style={{ borderTop: '1px solid rgba(255,255,255,0.12)', paddingTop: 24, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, fontSize: 12, color: 'rgba(255,255,255,0.5)', fontFamily: '"JetBrains Mono", monospace' }}>
+        <span>© 2026 Patoagencja sp. z o.o.</span>
+        <span>Zrobione bez AI. Żartowaliśmy — z AI.</span>
+      </div>
+    </footer>
+  );
+}
+
+// ─── PAGE ──────────────────────────────────────
+function Page() {
+  const isMobile = useMobile();
+  const [scrolled, setScrolled] = React.useState(false);
+  React.useEffect(() => {
+    const h = () => setScrolled(window.scrollY > 40);
+    window.addEventListener('scroll', h); return () => window.removeEventListener('scroll', h);
+  }, []);
+  return (
+    <MobileCtx.Provider value={isMobile}>
+      <A_Nav scrolled={scrolled} activePage={null} />
+      <A_Hero />
+      <A_Trust />
+      <A_Metrics />
+      <A_Services />
+      <A_Process />
+      <A_AI />
+      <A_Cases />
+      <A_About />
+      <A_CTA />
+      <A_Footer />
+    </MobileCtx.Provider>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<Page />);
+</script>
+</body>
+</html>
