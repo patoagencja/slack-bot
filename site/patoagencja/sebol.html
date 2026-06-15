@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8" />
+<title>Sebol — AI Agent · Patoagencja</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&family=Inter+Tight:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; padding: 0; background: #FAFAF7; }
+  body { font-family: 'Inter Tight', -apple-system, BlinkMacSystemFont, system-ui, sans-serif; -webkit-font-smoothing: antialiased; color: #0A0A0A; }
+  #root { font-feature-settings: "ss01", "cv11"; }
+  h1, h2, h3 { font-weight: 700; }
+  em, i, [style*="italic"] { font-family: 'Instrument Serif', Georgia, serif !important; font-style: italic; font-weight: 400 !important; }
+  ::-webkit-scrollbar { width: 10px; } ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 5px; }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const A_COLORS = {
+  bg: '#FAFAF7', ink: '#0A0A0A', ink70: '#3A3A3A', ink40: '#8A8A86',
+  hair: '#E6E3DA', accent: '#2626E0', accentSoft: '#F0B8C4', paper: '#FFFFFF',
+};
+
+// ─── MOBILE HOOK + CONTEXT ────────────────────
+const MobileCtx = React.createContext(false);
+function useMobile() {
+  const [m, setM] = React.useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
+  React.useEffect(() => {
+    const h = () => setM(window.innerWidth < 768);
+    window.addEventListener('resize', h);
+    return () => window.removeEventListener('resize', h);
+  }, []);
+  return m;
+}
+
+const NAV_LINKS = [
+  ['O nas','o-nas.html'],['Usługi','uslugi.html'],['Klienci','klienci.html'],
+  ['Kursy','kursy.html'],['Sebol','sebol.html'],['Kontakt','kontakt.html'],
+];
+
+function A_Nav({ scrolled, activePage }) {
+  const isMobile = React.useContext(MobileCtx);
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  return (
+    <>
+      <header style={{
+        position: 'sticky', top: 0, zIndex: 50,
+        padding: isMobile ? (scrolled ? '12px 20px' : '18px 20px') : (scrolled ? '14px 56px' : '22px 56px'),
+        background: 'rgba(250,250,247,0.95)', backdropFilter: 'blur(16px)',
+        borderBottom: `1px solid ${A_COLORS.hair}`,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        transition: 'all .25s ease',
+      }}>
+        <a href="index.html" style={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }}>
+          <img src="assets/patoagencja-wordmark-ink.png" alt="patoagencja" style={{ height: 20, display: 'block' }} />
+        </a>
+        {isMobile ? (
+          <button onClick={() => setMenuOpen(o => !o)} style={{
+            background: 'none', border: 'none', cursor: 'pointer', padding: 8,
+            display: 'flex', flexDirection: 'column', gap: 5, alignItems: 'center',
+          }}>
+            <span style={{ display: 'block', width: 22, height: 2, background: A_COLORS.ink, transition: 'all .2s', transform: menuOpen ? 'rotate(45deg) translate(5px, 5px)' : 'none' }} />
+            <span style={{ display: 'block', width: 22, height: 2, background: A_COLORS.ink, transition: 'all .2s', opacity: menuOpen ? 0 : 1 }} />
+            <span style={{ display: 'block', width: 22, height: 2, background: A_COLORS.ink, transition: 'all .2s', transform: menuOpen ? 'rotate(-45deg) translate(5px, -5px)' : 'none' }} />
+          </button>
+        ) : (
+          <>
+            <nav style={{ display: 'flex', gap: 40, fontSize: 14, fontWeight: 500 }}>
+              {NAV_LINKS.map(([l, href]) => {
+                const isActive = activePage === l;
+                return (
+                  <a key={l} href={href} style={{ color: isActive ? A_COLORS.accent : A_COLORS.ink, textDecoration: 'none', position: 'relative' }}
+                    onMouseEnter={e => { if (!isActive) e.currentTarget.querySelector('span').style.width = '100%'; }}
+                    onMouseLeave={e => { if (!isActive) e.currentTarget.querySelector('span').style.width = '0%'; }}>
+                    {l}
+                    <span style={{ position: 'absolute', left: 0, bottom: -4, height: 1, width: isActive ? '100%' : '0%', background: A_COLORS.accent, transition: 'width .2s' }} />
+                  </a>
+                );
+              })}
+            </nav>
+            <a href="kontakt.html" style={{ background: A_COLORS.ink, color: '#fff', padding: '10px 18px', fontSize: 13, fontWeight: 600, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 8, borderRadius: 2, transition: 'background .15s' }}
+              onMouseEnter={e => e.currentTarget.style.background = A_COLORS.accent}
+              onMouseLeave={e => e.currentTarget.style.background = A_COLORS.ink}>
+              Umów rozmowę
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 6h6M7 3l3 3-3 3"/></svg>
+            </a>
+          </>
+        )}
+      </header>
+      {isMobile && menuOpen && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 49,
+          background: 'rgba(250,250,247,0.97)', backdropFilter: 'blur(16px)',
+          display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: 0,
+        }}>
+          {NAV_LINKS.map(([l, href]) => {
+            const isActive = activePage === l;
+            return (
+              <a key={l} href={href} onClick={() => setMenuOpen(false)} style={{
+                fontSize: 32, fontWeight: 700, letterSpacing: '-0.02em',
+                color: isActive ? A_COLORS.accent : A_COLORS.ink,
+                textDecoration: 'none', padding: '16px 0',
+                borderBottom: `1px solid ${A_COLORS.hair}`, width: '80%', textAlign: 'center',
+              }}>{l}</a>
+            );
+          })}
+          <a href="kontakt.html" onClick={() => setMenuOpen(false)} style={{
+            marginTop: 32, background: A_COLORS.ink, color: '#fff', padding: '16px 32px',
+            fontSize: 16, fontWeight: 600, textDecoration: 'none', borderRadius: 2,
+          }}>Umów rozmowę →</a>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ─── SEBOL HERO ────────────────────────────────
+function SebolHero() {
+  const isMobile = React.useContext(MobileCtx);
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => { const t = setInterval(() => setTick(x => x+1), 2200); return () => clearInterval(t); }, []);
+  const logs = [
+    { t: '09:14', c: '#27c93f', m: 'Kampania FB_Konwersje_Q2 — ROAS 4.2x, w normie' },
+    { t: '09:31', c: '#ffbd2e', m: 'Google Ads / Brand — CPC +38% w 2h, eskalacja' },
+    { t: '10:02', c: '#8FB4FF', m: 'Raport tygodniowy dla klienta BELVEO gotowy' },
+    { t: '10:15', c: '#27c93f', m: 'TikTok — nowy kreatyw: CTR 3.1% (baseline 1.8%)' },
+    { t: '10:44', c: '#ff5f56', m: 'Optymalizacja: wyłączono 3 grupy reklam (CPA > target)' },
+  ];
+  const visible = logs.slice(0, (tick % logs.length) + 1);
+
+  return (
+    <section style={{
+      display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr',
+      minHeight: isMobile ? 'auto' : '90vh',
+      borderBottom: `1px solid ${A_COLORS.hair}`,
+    }}>
+      <style>{`
+        @keyframes sb-blink { 50% { opacity: 0; } }
+        @keyframes sb-pulse { 0%,100% { opacity:1; } 50% { opacity:0.2; } }
+      `}</style>
+
+      {/* Left — copy */}
+      <div style={{ padding: isMobile ? '60px 20px 40px' : '80px 56px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: isMobile ? 40 : 0 }}>
+        <div style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 12, color: A_COLORS.ink40, letterSpacing: '0.12em', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ width: 8, height: 8, borderRadius: 4, background: '#27c93f', display: 'inline-block', animation: 'sb-pulse 1.8s ease-in-out infinite' }} />
+          Sebol · AI Agent · Live
+        </div>
+
+        <div>
+          <h1 style={{ fontSize: 'clamp(44px, 6.8vw, 112px)', fontWeight: 700, letterSpacing: '-0.045em', lineHeight: 0.92, margin: '0 0 40px', color: A_COLORS.ink }}>
+            Twoje kampanie.<br />
+            <em style={{ fontWeight: 500, color: A_COLORS.accent }}>Zarządzane</em><br />
+            przez AI.
+          </h1>
+          <p style={{ fontSize: 19, lineHeight: 1.5, color: A_COLORS.ink70, maxWidth: 480, margin: '0 0 44px', textWrap: 'pretty' }}>
+            Sebol monitoruje Google Ads i Meta non-stop — raportuje, optymalizuje
+            i alarmuje. Wszystko przez Slack. Bez ręcznego sprawdzania paneli.
+          </p>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+            <a href="kontakt.html" style={{ display: 'inline-flex', alignItems: 'center', gap: 12, background: A_COLORS.accent, color: '#fff', padding: '18px 28px', fontSize: 15, fontWeight: 600, textDecoration: 'none', borderRadius: 2, transition: 'transform .15s' }}
+              onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
+              onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}>
+              Umów demo
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 8h10M9 3l5 5-5 5"/></svg>
+            </a>
+            <span style={{ fontSize: 13, color: A_COLORS.ink40, fontFamily: '"JetBrains Mono", monospace' }}>30 min · bez zobowiązań</span>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 0, borderTop: `1px solid ${A_COLORS.hair}`, paddingTop: 32 }}>
+          {['Google Ads', 'Meta Ads', 'Slack'].map((t, i) => (
+            <div key={t} style={{ paddingRight: 24, borderRight: i < 2 ? `1px solid ${A_COLORS.hair}` : 'none', paddingLeft: i > 0 ? 24 : 0 }}>
+              <div style={{ fontSize: 11, fontFamily: '"JetBrains Mono", monospace', color: A_COLORS.accent, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4 }}>Integracja</div>
+              <div style={{ fontSize: 16, fontWeight: 600 }}>{t}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Right — terminal */}
+      <div style={{ background: A_COLORS.ink, padding: isMobile ? '40px 20px' : '80px 56px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+        <div style={{
+          background: '#111', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 4,
+          fontFamily: '"JetBrains Mono", monospace', fontSize: 12.5, overflow: 'hidden',
+        }}>
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {['#ff5f56','#ffbd2e','#27c93f'].map(c => <span key={c} style={{ width: 10, height: 10, borderRadius: 5, background: c }} />)}
+            </div>
+            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', letterSpacing: '0.05em' }}>sebol@patoagencja — #kampanie</span>
+            <span style={{ marginLeft: 'auto', fontSize: 11, color: '#27c93f', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ width: 6, height: 6, borderRadius: 3, background: '#27c93f' }} />live
+            </span>
+          </div>
+          <div style={{ padding: 20, minHeight: isMobile ? 240 : 320 }}>
+            <div style={{ color: 'rgba(255,255,255,0.35)', marginBottom: 20, fontSize: 11 }}>
+              # Sebol — autonomiczny agent AI do performance marketingu
+            </div>
+            {visible.map((l, i) => (
+              <div key={i} style={{ display: 'flex', gap: 12, padding: '5px 0', opacity: i === visible.length - 1 ? 1 : 0.5, transition: 'opacity .4s' }}>
+                <span style={{ color: 'rgba(255,255,255,0.3)', width: 42, flexShrink: 0 }}>{l.t}</span>
+                <span style={{ color: l.c, flexShrink: 0 }}>●</span>
+                <span style={{ color: '#E6E6E6' }}>{l.m}</span>
+              </div>
+            ))}
+            <div style={{ display: 'flex', gap: 12, padding: '10px 0', borderTop: '1px dashed rgba(255,255,255,0.1)', marginTop: 12 }}>
+              <span style={{ color: A_COLORS.accent }}>$</span>
+              <span style={{ color: '#8FB4FF' }}>sebol status --all-campaigns</span>
+              <span style={{ borderLeft: '2px solid #8FB4FF', height: 14, animation: 'sb-blink 1s infinite' }} />
+            </div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 40, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+          {[['4.8x', 'ROAS śr.'], ['−38%', 'CPL'], ['24/7', 'Monitoring'], ['< 4s', 'Czas raportu']].map(([v, k]) => (
+            <div key={k} style={{ background: 'rgba(255,255,255,0.05)', padding: '20px 24px' }}>
+              <div style={{ fontSize: 32, fontWeight: 700, letterSpacing: '-0.03em', color: '#fff', lineHeight: 1 }}>{v}</div>
+              <div style={{ fontSize: 11, fontFamily: '"JetBrains Mono", monospace', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.1em', textTransform: 'uppercase', marginTop: 6 }}>{k}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── PROBLEM ───────────────────────────────────
+function SebolProblem() {
+  const isMobile = React.useContext(MobileCtx);
+  return (
+    <section style={{ padding: isMobile ? '60px 20px' : '120px 56px', borderBottom: `1px solid ${A_COLORS.hair}` }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, fontFamily: '"JetBrains Mono", monospace', fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase', color: A_COLORS.ink40, marginBottom: 80 }}>
+        <span style={{ color: A_COLORS.accent, fontWeight: 600 }}>§01</span>
+        <span>Problem</span>
+        <span style={{ flex: 1, height: 1, background: A_COLORS.hair, transform: 'translateY(-3px)' }} />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: isMobile ? 24 : 80, marginBottom: 80 }}>
+        <h2 style={{ fontSize: 'clamp(44px, 5.4vw, 88px)', fontWeight: 700, letterSpacing: '-0.035em', lineHeight: 0.96, margin: 0, color: A_COLORS.ink }}>
+          Twój budżet<br />reklamowy<br /><em style={{ fontWeight: 500, color: A_COLORS.accent }}>wycieka.</em>
+        </h2>
+        <p style={{ fontSize: 19, lineHeight: 1.55, color: A_COLORS.ink70, alignSelf: 'end', margin: 0, textWrap: 'pretty' }}>
+          Nikt nie pilnuje kampanii non-stop. Raporty robi się ręcznie.
+          Alerty przychodzą za późno. A budżet leci, zanim ktokolwiek zdąży zareagować.
+        </p>
+      </div>
+
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)',
+        borderTop: `1px solid ${A_COLORS.ink}`,
+      }}>
+        {[
+          { n: '01', t: 'Ręczne raporty', d: 'Analitycy tracą 3–5h tygodniowo na kopiowanie danych do Excela. AI robi to w 4 sekundy.' },
+          { n: '02', t: 'Przepalony budżet', d: 'Niemonitorowane kampanie przepalają do 40% budżetu. Alerty przychodzą za późno.' },
+          { n: '03', t: 'Brak kontekstu', d: 'Zapytanie klienta wymaga 20+ minut ręcznego przeklikiwania paneli i zbierania danych.' },
+        ].map((p, i) => (
+          <div key={i} style={{
+            padding: isMobile ? '32px 0' : '40px 32px 40px 0',
+            borderRight: !isMobile && i < 2 ? `1px solid ${A_COLORS.hair}` : 'none',
+            borderBottom: isMobile && i < 2 ? `1px solid ${A_COLORS.hair}` : 'none',
+            paddingLeft: !isMobile && i > 0 ? 32 : 0,
+          }}>
+            <div style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 12, color: A_COLORS.accent, letterSpacing: '0.1em', marginBottom: 20 }}>{p.n}</div>
+            <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.02em', marginBottom: 14, color: A_COLORS.ink }}>{p.t}</div>
+            <p style={{ fontSize: 15, lineHeight: 1.55, color: A_COLORS.ink70, margin: 0, textWrap: 'pretty' }}>{p.d}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// ─── HOW IT WORKS ──────────────────────────────
+function SebolHow() {
+  const isMobile = React.useContext(MobileCtx);
+  return (
+    <section style={{ padding: isMobile ? '60px 20px' : '120px 56px', background: A_COLORS.ink, color: '#fff' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, fontFamily: '"JetBrains Mono", monospace', fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)', marginBottom: 80 }}>
+        <span style={{ color: A_COLORS.accent, fontWeight: 600 }}>§02</span>
+        <span>Jak to działa</span>
+        <span style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.1)', transform: 'translateY(-3px)' }} />
+      </div>
+
+      <h2 style={{ fontSize: 'clamp(44px, 5.4vw, 88px)', fontWeight: 700, letterSpacing: '-0.035em', lineHeight: 0.96, margin: '0 0 80px', maxWidth: 900 }}>
+        3 kroki do<br /><em style={{ fontWeight: 500, color: '#8FB4FF' }}>autonomicznego</em><br />marketingu.
+      </h2>
+
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)',
+        borderTop: '1px solid rgba(255,255,255,0.15)',
+      }}>
+        {[
+          { n: '01', t: 'Podłącz konta', d: 'Google Ads, Meta Ads i Slack w kilka minut. Sebol dostaje dostęp i od razu zaczyna zbierać dane.' },
+          { n: '02', t: 'Monitor 24/7', d: 'Co godzinę sprawdza tempo wydawania, CTR, CPC i konwersje. Żadna anomalia nie umknie.' },
+          { n: '03', t: 'Raport w Slacku', d: 'Codzienny digest, alerty w czasie rzeczywistym i rekomendacje — prosto na kanał zespołu.' },
+        ].map((s, i) => (
+          <div key={i} style={{
+            padding: isMobile ? '32px 0' : '40px 32px 40px 0',
+            borderRight: !isMobile && i < 2 ? '1px solid rgba(255,255,255,0.15)' : 'none',
+            borderBottom: isMobile && i < 2 ? '1px solid rgba(255,255,255,0.15)' : 'none',
+            paddingLeft: !isMobile && i > 0 ? 32 : 0,
+            minHeight: isMobile ? 'auto' : 240,
+          }}>
+            <div style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 40, color: A_COLORS.accent, fontWeight: 700, lineHeight: 1, marginBottom: 24 }}>{s.n}</div>
+            <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.02em', marginBottom: 14 }}>{s.t}</div>
+            <p style={{ fontSize: 15, lineHeight: 1.55, color: 'rgba(255,255,255,0.6)', margin: 0, textWrap: 'pretty' }}>{s.d}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// ─── FEATURES ──────────────────────────────────
+function SebolFeatures() {
+  const isMobile = React.useContext(MobileCtx);
+  const features = [
+    { t: 'Daily Digest', d: 'Automatyczny raport każdego ranka — wyniki kampanii, trendy, rekomendacje. Bez wchodzenia do żadnego panelu.', tag: 'Raportowanie' },
+    { t: 'Budget Alerts', d: 'System pilnuje tempa wydawania budżetu co godzinę. Jeśli coś wybiega poza normę — Slack dostaje alert natychmiast.', tag: 'Alerty' },
+    { t: 'Claude AI Core', d: 'Sebol używa Claude (Anthropic) jako silnika analitycznego. Rozumie kontekst kampanii, nie tylko zwraca surowe liczby.', tag: 'AI Engine' },
+    { t: 'Slack Wizard', d: 'Wszystko przez Slack — komendy, raporty, odpowiedzi na pytania. Bez nowych narzędzi, bez nowego loginu.', tag: 'Interfejs' },
+    { t: 'Google & Meta API', d: 'Natywna integracja z Google Ads i Meta Ads API. Dane pobierane bezpośrednio — bez pośredników i opóźnień.', tag: 'Integracje' },
+    { t: 'Token Optimizer', d: 'Optymalizuje zużycie tokenów AI żeby koszty działania agenta były przewidywalne i niskie.', tag: 'Efektywność' },
+  ];
+
+  return (
+    <section style={{ padding: isMobile ? '60px 20px' : '120px 56px', borderBottom: `1px solid ${A_COLORS.hair}` }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, fontFamily: '"JetBrains Mono", monospace', fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase', color: A_COLORS.ink40, marginBottom: 80 }}>
+        <span style={{ color: A_COLORS.accent, fontWeight: 600 }}>§03</span>
+        <span>Funkcje</span>
+        <span style={{ flex: 1, height: 1, background: A_COLORS.hair, transform: 'translateY(-3px)' }} />
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', marginBottom: 80, gap: 40, flexWrap: 'wrap' }}>
+        <h2 style={{ fontSize: 'clamp(44px, 5.4vw, 88px)', fontWeight: 700, letterSpacing: '-0.035em', lineHeight: 0.96, margin: 0, color: A_COLORS.ink }}>
+          Co robi<br />Sebol.
+        </h2>
+        <p style={{ fontSize: 18, lineHeight: 1.5, color: A_COLORS.ink70, maxWidth: 480, margin: 0, textWrap: 'pretty' }}>
+          Nie kolejny dashboard. Agent, który działa w tle i sam odzywa się do ciebie — tylko wtedy, gdy coś wymaga uwagi.
+        </p>
+      </div>
+
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)',
+        borderTop: `1px solid ${A_COLORS.ink}`,
+      }}>
+        {features.map((f, i) => (
+          <div key={i} style={{
+            padding: isMobile ? '32px 0' : '40px 32px 40px 0',
+            borderRight: !isMobile && (i % 3) < 2 ? `1px solid ${A_COLORS.hair}` : 'none',
+            borderBottom: isMobile ? (i < features.length - 1 ? `1px solid ${A_COLORS.hair}` : 'none') : (i < 3 ? `1px solid ${A_COLORS.hair}` : 'none'),
+            paddingLeft: !isMobile && (i % 3) > 0 ? 32 : 0,
+          }}>
+            <div style={{ fontSize: 11, fontFamily: '"JetBrains Mono", monospace', color: A_COLORS.accent, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 16 }}>{f.tag}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.02em', marginBottom: 12, color: A_COLORS.ink }}>{f.t}</div>
+            <p style={{ fontSize: 14, lineHeight: 1.55, color: A_COLORS.ink70, margin: 0, textWrap: 'pretty' }}>{f.d}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// ─── TESTIMONIAL ───────────────────────────────
+function SebolTestimonial() {
+  const isMobile = React.useContext(MobileCtx);
+  return (
+    <section style={{ padding: isMobile ? '72px 20px' : '120px 56px', background: A_COLORS.accent, color: '#fff' }}>
+      <div style={{ maxWidth: 960, margin: '0 auto', textAlign: 'center' }}>
+        <div style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 12, letterSpacing: '0.15em', opacity: 0.7, marginBottom: 48 }}>§04 · OPINIA ZESPOŁU</div>
+        <p style={{ fontSize: 'clamp(22px, 3.8vw, 52px)', fontWeight: 500, lineHeight: 1.15, letterSpacing: '-0.025em', margin: '0 0 48px', textWrap: 'balance' }}>
+          „Zamiast spędzać rano na sprawdzaniu paneli, sprawdzam Slacka —
+          gdzie Sebol ma <em style={{ color: A_COLORS.accentSoft, fontWeight: 500 }}>gotowe raporty</em>
+          i flaguje to, co wymaga uwagi."
+        </p>
+        <div style={{ fontFamily: '"JetBrains Mono", monospace', fontSize: 12, letterSpacing: '0.12em', opacity: 0.75 }}>
+          PATO AGENCJA · PERFORMANCE TEAM
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── CTA / DEMO ────────────────────────────────
+function SebolCTA() {
+  const isMobile = React.useContext(MobileCtx);
+  const [sent, setSent] = React.useState(false);
+  const [email, setEmail] = React.useState('');
+
+  return (
+    <section style={{ padding: isMobile ? '60px 20px' : '120px 56px', borderTop: `1px solid ${A_COLORS.hair}` }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: isMobile ? 40 : 80, alignItems: 'center' }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, fontFamily: '"JetBrains Mono", monospace', fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase', color: A_COLORS.ink40, marginBottom: 40 }}>
+            <span style={{ color: A_COLORS.accent, fontWeight: 600 }}>§05</span>
+            <span>Demo</span>
+            <span style={{ flex: 1, height: 1, background: A_COLORS.hair, transform: 'translateY(-3px)' }} />
+          </div>
+          <h2 style={{ fontSize: 'clamp(44px, 5.4vw, 88px)', fontWeight: 700, letterSpacing: '-0.035em', lineHeight: 0.96, margin: '0 0 32px', color: A_COLORS.ink }}>
+            Pokaż nam<br />swoje konta.<br /><em style={{ fontWeight: 500, color: A_COLORS.accent }}>Resztą zajmie się Sebol.</em>
+          </h2>
+          <p style={{ fontSize: 18, lineHeight: 1.55, color: A_COLORS.ink70, margin: '0 0 48px', maxWidth: 480, textWrap: 'pretty' }}>
+            30-minutowe demo na żywych danych. Podłączamy Sebola do twoich kont —
+            i pokazujemy co zobaczyłby w ciągu pierwszej godziny pracy.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 24, borderTop: `1px solid ${A_COLORS.hair}`, paddingTop: 32 }}>
+            <div>
+              <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.1em', color: A_COLORS.ink40, marginBottom: 8, fontFamily: '"JetBrains Mono", monospace' }}>Email</div>
+              <a href="mailto:hej@patoagencja.com" style={{ fontSize: 16, color: A_COLORS.ink, textDecoration: 'none', borderBottom: `1px solid ${A_COLORS.hair}` }}>hej@patoagencja.com</a>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.1em', color: A_COLORS.ink40, marginBottom: 8, fontFamily: '"JetBrains Mono", monospace' }}>Odpowiedź</div>
+              <div style={{ fontSize: 16, color: A_COLORS.ink }}>Do 24h roboczych</div>
+            </div>
+          </div>
+        </div>
+
+        {!sent ? (
+          <div style={{ background: A_COLORS.ink, padding: 48, borderRadius: 2 }}>
+            <div style={{ fontSize: 13, fontFamily: '"JetBrains Mono", monospace', color: 'rgba(255,255,255,0.5)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 32 }}>Napisz do nas</div>
+            <div style={{ marginBottom: 24 }}>
+              <label style={{ display: 'block', fontSize: 11, fontFamily: '"JetBrains Mono", monospace', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'rgba(255,255,255,0.5)', marginBottom: 10 }}>Twój email</label>
+              <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="anna@firma.pl"
+                style={{ width: '100%', padding: '12px 0', border: 'none', borderBottom: '1px solid rgba(255,255,255,0.2)', background: 'transparent', fontSize: 17, outline: 'none', fontFamily: 'inherit', color: '#fff', boxSizing: 'border-box' }} />
+            </div>
+            <button onClick={() => email && setSent(true)} style={{ width: '100%', padding: '18px', fontSize: 15, fontWeight: 600, cursor: 'pointer', background: A_COLORS.accent, color: '#fff', border: 'none', borderRadius: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, transition: 'background .15s' }}
+              onMouseEnter={e => e.currentTarget.style.background = '#1a1aff'}
+              onMouseLeave={e => e.currentTarget.style.background = A_COLORS.accent}>
+              Umów demo
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 8h10M9 3l5 5-5 5"/></svg>
+            </button>
+          </div>
+        ) : (
+          <div style={{ background: A_COLORS.ink, padding: 48, borderRadius: 2, textAlign: 'center' }}>
+            <div style={{ fontSize: 44, marginBottom: 16, color: '#27c93f' }}>✓</div>
+            <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 12, color: '#fff' }}>Sebol zanotował.</div>
+            <p style={{ fontSize: 15, color: 'rgba(255,255,255,0.6)', margin: 0 }}>Odezwiemy się w 24h. Jeśli pilne — pisz na <strong style={{ color: '#fff' }}>hej@patoagencja.com</strong>.</p>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// ─── FOOTER ────────────────────────────────────
+function A_Footer() {
+  const isMobile = React.useContext(MobileCtx);
+  return (
+    <footer style={{ padding: isMobile ? '48px 20px 32px' : '56px 56px 40px', background: A_COLORS.ink, color: '#fff' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.5fr 1fr 1fr 1fr', gap: 40, marginBottom: 80 }}>
+        <div>
+          <img src="assets/patoagencja-wordmark-white.png" alt="patoagencja" style={{ height: 24, display: 'block', marginBottom: 20 }} />
+          <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.6)', lineHeight: 1.55, maxWidth: 360, margin: 0 }}>Mały zespół od performance marketingu, SEO, stron i AI. Warszawa, zdalnie dla reszty świata.</p>
+        </div>
+        {[
+          ['Usługi', [['Performance','uslugi.html'],['SEO','uslugi.html'],['Strony','uslugi.html'],['AI i automatyzacje','uslugi.html'],['Strategia','uslugi.html']]],
+          ['Firma', [['O nas','o-nas.html'],['Case studies','klienci.html'],['Kursy','kursy.html'],['Sebol','sebol.html'],['Kontakt','kontakt.html']]],
+          ['Kontakt', [['hej@patoagencja.com','mailto:hej@patoagencja.com'],['+48 500 000 000','tel:+48500000000'],['Warszawa, PL','#'],['@patoagencja','#']]],
+        ].map(([t, items]) => (
+          <div key={t}>
+            <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'rgba(255,255,255,0.4)', marginBottom: 20 }}>{t}</div>
+            {items.map(([label, href]) => (
+              <div key={label} style={{ fontSize: 14, padding: '5px 0' }}>
+                <a href={href} style={{ color: 'rgba(255,255,255,0.85)', textDecoration: 'none' }}
+                   onMouseEnter={e => e.currentTarget.style.color = '#fff'}
+                   onMouseLeave={e => e.currentTarget.style.color = 'rgba(255,255,255,0.85)'}>{label}</a>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      <div style={{ borderTop: '1px solid rgba(255,255,255,0.12)', paddingTop: 24, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, fontSize: 12, color: 'rgba(255,255,255,0.5)', fontFamily: '"JetBrains Mono", monospace' }}>
+        <span>© 2026 Patoagencja sp. z o.o.</span>
+        <span>Zrobione bez AI. Żartowaliśmy — z AI.</span>
+      </div>
+    </footer>
+  );
+}
+
+function Page() {
+  const isMobile = useMobile();
+  const [scrolled, setScrolled] = React.useState(false);
+  React.useEffect(() => {
+    const h = () => setScrolled(window.scrollY > 40);
+    window.addEventListener('scroll', h); return () => window.removeEventListener('scroll', h);
+  }, []);
+  return (
+    <MobileCtx.Provider value={isMobile}>
+      <A_Nav scrolled={scrolled} activePage="Sebol" />
+      <SebolHero />
+      <SebolProblem />
+      <SebolHow />
+      <SebolFeatures />
+      <SebolTestimonial />
+      <SebolCTA />
+      <A_Footer />
+    </MobileCtx.Provider>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<Page />);
+</script>
+</body>
+</html>
