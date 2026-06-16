@@ -403,23 +403,23 @@ def _build_flow_snapshot(etf_perf: dict, news: dict) -> dict:
     for attempt in range(2):
         try:
             resp = _ctx.claude.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=800,
+                model="claude-sonnet-4-6",
+                max_tokens=1500,
                 system=_FLOW_SYSTEM,
                 messages=[{"role": "user", "content": prompt}],
             )
             raw = resp.content[0].text.strip()
             logger.debug("Capital flow raw (attempt %d): %s", attempt, raw[:300])
             # Strip markdown fences if present
-            raw = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("```").strip()
+            raw = re.sub(r"```(?:json)?\s*", "", raw).strip().rstrip("`").strip()
             m = re.search(r"\{.*\}", raw, re.DOTALL)
             parsed = _json.loads(m.group() if m else "{}")
             if parsed.get("rotation_summary"):  # valid response
                 result = parsed
                 break
-            logger.warning("Capital flow attempt %d: empty rotation_summary", attempt)
+            logger.warning("Capital flow attempt %d: empty rotation_summary — raw: %s", attempt, raw[:200])
         except Exception as e:
-            logger.warning("Capital flow Claude error attempt %d: %s", attempt, e)
+            logger.error("Capital flow Claude error attempt %d: %s", attempt, e)
 
     result["etf_perf"] = etf_perf
     return result
