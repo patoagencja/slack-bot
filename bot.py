@@ -235,7 +235,7 @@ def daily_summaries():
                     ])
 
                     summary = anthropic.messages.create(
-                        model="claude-sonnet-4-20250514",
+                        model="claude-sonnet-4-6",
                         max_tokens=300,
                         messages=[{
                             "role": "user",
@@ -1055,7 +1055,7 @@ Pytanie → Direct answer → Context → Actionable next step
 
         while True:
             response = anthropic.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-6",
                 max_tokens=2000,
                 system=SYSTEM_PROMPT,
                 tools=tools,
@@ -2600,7 +2600,7 @@ def handle_message_events(body, say, logger):
 
     try:
         _resp = anthropic.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=2000,
             system=_dm_system,
             tools=_dm_tools,
@@ -2657,7 +2657,7 @@ def handle_message_events(body, say, logger):
             _merged.append({"role": "assistant", "content": _resp.content})
             _merged.append({"role": "user", "content": _tool_results})
             _resp = anthropic.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-6",
                 max_tokens=2000,
                 system=_dm_system,
                 tools=_dm_tools,
@@ -3059,7 +3059,7 @@ def _handle_campaign_channel_thread(event, user_message, say):
 
     try:
         response = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=2000,
             system=_build_campaign_channel_system_prompt(),
             messages=messages,
@@ -3678,7 +3678,7 @@ def _handle_meta_campaign_wizard(user_id: str, user_message: str | None, files: 
 
     try:
         response = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=3000,
             system=system_prompt,
             messages=wizard["messages"],
@@ -4373,7 +4373,7 @@ def _handle_google_campaign_wizard(user_id: str, user_message: str | None, files
 
     try:
         response = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=3000,
             system=system_prompt,
             messages=wizard["messages"],

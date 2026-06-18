@@ -298,7 +298,7 @@ Max: 3 critical, 3 warnings, 3 top performers. Bądź konkretny z liczbami."""
 
     try:
         resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=800,
             messages=[{"role": "user", "content": prompt}]
         )

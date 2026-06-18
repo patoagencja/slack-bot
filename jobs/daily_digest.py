@@ -754,7 +754,7 @@ def generate_daily_digest_dre():
             c["_objective"] = _detect_campaign_objective(c.get("campaign_name", ""))
             if c["_objective"] == "conversion":
                 c["_objective"] = "engagement"
-            c["_engagement"] = _extract_engagement_actions(c.get("actions", []))
+            c["_engagement"] = _extract_engagement_actions(c)
         google_data_filtered = [c for c in google_data_combined
                                  if float(c.get("cost", c.get("spend", 0)) or 0) >= MIN_SPEND_PLN]
         all_campaigns = meta_campaigns + google_data_filtered
@@ -829,7 +829,7 @@ def generate_daily_digest_dre():
         meta_conversions = sum(  # dla DRE: zlicz zaangażowanie zamiast konwersji
             (e.get("reactions", 0) + e.get("comments", 0) + e.get("shares", 0))
             for c in meta_campaigns
-            for e in [c.get("_engagement") or _extract_engagement_actions(c.get("actions", []))]
+            for e in [c.get("_engagement") or _extract_engagement_actions(c)]
         )
         meta_ctrs        = [float(c.get("ctr", 0) or 0) for c in meta_campaigns if float(c.get("ctr", 0) or 0) > 0]
         meta_ctr         = sum(meta_ctrs) / len(meta_ctrs) if meta_ctrs else 0.0

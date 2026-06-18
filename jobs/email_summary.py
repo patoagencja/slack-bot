@@ -110,7 +110,7 @@ Odpowiedz TYLKO w formacie JSON:
         for _attempt in range(3):
             try:
                 claude_response = _ctx.claude.messages.create(
-                    model="claude-sonnet-4-20250514",
+                    model="claude-sonnet-4-6",
                     max_tokens=1500,
                     messages=[{"role": "user", "content": claude_prompt}]
                 )

@@ -738,7 +738,7 @@ def _claude_analyze(ticker: str, fin: dict, news: list, category: str = "STANDAR
     user_msg = _build_user_msg(ticker, fin, news, category)
     try:
         response = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=450,
             system=system,
             messages=[{"role": "user", "content": user_msg}],
@@ -1476,7 +1476,7 @@ Pisz po polsku. Krótko, konkretnie, liczby z danych."""
 
     try:
         resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=2500,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -1558,7 +1558,7 @@ def fetch_macro_briefing() -> dict:
         return fallback
     try:
         resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=350,
             messages=[{"role": "user", "content": (
                 "Na podstawie poniższych informacji makroekonomicznych oceń aktualny sentyment rynku:\n\n"
@@ -1663,7 +1663,7 @@ def analyze_coin(coin: dict, btc_dominance: float | None, macro: dict) -> dict:
 
     try:
         resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=350,
             system=_CRYPTO_SYSTEM,
             messages=[{"role": "user", "content": prompt}],
@@ -1799,7 +1799,7 @@ def run_supercycle_scan() -> str:
 
     try:
         resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=1200,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -1872,7 +1872,7 @@ def run_cyclicality_analysis(ticker: str) -> str:
 
     try:
         resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=400,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -1921,7 +1921,7 @@ def run_insider_analysis(ticker: str) -> str:
 
     try:
         resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=350,
             messages=[{"role": "user", "content": prompt}],
         )

@@ -152,7 +152,7 @@ def generate_linkedin_post(topic: str) -> str:
     Zwraca 3 warianty hooka lub pełny post.
     """
     response = _ctx.claude.messages.create(
-        model="claude-opus-4-5",
+        model="claude-opus-4-8",
         max_tokens=2000,
         system=LINKEDIN_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": topic}],
@@ -186,7 +186,7 @@ DOBRE PRZYKŁADY STYLU:
 def generate_image_prompt(post_text: str, topic: str) -> str:
     """Claude pisze dedykowany prompt do obrazka na podstawie treści posta."""
     resp = _ctx.claude.messages.create(
-        model="claude-opus-4-5",
+        model="claude-opus-4-8",
         max_tokens=300,
         system=_IMAGE_PROMPT_SYSTEM,
         messages=[{

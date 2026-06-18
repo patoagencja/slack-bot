@@ -283,7 +283,7 @@ def _pick_top_setups(candidates: list[dict], macro: dict, limit: int = 5) -> lis
 
     try:
         resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=800,
             system=_SWING_SYSTEM,
             messages=[{"role": "user", "content": prompt}],

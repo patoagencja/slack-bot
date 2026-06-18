@@ -198,7 +198,7 @@ Zasady mapowania:
 
     try:
         resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=800,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -576,7 +576,7 @@ Nie bądź formalny. Mów wprost."""
 
     try:
         resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=700,
             messages=[{"role": "user", "content": prompt}],
         )

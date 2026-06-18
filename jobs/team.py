@@ -100,7 +100,7 @@ Jeśli brak konkretnych dat (tylko ogólna info bez terminu): {{"is_availability
 
     try:
         resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=400,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -193,7 +193,7 @@ Jeśli brak konkretnych dat: {{"absent_person": null, "absence_entries": []}}"""
 
     try:
         resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=800,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -504,7 +504,7 @@ Odpowiedz TYLKO JSON:
 
     try:
         resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=600,
             messages=[{"role": "user", "content": prompt}]
         )
