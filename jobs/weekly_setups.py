@@ -37,6 +37,20 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+def _cur_year() -> int:
+    """Current year — queries derive dates dynamically (no hardcoded year)."""
+    import datetime as _d
+    return _d.datetime.now().year
+
+
+# ── Central Claude model config (no hardcoded model strings) ──
+try:
+    from investing.config import CLAUDE_MODEL_PRIMARY
+except Exception:  # pragma: no cover - defensive fallback
+    import os as _os
+    CLAUDE_MODEL_PRIMARY = _os.environ.get("CLAUDE_MODEL_PRIMARY", "claude-sonnet-4-6")
+
+
 
 # ── Extended sector universe (beyond watchlist) ───────────────────────────────
 _SECTOR_UNIVERSE: dict[str, list[str]] = {
@@ -820,7 +834,7 @@ def _analyze_setup_ticker(ticker: str, prescreen: dict | None = None,
         if fetch_catalyst and _tavily:
             try:
                 r = _tavily.search(
-                    f"{ticker} catalyst event earnings partnership news week 2026",
+                    f"{ticker} catalyst event earnings partnership news week {_cur_year()}",
                     max_results=2,
                 )
                 catalyst = " ".join(
@@ -896,7 +910,7 @@ def _analyze_setup_coin(coin: dict, btc_dominance: float | None) -> dict | None:
     if _tavily:
         try:
             sym = (coin.get("symbol") or "").upper()
-            r   = _tavily.search(f"{sym} crypto catalyst upcoming week 2026", max_results=1)
+            r   = _tavily.search(f"{sym} crypto catalyst upcoming week {_cur_year()}", max_results=1)
             catalyst = " ".join(
                 (x.get("content") or "")[:120] for x in (r.get("results") or [])
             )[:200]
@@ -975,7 +989,7 @@ def _pick_top_setups(candidates: list[dict], macro: dict, limit: int = 5) -> lis
 
     try:
         resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=CLAUDE_MODEL_PRIMARY,
             max_tokens=3000,
             system=_SWING_SYSTEM,
             messages=[{"role": "user", "content": prompt}],
@@ -1196,7 +1210,7 @@ def _scan_candidates(mode: str = "all") -> tuple[list[dict], dict, float | None]
             for c in candidates[:10]:
                 try:
                     r = _tavily.search(
-                        f"{c['ticker']} catalyst event earnings partnership news week 2026",
+                        f"{c['ticker']} catalyst event earnings partnership news week {_cur_year()}",
                         max_results=2,
                     )
                     c["catalyst"] = " ".join(
@@ -1432,7 +1446,7 @@ def analyze_single_swing(ticker: str) -> str:
         news = ""
         if _tavily:
             try:
-                r = _tavily.search(f"{name} {ticker} crypto price catalyst news 2026", max_results=3)
+                r = _tavily.search(f"{name} {ticker} crypto price catalyst news {_cur_year()}", max_results=3)
                 news = " | ".join(
                     (x.get("content") or "")[:150] for x in (r.get("results") or [])
                 )[:400]
@@ -1451,7 +1465,7 @@ def analyze_single_swing(ticker: str) -> str:
 
         try:
             resp = _ctx.claude.messages.create(
-                model="claude-sonnet-4-20250514",
+                model=CLAUDE_MODEL_PRIMARY,
                 max_tokens=600,
                 system=_DEEP_SWING_SYSTEM,
                 messages=[{"role": "user", "content": user_msg}],
@@ -1496,7 +1510,7 @@ def analyze_single_swing(ticker: str) -> str:
     if _tavily:
         try:
             r = _tavily.search(
-                f"{ticker} stock earnings catalyst news week 2026", max_results=4
+                f"{ticker} stock earnings catalyst news week {_cur_year()}", max_results=4
             )
             news = " | ".join(
                 (x.get("content") or "")[:180] for x in (r.get("results") or [])
@@ -1524,7 +1538,7 @@ def analyze_single_swing(ticker: str) -> str:
 
     try:
         resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=CLAUDE_MODEL_PRIMARY,
             max_tokens=600,
             system=_DEEP_SWING_SYSTEM,
             messages=[{"role": "user", "content": user_msg}],

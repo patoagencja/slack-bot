@@ -15,6 +15,20 @@ import _ctx
 
 logger = logging.getLogger(__name__)
 
+def _cur_year() -> int:
+    """Current year — queries derive dates dynamically (no hardcoded year)."""
+    import datetime as _d
+    return _d.datetime.now().year
+
+
+# ── Central Claude model config (no hardcoded model strings) ──
+try:
+    from investing.config import CLAUDE_MODEL_PRIMARY
+except Exception:  # pragma: no cover - defensive fallback
+    import os as _os
+    CLAUDE_MODEL_PRIMARY = _os.environ.get("CLAUDE_MODEL_PRIMARY", "claude-sonnet-4-6")
+
+
 try:
     from tavily import TavilyClient
     _TAVILY_KEY = os.environ.get("TAVILY_API_KEY", "")
@@ -40,49 +54,49 @@ _SECTOR_BENEFICIARIES = {
 # ── Narrative search config ───────────────────────────────────────────────────
 _NARRATIVE_QUERIES = {
     "ipo_catalyst": [
-        "major IPO upcoming 2026 sector stocks rally",
-        "SpaceX IPO space sector stocks rally 2026",
-        "pre-IPO sector momentum beneficiaries 2026",
-        "Stripe Klarna IPO fintech sector impact 2026",
+        f"major IPO upcoming {_cur_year()} sector stocks rally",
+        f"SpaceX IPO space sector stocks rally {_cur_year()}",
+        f"pre-IPO sector momentum beneficiaries {_cur_year()}",
+        f"Stripe Klarna IPO fintech sector impact {_cur_year()}",
     ],
     "regulatory_catalyst": [
-        "FDA approval upcoming biotech breakthrough 2026",
-        "FCC approval satellite spectrum 2026",
-        "nuclear SMR approval NRC regulatory 2026",
-        "crypto Bitcoin ETF approval SEC 2026",
-        "autonomous vehicles FSD regulatory approval 2026",
+        f"FDA approval upcoming biotech breakthrough {_cur_year()}",
+        f"FCC approval satellite spectrum {_cur_year()}",
+        f"nuclear SMR approval NRC regulatory {_cur_year()}",
+        f"crypto Bitcoin ETF approval SEC {_cur_year()}",
+        f"autonomous vehicles FSD regulatory approval {_cur_year()}",
     ],
     "geopolitical_tailwind": [
-        "defense budget increase NATO countries 2026",
-        "space race government contracts awards 2026",
-        "energy independence nuclear uranium policy 2026",
-        "AI chips export controls beneficiaries 2026",
+        f"defense budget increase NATO countries {_cur_year()}",
+        f"space race government contracts awards {_cur_year()}",
+        f"energy independence nuclear uranium policy {_cur_year()}",
+        f"AI chips export controls beneficiaries {_cur_year()}",
     ],
     "tech_inflection": [
-        "AI deployment enterprise revenue monetization 2026",
-        "agentic AI software spending acceleration 2026",
-        "quantum computing commercial breakthrough 2026",
-        "nuclear fusion power commercial milestone 2026",
+        f"AI deployment enterprise revenue monetization {_cur_year()}",
+        f"agentic AI software spending acceleration {_cur_year()}",
+        f"quantum computing commercial breakthrough {_cur_year()}",
+        f"nuclear fusion power commercial milestone {_cur_year()}",
     ],
     "early_signals": [
-        "institutional investor interest emerging sector 2026",
-        "analyst coverage initiation new sector theme 2026",
-        "hedge fund positioning sector rotation 2026",
-        "options unusual activity sector ETF 2026",
+        f"institutional investor interest emerging sector {_cur_year()}",
+        f"analyst coverage initiation new sector theme {_cur_year()}",
+        f"hedge fund positioning sector rotation {_cur_year()}",
+        f"options unusual activity sector ETF {_cur_year()}",
     ],
 }
 
 # ── Sector-specific deep-dive queries ─────────────────────────────────────────
 _SECTOR_QUERIES = {
-    "space":         ["space economy SpaceX IPO sector rally 2026", "satellite broadband DoD LEO contracts 2026"],
-    "nuclear":       ["nuclear renaissance SMR approval utility contracts 2026", "uranium spot price AI data center demand 2026"],
-    "crypto":        ["Bitcoin institutional inflows ETF approval 2026", "crypto regulation clarity SEC 2026"],
-    "ai":            ["agentic AI enterprise software monetization 2026", "AI infrastructure capex hyperscaler spending 2026"],
-    "glp1":          ["GLP-1 obesity drug market share expansion 2026", "weight loss drug supply chain beneficiaries 2026"],
-    "defense":       ["NATO defense budget increase procurement 2026", "hypersonic missile autonomous systems contracts 2026"],
-    "fintech_em":    ["fintech emerging markets growth credit penetration 2026", "Latin America digital banking NU DLO 2026"],
-    "cybersecurity": ["cybersecurity enterprise spending AI threat 2026", "ransomware government mandates CRWD 2026"],
-    "semis":         ["semiconductor AI chip demand TSMC NVDA supply 2026", "advanced packaging CoWoS AVGO ALAB 2026"],
+    "space":         [f"space economy SpaceX IPO sector rally {_cur_year()}", f"satellite broadband DoD LEO contracts {_cur_year()}"],
+    "nuclear":       [f"nuclear renaissance SMR approval utility contracts {_cur_year()}", f"uranium spot price AI data center demand {_cur_year()}"],
+    "crypto":        [f"Bitcoin institutional inflows ETF approval {_cur_year()}", f"crypto regulation clarity SEC {_cur_year()}"],
+    "ai":            [f"agentic AI enterprise software monetization {_cur_year()}", f"AI infrastructure capex hyperscaler spending {_cur_year()}"],
+    "glp1":          [f"GLP-1 obesity drug market share expansion {_cur_year()}", f"weight loss drug supply chain beneficiaries {_cur_year()}"],
+    "defense":       [f"NATO defense budget increase procurement {_cur_year()}", f"hypersonic missile autonomous systems contracts {_cur_year()}"],
+    "fintech_em":    [f"fintech emerging markets growth credit penetration {_cur_year()}", f"Latin America digital banking NU DLO {_cur_year()}"],
+    "cybersecurity": [f"cybersecurity enterprise spending AI threat {_cur_year()}", f"ransomware government mandates CRWD {_cur_year()}"],
+    "semis":         [f"semiconductor AI chip demand TSMC NVDA supply {_cur_year()}", f"advanced packaging CoWoS AVGO ALAB {_cur_year()}"],
 }
 
 _SECTOR_LABELS = {
@@ -125,7 +139,7 @@ def _gather_narrative_signals() -> dict[str, str]:
 
 def _gather_sector_signals(sector: str) -> str:
     """Deep dive search for a specific sector."""
-    queries = _SECTOR_QUERIES.get(sector, [f"{sector} stocks outlook momentum 2026"])
+    queries = _SECTOR_QUERIES.get(sector, [f"{sector} stocks outlook momentum {_cur_year()}"])
     parts = []
     for q in queries:
         text = _tavily_search(q, max_results=3)
@@ -174,7 +188,7 @@ def _claude_narrative_scan(signals: dict[str, str]) -> dict:
 
     try:
         resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=CLAUDE_MODEL_PRIMARY,
             max_tokens=1500,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -214,7 +228,7 @@ def _claude_sector_dive(sector: str, signals: str) -> dict:
 
     try:
         resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=CLAUDE_MODEL_PRIMARY,
             max_tokens=600,
             messages=[{"role": "user", "content": prompt}],
         )

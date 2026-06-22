@@ -34,6 +34,20 @@ import _ctx
 
 logger = logging.getLogger(__name__)
 
+def _cur_year() -> int:
+    """Current year — queries derive dates dynamically (no hardcoded year)."""
+    import datetime as _d
+    return _d.datetime.now().year
+
+
+# ── Central Claude model config (no hardcoded model strings) ──
+try:
+    from investing.config import CLAUDE_MODEL_PRIMARY
+except Exception:  # pragma: no cover - defensive fallback
+    import os as _os
+    CLAUDE_MODEL_PRIMARY = _os.environ.get("CLAUDE_MODEL_PRIMARY", "claude-sonnet-4-6")
+
+
 # ── Tavily optional import ────────────────────────────────────────────────────
 try:
     from tavily import TavilyClient
@@ -208,12 +222,12 @@ _CYCLICAL_TICKERS = {
 
 # Active supercycles: name → {query, tickers}
 _SUPERCYCLE_MAP = {
-    "HBM/DRAM Memory":     {"query": "memory DRAM HBM supercycle AI demand 2026",           "tickers": ["MU", "ALAB", "ASML", "NVDA", "AMD"]},
-    "Nuclear Renaissance": {"query": "nuclear renaissance SMR orders utility contracts 2026", "tickers": ["CCJ", "UEC", "DNN", "UUUU"]},
-    "Defense Supercycle":  {"query": "defense spending NATO supercycle procurement 2026",     "tickers": ["NOC", "TDG", "AXON", "BA"]},
-    "GLP-1/Obesity":       {"query": "GLP-1 obesity drug market expansion supply chain 2026","tickers": ["NVO", "ISRG", "TEM"]},
-    "Agentic AI":          {"query": "agentic AI enterprise deployment revenue 2026",        "tickers": ["NOW", "CRM", "PATH", "CRWD", "APP", "MSFT"]},
-    "Power Grid/Energy":   {"query": "power grid energy AI datacenter infrastructure 2026",  "tickers": ["EOSE", "VST", "CEG"]},
+    "HBM/DRAM Memory":     {"query": f"memory DRAM HBM supercycle AI demand {_cur_year()}",           "tickers": ["MU", "ALAB", "ASML", "NVDA", "AMD"]},
+    "Nuclear Renaissance": {"query": f"nuclear renaissance SMR orders utility contracts {_cur_year()}", "tickers": ["CCJ", "UEC", "DNN", "UUUU"]},
+    "Defense Supercycle":  {"query": f"defense spending NATO supercycle procurement {_cur_year()}",     "tickers": ["NOC", "TDG", "AXON", "BA"]},
+    "GLP-1/Obesity":       {"query": f"GLP-1 obesity drug market expansion supply chain {_cur_year()}","tickers": ["NVO", "ISRG", "TEM"]},
+    "Agentic AI":          {"query": f"agentic AI enterprise deployment revenue {_cur_year()}",        "tickers": ["NOW", "CRM", "PATH", "CRWD", "APP", "MSFT"]},
+    "Power Grid/Energy":   {"query": f"power grid energy AI datacenter infrastructure {_cur_year()}",  "tickers": ["EOSE", "VST", "CEG"]},
 }
 
 # Reverse map: ticker → list of supercycle names it belongs to
@@ -356,7 +370,7 @@ def _fetch_sector_context(sector: str) -> str:
     if sector in _sector_cache:
         return _sector_cache[sector]
     try:
-        r = _tavily.search(f"{sector} sector outlook headwinds tailwinds 2026", max_results=2)
+        r = _tavily.search(f"{sector} sector outlook headwinds tailwinds {_cur_year()}", max_results=2)
         ctx = " ".join((x.get("content") or "")[:150] for x in (r.get("results") or []))[:300]
         _sector_cache[sector] = ctx
         return ctx
@@ -371,14 +385,14 @@ def _fetch_news(ticker: str, category: str = "STANDARD_TECH") -> list:
     if _tavily is None:
         return []
     _queries = {
-        "CRYPTO_PROXY":          f"{ticker} bitcoin holdings NAV premium discount 2026",
-        "URANIUM":               f"uranium spot price 2026 {ticker} nuclear SMR contracts production",
-        "DEFENSE":               f"{ticker} defense contracts NATO budget 2026 backlog",
-        "SPACE_DEFENSE":         f"{ticker} launch manifest contracts NASA DoD 2026",
-        "BIOTECH_HEALTH":        f"{ticker} FDA pipeline GLP-1 approval clinical trial 2026",
-        "EMERGING_MARKETS":      f"{ticker} regulatory risk USD currency geopolitical 2026",
-        "CONSUMER_DISCRETIONARY":f"{ticker} same store sales inventory comparable sales 2026",
-        "STANDARD_TECH":         f"{ticker} stock news insider guidance earnings beat miss 2026",
+        "CRYPTO_PROXY":          f"{ticker} bitcoin holdings NAV premium discount {_cur_year()}",
+        "URANIUM":               f"uranium spot price {_cur_year()} {ticker} nuclear SMR contracts production",
+        "DEFENSE":               f"{ticker} defense contracts NATO budget {_cur_year()} backlog",
+        "SPACE_DEFENSE":         f"{ticker} launch manifest contracts NASA DoD {_cur_year()}",
+        "BIOTECH_HEALTH":        f"{ticker} FDA pipeline GLP-1 approval clinical trial {_cur_year()}",
+        "EMERGING_MARKETS":      f"{ticker} regulatory risk USD currency geopolitical {_cur_year()}",
+        "CONSUMER_DISCRETIONARY":f"{ticker} same store sales inventory comparable sales {_cur_year()}",
+        "STANDARD_TECH":         f"{ticker} stock news insider guidance earnings beat miss {_cur_year()}",
     }
     query = _queries.get(category, _queries["STANDARD_TECH"])
     try:
@@ -412,25 +426,25 @@ def _fetch_extra_signals(ticker: str, category: str,
             logger.warning("Extra signal %s for %s: %s", key, ticker, e)
 
     # Core signals — all tickers
-    _search("guidance",       f"{ticker} guidance lowered raised outlook forecast 2026")
-    _search("eps_revisions",  f"{ticker} EPS estimates revision analysts upgrade downgrade 2026")
-    _search("insider_quality",f"{ticker} insider purchase open market CEO CFO director 2026")
-    _search("catalyst_window",f"{ticker} upcoming catalyst event conference earnings product launch 2026")
+    _search("guidance",       f"{ticker} guidance lowered raised outlook forecast {_cur_year()}")
+    _search("eps_revisions",  f"{ticker} EPS estimates revision analysts upgrade downgrade {_cur_year()}")
+    _search("insider_quality",f"{ticker} insider purchase open market CEO CFO director {_cur_year()}")
+    _search("catalyst_window",f"{ticker} upcoming catalyst event conference earnings product launch {_cur_year()}")
 
     # Conditional signals
     if (short_pct or 0) > 15:
-        _search("convertible_debt", f"{ticker} convertible notes zero coupon debt hedge 2026")
+        _search("convertible_debt", f"{ticker} convertible notes zero coupon debt hedge {_cur_year()}")
 
     if margin_declining or category == "CONSUMER_DISCRETIONARY":
-        _search("margin_reason", f"{ticker} margin decline reason investment capex reinvest 2026")
+        _search("margin_reason", f"{ticker} margin decline reason investment capex reinvest {_cur_year()}")
 
     if is_cyclical:
-        _search("cycle_context", f"{ticker} industry cycle recovery inventory correction 2026")
+        _search("cycle_context", f"{ticker} industry cycle recovery inventory correction {_cur_year()}")
 
     if category == "CONSUMER_DISCRETIONARY" or ticker in _TARIFF_RISK_TICKERS:
-        _search("tariffs",  f"{ticker} tariffs supply chain China import costs 2026")
+        _search("tariffs",  f"{ticker} tariffs supply chain China import costs {_cur_year()}")
     if category == "CONSUMER_DISCRETIONARY":
-        _search("us_sales", f"{ticker} US domestic sales revenue decline slowdown 2026")
+        _search("us_sales", f"{ticker} US domestic sales revenue decline slowdown {_cur_year()}")
 
     return out
 
@@ -738,7 +752,7 @@ def _claude_analyze(ticker: str, fin: dict, news: list, category: str = "STANDAR
     user_msg = _build_user_msg(ticker, fin, news, category)
     try:
         response = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=CLAUDE_MODEL_PRIMARY,
             max_tokens=450,
             system=system,
             messages=[{"role": "user", "content": user_msg}],
@@ -898,23 +912,35 @@ def analyze_ticker(ticker: str, qqq_30d: float | None = None, btc_data: dict | N
     # ── Category-specific extras ──
     if category == "CRYPTO_PROXY":
         fin["btc_data"] = btc_data if btc_data is not None else _fetch_btc_data()
-        if ticker == "MSTR" and _tavily:
-            try:
-                r = _tavily.search(
-                    "MicroStrategy MSTR bitcoin holdings BTC per share NAV 2026",
-                    max_results=3,
-                )
-                ctx = " ".join((x.get("content") or "")[:200] for x in (r.get("results") or []))[:500]
-                shares    = info.get("sharesOutstanding") or 0
-                btc_price = fin["btc_data"].get("price") or 0
-                btc_held_approx = 214_400  # static estimate; Tavily context corrects Claude
+        # NAV / premium for asset-proxy equities (e.g. MSTR) comes from the new
+        # asset-proxy provider, which sources holdings/cash/debt/shares from a
+        # DATED, SOURCED registry (data/asset_proxies.json) — never a hardcoded
+        # BTC count. If the registry has no current data, we say so honestly
+        # rather than fabricating a NAV.
+        try:
+            from investing.providers import asset_proxy as _ap
+            nav = _ap.get_nav(ticker)
+            nav_ps = nav.get("nav_per_share")
+            prem = nav.get("premium_discount")
+            units = nav.get("units")
+            if nav_ps is not None and nav_ps.value is not None:
                 fin["mstr_nav"] = {
-                    "btc_per_share_approx": round(btc_held_approx / shares, 4) if shares else None,
-                    "nav_per_share_approx": round(btc_held_approx * btc_price / shares, 2) if shares and btc_price else None,
-                    "tavily_context": ctx,
+                    "nav_per_share_approx": nav_ps.value,
+                    "premium_discount": prem.value if prem else None,
+                    "units": units.value if units else None,
+                    "units_source": units.source if units else None,
+                    "units_as_of": units.as_of.isoformat() if (units and units.as_of) else None,
+                    "data_status": nav_ps.status.value,
                 }
-            except Exception as e:
-                logger.warning("MSTR NAV fetch error: %s", e)
+            else:
+                fin["mstr_nav"] = {
+                    "nav_per_share_approx": None,
+                    "data_status": (nav_ps.status.value if nav_ps else "MISSING"),
+                    "note": "Brak aktualnych danych o aktywach w rejestrze asset-proxy "
+                            "(uzupełnij z oficjalnego filingu).",
+                }
+        except Exception as e:
+            logger.warning("asset-proxy NAV fetch error: %s", e)
 
     # ── Extra signals (guidance, EPS, insider, catalyst, convertible debt, etc.) ──
     qtrd = fin["quarterly_trends"]
@@ -1502,7 +1528,7 @@ Pisz po polsku. Krótko, konkretnie, liczby z danych."""
 
     try:
         resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=CLAUDE_MODEL_PRIMARY,
             max_tokens=2500,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -1564,13 +1590,13 @@ def fetch_macro_briefing() -> dict:
     if _tavily is None:
         return fallback
     _queries = [
-        "US stock market macro outlook this week 2026",
-        "Federal Reserve interest rates decision 2026",
-        "VIX volatility index level market fear 2026",
-        "US recession probability economic indicators 2026",
-        "geopolitical risk trade war tariffs market impact 2026",
-        "crypto market bitcoin institutional flow 2026",
-        "dollar index DXY trend 2026",
+        f"US stock market macro outlook this week {_cur_year()}",
+        f"Federal Reserve interest rates decision {_cur_year()}",
+        f"VIX volatility index level market fear {_cur_year()}",
+        f"US recession probability economic indicators {_cur_year()}",
+        f"geopolitical risk trade war tariffs market impact {_cur_year()}",
+        f"crypto market bitcoin institutional flow {_cur_year()}",
+        f"dollar index DXY trend {_cur_year()}",
     ]
     snippets = []
     for q in _queries:
@@ -1584,7 +1610,7 @@ def fetch_macro_briefing() -> dict:
         return fallback
     try:
         resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=CLAUDE_MODEL_PRIMARY,
             max_tokens=350,
             messages=[{"role": "user", "content": (
                 "Na podstawie poniższych informacji makroekonomicznych oceń aktualny sentyment rynku:\n\n"
@@ -1671,7 +1697,7 @@ def analyze_coin(coin: dict, btc_dominance: float | None, macro: dict) -> dict:
     news_ctx = ""
     if _tavily and is_tier1:
         try:
-            r = _tavily.search(f"{symbol} {name} institutional inflows narrative 2026", max_results=2)
+            r = _tavily.search(f"{symbol} {name} institutional inflows narrative {_cur_year()}", max_results=2)
             news_ctx = " ".join((x.get("content") or "")[:150] for x in (r.get("results") or []))[:300]
         except Exception:
             pass
@@ -1689,7 +1715,7 @@ def analyze_coin(coin: dict, btc_dominance: float | None, macro: dict) -> dict:
 
     try:
         resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=CLAUDE_MODEL_PRIMARY,
             max_tokens=350,
             system=_CRYPTO_SYSTEM,
             messages=[{"role": "user", "content": prompt}],
@@ -1825,7 +1851,7 @@ def run_supercycle_scan() -> str:
 
     try:
         resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=CLAUDE_MODEL_PRIMARY,
             max_tokens=1200,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -1877,7 +1903,7 @@ def run_cyclicality_analysis(ticker: str) -> str:
     tavily_ctx = ""
     if _tavily:
         try:
-            r = _tavily.search(f"{ticker} industry cycle semiconductor memory recovery 2026", max_results=4)
+            r = _tavily.search(f"{ticker} industry cycle semiconductor memory recovery {_cur_year()}", max_results=4)
             tavily_ctx = " | ".join((x.get("content") or "")[:180] for x in (r.get("results") or []))[:600]
         except Exception:
             pass
@@ -1898,7 +1924,7 @@ def run_cyclicality_analysis(ticker: str) -> str:
 
     try:
         resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=CLAUDE_MODEL_PRIMARY,
             max_tokens=400,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -1921,8 +1947,8 @@ def run_insider_analysis(ticker: str) -> str:
     tavily_ctx = ""
     if _tavily:
         try:
-            r1 = _tavily.search(f"{ticker} insider purchase open market CEO CFO 2026", max_results=3)
-            r2 = _tavily.search(f"{ticker} SEC Form 4 insider buying director 2026", max_results=2)
+            r1 = _tavily.search(f"{ticker} insider purchase open market CEO CFO {_cur_year()}", max_results=3)
+            r2 = _tavily.search(f"{ticker} SEC Form 4 insider buying director {_cur_year()}", max_results=2)
             parts  = [(x.get("content") or "")[:180] for x in (r1.get("results") or [])]
             parts += [(x.get("content") or "")[:180] for x in (r2.get("results") or [])]
             tavily_ctx = " | ".join(parts)[:700]
@@ -1947,7 +1973,7 @@ def run_insider_analysis(ticker: str) -> str:
 
     try:
         resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=CLAUDE_MODEL_PRIMARY,
             max_tokens=350,
             messages=[{"role": "user", "content": prompt}],
         )

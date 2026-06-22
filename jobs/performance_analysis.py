@@ -16,6 +16,14 @@ from tools.google_ads import google_ads_tool
 
 logger = logging.getLogger(__name__)
 
+# ── Central Claude model config (no hardcoded model strings) ──
+try:
+    from investing.config import CLAUDE_MODEL_PRIMARY
+except Exception:  # pragma: no cover - defensive fallback
+    import os as _os
+    CLAUDE_MODEL_PRIMARY = _os.environ.get("CLAUDE_MODEL_PRIMARY", "claude-sonnet-4-6")
+
+
 
 # ── CAMPAIGN OBJECTIVE DETECTION ──────────────────────────────────────────────
 
@@ -298,7 +306,7 @@ Max: 3 critical, 3 warnings, 3 top performers. Bądź konkretny z liczbami."""
 
     try:
         resp = _ctx.claude.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=CLAUDE_MODEL_PRIMARY,
             max_tokens=800,
             messages=[{"role": "user", "content": prompt}]
         )
