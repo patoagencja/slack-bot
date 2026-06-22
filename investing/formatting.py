@@ -1,14 +1,11 @@
 """
-investing/formatting.py — czytelny render PositionPlan do Slacka.
+investing/formatting.py — render PositionPlan jako NORMALNY tekst po polsku.
 
-Zasady (po skardze na nieczytelność poprzedniej wersji):
-  • Pierwsza linia = decyzja (READY / WAIT / NO TRADE / DATA INCOMPLETE) + ticker.
-  • Druga linia = jedno zdanie „co z tym zrobić" (po ludzku, bez kodów).
-  • Dla wejścia (READY/WAIT) — zwarty blok PLAN WEJŚCIA z konkretnymi liczbami,
-    potem krótki KONTEKST. Żadnych enumów typu PULLBACK_CONTINUATION / BULL /
-    REDUCE_BEFORE_EVENT — tłumaczymy na polski.
-  • Dla NO TRADE / DATA INCOMPLETE — krótko: dlaczego i co zrobić, bez planu
-    i bez długiego eseju.
+Użytkownik nie jest traderem-quantem: zero kodów (READY_TO_ENTER, PULLBACK_
+CONTINUATION, R/R, „heat"), zero angielskiego, zero kart-tabelek. Bot ma napisać
+po ludzku, jak człowiek tłumaczący koledze: co to za spółka, czy wchodzić, gdzie
+kupić, gdzie uciekać, ile kupić i dlaczego — pełnymi zdaniami, z każdą liczbą
+wyjaśnioną.
 
 Publiczne API bez zmian: format_plan(plan) -> str.
 """
@@ -20,112 +17,82 @@ import re
 from .schemas import PositionPlan
 
 
-# ── Słowniki etykiet (klucz = surowa .value enuma) ──────────────────────────────
-_STATUS = {
-    "READY_TO_ENTER":   "🟢 READY TO ENTER",
-    "WAIT_FOR_TRIGGER": "🟡 WAIT FOR TRIGGER",
-    "NO_TRADE":         "🔴 NO TRADE",
-    "DATA_INCOMPLETE":  "⚪ DATA INCOMPLETE",
+# ── Werdykt po ludzku ─────────────────────────────────────────────────────────
+_VERDICT = {
+    "READY_TO_ENTER":   "✅ *{t} — można wchodzić*",
+    "WAIT_FOR_TRIGGER": "⏳ *{t} — jeszcze poczekaj*",
+    "NO_TRADE":         "❌ *{t} — odpuść na teraz*",
+    "DATA_INCOMPLETE":  "⚠️ *{t} — brakuje mi świeżych danych*",
 }
 
-_SETUP = {
-    "BREAKOUT":               "wybicie z konsolidacji",
-    "PULLBACK_CONTINUATION":  "cofnięcie w trendzie wzrostowym",
-    "BASE_BUILDING":          "budowa bazy",
-    "MEAN_REVERSION":         "powrót do średniej",
-    "WYCKOFF_REVERSAL":       "odwrócenie (Wyckoff)",
-    "EVENT_DRIVEN":           "zagranie pod wydarzenie",
-    "NO_VALID_SETUP":         "brak ważnego setupu",
+# Setup → jedno zdanie „dlaczego" zwykłym językiem.
+_SETUP_WHY = {
+    "BREAKOUT":              "{t} wybija się w górę z dłuższej konsolidacji — kupujący przejmują kontrolę.",
+    "PULLBACK_CONTINUATION": "{t} jest w trendzie wzrostowym i właśnie cofnęła się do ważnej średniej — to często dobry moment na zakup.",
+    "BASE_BUILDING":         "{t} spokojnie buduje bazę pod ewentualny większy ruch w górę.",
+    "MEAN_REVERSION":        "{t} spadła ostatnio za mocno i ma szansę technicznie odbić.",
+    "WYCKOFF_REVERSAL":      "{t} wygląda na próbę odwrócenia trendu po wcześniejszej przecenie.",
+    "EVENT_DRIVEN":          "{t} ma przed sobą wydarzenie, które może mocno ruszyć kursem.",
+    "NO_VALID_SETUP":        "{t} nie układa się w żaden wyraźny, opłacalny scenariusz.",
 }
 
-_REGIME = {
-    "BULL":      "🟢 hossa",
-    "CAUTION":   "🟡 ostrożnie",
-    "DEFENSIVE": "🟠 defensywnie",
-    "BEAR":      "🔴 bessa",
-    "UNKNOWN":   "❔ nieznany",
+_REGIME_PHRASE = {
+    "BULL":      "szeroki rynek sprzyja",
+    "CAUTION":   "na rynku jest niepewnie, więc warto być ostrożnym",
+    "DEFENSIVE": "rynek jest słaby, lepiej grać defensywnie",
+    "BEAR":      "rynek jest w odwrocie (bessa)",
 }
 
-_EVENT = {
-    "HOLD_THROUGH_EVENT":  "trzymać przez wydarzenie",
-    "REDUCE_BEFORE_EVENT": "zredukować przed wydarzeniem",
-    "EXIT_BEFORE_EVENT":   "wyjść przed wydarzeniem",
-    "EVENT_STRATEGY":      "zagranie pod wydarzenie",
-    "NO_EVENT_RISK":       "brak ryzyka wydarzenia",
-}
-
-_ASSET = {
-    "EQUITY":       "akcja",
-    "ETF":          "ETF",
-    "CRYPTO_PROXY": "proxy krypto",
-    "ADR":          "ADR",
-}
-
-# Surowe nazwy pól danych → po ludzku (używane w decision_reason i missing_data).
+# Surowe nazwy pól danych → zwykłe słowa.
 _FIELD_PL = {
-    "daily_bars":    "świece dzienne",
-    "earnings_date": "data wyników",
-    "fundamentals":  "fundamenty",
-    "rs_line":       "siła względna",
-    "bars":          "świece (dane cenowe)",
-    "quote":         "kurs",
-    "price":         "kurs",
-    "atr":           "zmienność (ATR)",
-    "rs":            "siła względna",
-    "macro":         "dane makro",
-    "sector":        "dane sektora",
-    "volume":        "wolumen",
-    "news":          "newsy",
-    "earnings":      "data wyników",
+    "price": "kurs", "quote": "kurs",
+    "bars": "notowania", "daily_bars": "notowania",
+    "fundamentals": "dane finansowe",
+    "earnings": "termin wyników", "earnings_date": "termin wyników",
+    "atr": "zmienność", "rs": "siła względem rynku", "rs_line": "siła względem rynku",
+    "macro": "dane makro", "sector": "dane sektora", "volume": "obrót", "news": "newsy",
 }
-# najdłuższe klucze najpierw, żeby "daily_bars" złapać przed "bars"
-_FIELD_RE = re.compile(
-    r"\b(" + "|".join(re.escape(k) for k in sorted(_FIELD_PL, key=len, reverse=True)) + r")\b"
-)
 
 
-# ── Helpery ──────────────────────────────────────────────────────────────────────
+# ── Helpery liczbowe (format polski: spacja w tysiącach, przecinek dziesiętny) ──
 def _val(x):
     return getattr(x, "value", x)
 
 
-def _label(d: dict, x) -> str:
-    v = _val(x)
-    if v in d:
-        return d[v]
-    return str(v).replace("_", " ").lower() if v else "—"
-
-
-def _money(v, nd: int = 2) -> str:
+def _usd(v, dp=None):
+    """210.69 -> '210,69 $', 10745 -> '10 745 $'."""
     if v is None:
-        return "—"
+        return None
     try:
-        return f"${float(v):,.{nd}f}"
-    except (TypeError, ValueError):
-        return f"${v}"
-
-
-def _num(v) -> str:
-    """Liczba bez zbędnych zer: 2.60 → 2.6, 5.0 → 5."""
-    if v is None:
-        return "—"
-    try:
-        return f"{round(float(v), 2):g}"
+        x = float(v)
     except (TypeError, ValueError):
         return str(v)
+    if dp is None:
+        dp = 0 if abs(x - round(x)) < 1e-9 else 2
+    s = f"{x:,.{dp}f}".replace(",", " ").replace(".", ",")
+    return f"{s} $"
 
 
-def _pct01(v) -> str:
-    """0.92 → '92%'."""
-    if v is None:
-        return "—"
+def _pct(x, dp=1):
+    if x is None:
+        return None
     try:
-        return f"{float(v) * 100:.0f}%"
+        return f"{float(x):.{dp}f}".replace(".", ",") + "%"
     except (TypeError, ValueError):
-        return "—"
+        return None
 
 
-def _age(seconds) -> str:
+def _x_times(rr):
+    """R/R 2.6 -> '2,6 razy tyle, czym ryzykujesz'."""
+    if rr is None:
+        return None
+    try:
+        return f"{round(float(rr), 1):g}".replace(".", ",") + " razy tyle, czym ryzykujesz"
+    except (TypeError, ValueError):
+        return None
+
+
+def _age(seconds):
     if seconds is None:
         return ""
     try:
@@ -133,30 +100,56 @@ def _age(seconds) -> str:
     except (TypeError, ValueError):
         return ""
     if s < 90:
-        return "teraz"
-    minutes = s / 60.0
-    if minutes < 90:
-        return f"~{int(round(minutes))} min"
-    hours = minutes / 60.0
-    if hours < 48:
-        return f"~{int(round(hours))} h"
-    return f"~{int(round(hours / 24))} dni"
+        return "przed chwilą"
+    m = s / 60.0
+    if m < 90:
+        return f"sprzed ~{int(round(m))} min"
+    h = m / 60.0
+    if h < 48:
+        return f"sprzed ~{int(round(h))} godz."
+    return f"sprzed ~{int(round(h / 24))} dni"
 
 
-def _humanize(text: str) -> str:
+def _clip(text, n=200):
     if not text:
         return ""
-    return _FIELD_RE.sub(lambda m: _FIELD_PL[m.group(1)], text)
+    t = " ".join(str(text).split())
+    if len(t) <= n:
+        return t
+    cut = t[:n]
+    sp = cut.rfind(" ")
+    return (cut[:sp] if sp > 40 else cut).rstrip(",.;: ") + "…"
 
 
-def _humanize_fields(items) -> list[str]:
+def _missing_words(items):
     out, seen = [], set()
     for it in (items or []):
-        label = _FIELD_PL.get(it, str(it).replace("_", " "))
-        if label not in seen:
+        key = re.sub(r"\(STALE\)|\(MISSING\)|\(ERROR\)", "", str(it)).strip()
+        label = _FIELD_PL.get(key, key.replace("_", " "))
+        if label and label not in seen:
             seen.add(label)
             out.append(label)
     return out
+
+
+def _sector_phrase(s):
+    if not s:
+        return ""
+    if re.search(r"\+\s*\d", s):
+        return "branża tej spółki radzi sobie ostatnio lepiej niż reszta giełdy"
+    if re.search(r"-\s*\d+([.,]\d+)?\s*%", s):
+        return "branża tej spółki radzi sobie ostatnio słabiej niż reszta giełdy"
+    return ""
+
+
+def _earnings_phrase(plan):
+    d = plan.days_to_earnings
+    if d is None:
+        return ""
+    if d <= 12:
+        return (f"Uwaga: wyniki kwartalne ma już za {d} dni — tuż przed nimi kurs potrafi mocno "
+                f"skoczyć w dowolną stronę, więc to dodatkowe ryzyko.")
+    return f"Wyniki kwartalne ma dopiero za {d} dni, więc nic pilnego nie wisi."
 
 
 def _first(seq):
@@ -171,157 +164,201 @@ def format_plan(plan: PositionPlan) -> str:
     try:
         return _render(plan)
     except Exception as e:  # nigdy nie wywal handlera Slacka
-        return f"⚪ *{getattr(plan, 'ticker', '?')}* — błąd renderowania planu ({e})"
+        return f"⚠️ *{getattr(plan, 'ticker', '?')}* — nie udało się złożyć opisu ({e})."
 
 
 def _render(plan: PositionPlan) -> str:
     status = _val(plan.decision_status)
-    asset = _label(_ASSET, plan.asset_type)
-    regime = _label(_REGIME, plan.market_regime)
-    price_str = _money(plan.current_price)
-    age = _age(plan.price_delay_seconds)
-    actionable = status in ("READY_TO_ENTER", "WAIT_FOR_TRIGGER")
+    t = plan.ticker
+    head = _VERDICT.get(status, "• *{t}*").format(t=t)
 
-    L: list[str] = []
-    L.append(f"*{_STATUS.get(status, status)}* — *{plan.ticker}*  ·  {asset}")
-    reason = _humanize(plan.decision_reason or "")
-    if reason:
-        L.append(f"_{reason}_")
-
-    if actionable:
-        _plan_block(plan, L, price_str, age, regime)
+    if status == "READY_TO_ENTER":
+        body = _ready(plan)
+    elif status == "WAIT_FOR_TRIGGER":
+        body = _wait(plan)
     elif status == "DATA_INCOMPLETE":
-        _incomplete_block(plan, L, price_str, age, regime)
-    else:  # NO_TRADE
-        _no_trade_block(plan, L, price_str, regime)
+        body = _incomplete(plan)
+    else:
+        body = _no_trade(plan)
 
-    return "\n".join(L)
+    return head + "\n" + "\n".join(body)
 
 
-def _plan_block(plan, L, price_str, age, regime):
-    L.append("")
-    L.append("*📋 Plan wejścia*")
+def _why(plan):
+    return _SETUP_WHY.get(_val(plan.setup_type), "{t}").format(t=plan.ticker)
 
-    setup = _label(_SETUP, plan.setup_type)
-    horizon = f"  ·  horyzont {plan.horizon_sessions} sesji" if plan.horizon_sessions else ""
-    L.append(f"• *Setup:* {setup}{horizon}")
 
-    price_line = f"• *Cena:* {price_str}"
-    if age:
-        price_line += f"  ·  _{age}_"
-    L.append(price_line)
+def _background(plan, lead="*Tło:* "):
+    """Wspólny akapit kontekstu: rynek + branża + (skrótowo) wyniki."""
+    bits = []
+    reg = _REGIME_PHRASE.get(_val(plan.market_regime))
+    if reg:
+        bits.append(reg)
+    sec = _sector_phrase(plan.sector_rotation)
+    if sec:
+        bits.append(sec)
+    out = []
+    if bits:
+        sentence = bits[0][0].upper() + bits[0][1:]
+        if len(bits) > 1:
+            sentence += ", a " + ", ".join(bits[1:])
+        out.append(lead + sentence + ".")
+    earn = _earnings_phrase(plan)
+    if earn:
+        out.append(earn)
+    return out
 
-    if plan.entry_zone_low is not None or plan.entry_zone_high is not None:
-        L.append(f"• *Strefa wejścia:* {_money(plan.entry_zone_low)}–{_money(plan.entry_zone_high)}")
 
-    trig = []
-    if plan.entry_trigger is not None:
-        trig.append(f"*Trigger:* {_money(plan.entry_trigger)}")
+def _entry_sentence(plan):
+    lo, hi = plan.entry_zone_low, plan.entry_zone_high
+    if lo is not None and hi is not None:
+        s = f"*Kupuj* w przedziale {_usd(lo)} – {_usd(hi)}."
+    elif plan.entry_trigger is not None:
+        s = f"*Kupuj* dopiero powyżej {_usd(plan.entry_trigger)}"
+        if plan.current_price is not None:
+            s += f" (kurs jest teraz przy {_usd(plan.current_price)})"
+        s += "."
+    elif plan.current_price is not None:
+        s = f"*Kupuj* w okolicy bieżącej ceny {_usd(plan.current_price)}."
+    else:
+        s = "*Kupuj* ostrożnie, blisko poziomu wejścia."
     if plan.max_chase_price is not None:
-        trig.append(f"*Nie gonić powyżej:* {_money(plan.max_chase_price)}")
-    if trig:
-        L.append("• " + "   ·   ".join(trig))
+        s += f" Nie goń, jeśli wystrzeli powyżej {_usd(plan.max_chase_price)}."
+    return s
 
-    stop_bits = []
-    if plan.technical_stop is not None:
-        s = f"*Stop:* {_money(plan.technical_stop)}"
-        if plan.current_price:
-            d = (plan.technical_stop - plan.current_price) / plan.current_price * 100
-            s += f" _({d:+.1f}%)_"
-        stop_bits.append(s)
-    if plan.thesis_invalidation is not None:
-        stop_bits.append(f"*Unieważnienie tezy:* {_money(plan.thesis_invalidation)}")
-    if plan.risk_per_share is not None:
-        stop_bits.append(f"ryzyko {_money(plan.risk_per_share)}/akcję")
-    if stop_bits:
-        L.append("• " + "   ·   ".join(stop_bits))
 
-    targets = []
-    for n, (t, rr) in enumerate(
-        [(plan.target_1, plan.rr_target_1),
-         (plan.target_2, plan.rr_target_2),
-         (plan.target_3, plan.rr_target_3)], start=1
-    ):
-        if t is not None:
-            piece = f"T{n} {_money(t)}"
-            if rr is not None:
-                piece += f" _(R/R {_num(rr)})_"
-            targets.append(piece)
-    if targets:
-        L.append("• *Targety:* " + "  ·  ".join(targets))
+def _stop_sentence(plan):
+    if plan.technical_stop is None:
+        return None
+    s = f"*Linia obrony (stop): {_usd(plan.technical_stop)}* — jeśli kurs tam spadnie, sprzedajesz i wychodzisz"
+    if plan.current_price:
+        drop = (plan.current_price - plan.technical_stop) / plan.current_price * 100
+        if drop > 0:
+            s += f" ze stratą ok. {_pct(drop)}"
+    s += ". To chroni kapitał przed większym osunięciem."
+    return s
 
-    if plan.recommended_quantity:
-        size = f"• *Pozycja:* {plan.recommended_quantity} szt"
-        if plan.recommended_position_value is not None:
-            size += f"  ≈ {_money(plan.recommended_position_value, nd=0)}"
-        if plan.recommended_portfolio_pct is not None:
-            size += f"  _({_num(plan.recommended_portfolio_pct)}% portfela)_"
-        if plan.risk_budget is not None:
-            size += f"  ·  budżet ryzyka {_money(plan.risk_budget, nd=0)}"
-        L.append(size)
 
-    # ── Kontekst ──
+def _targets_sentence(plan):
+    pts = [p for p in (plan.target_1, plan.target_2, plan.target_3) if p is not None]
+    if not pts:
+        return None
+    if len(pts) == 1:
+        s = f"*Cel zarobku:* {_usd(pts[0])}."
+    else:
+        s = "*Cele zarobku:* najpierw " + _usd(pts[0]) + ", potem " + ", ".join(_usd(p) for p in pts[1:]) + "."
+    times = _x_times(plan.rr_target_1)
+    if times:
+        s += f" Przy pierwszym celu zarabiasz ok. {times} — układ jest opłacalny."
+    return s
+
+
+def _size_sentence(plan):
+    if not plan.recommended_quantity:
+        return None
+    s = f"*Ile kupić:* ok. {plan.recommended_quantity} akcji"
+    if plan.recommended_position_value is not None:
+        s += f" za ~{_usd(plan.recommended_position_value)}"
+    if plan.recommended_portfolio_pct is not None:
+        s += f" (czyli {_pct(plan.recommended_portfolio_pct)} portfela)"
+    s += "."
+    if plan.risk_budget is not None:
+        s += f" Tak dobrane, żeby w najgorszym razie stracić nie więcej niż ~{_usd(plan.risk_budget)}."
+    return s
+
+
+def _ready(plan):
+    L = [_why(plan), "", "*Jak to rozegrać:*"]
+    for line in (_entry_sentence(plan), _stop_sentence(plan),
+                 _targets_sentence(plan), _size_sentence(plan)):
+        if line:
+            L.append("• " + line)
     L.append("")
-    L.append("*🧭 Kontekst*")
-    reg = f"• *Reżim:* {regime}"
-    if plan.macro_impact:
-        reg += f"  —  {plan.macro_impact}"
-    L.append(reg)
-    if plan.sector_rotation:
-        L.append(f"• *Sektor:* {plan.sector_rotation}")
-    if plan.days_to_earnings is not None:
-        L.append(f"• *Earnings:* za {plan.days_to_earnings} dni  →  {_label(_EVENT, plan.event_plan)}")
-    elif _val(plan.event_plan) not in (None, "NO_EVENT_RISK"):
-        L.append(f"• *Wydarzenie:* {_label(_EVENT, plan.event_plan)}")
-    dq = f"• *Jakość danych:* {_pct01(plan.data_quality_score)}"
-    if plan.signal_confidence is not None:
-        dq += f"  ·  pewność sygnału {_pct01(plan.signal_confidence)}"
-    L.append(dq)
-    risk = _first(plan.bear_case) or plan.correlation_warning
+    L += _background(plan)
+    risk = _first(plan.bear_case)
     if risk:
-        L.append(f"• ⚠️ *Główne ryzyko:* {risk}")
-
-    bull = _first(plan.bull_case)
-    if bull:
-        L.append(f"🐂 {bull}")
+        L.append(f"*Największe ryzyko:* {_clip(risk, 220)}")
+    return L
 
 
-def _incomplete_block(plan, L, price_str, age, regime):
+def _wait(plan):
+    L = [_why(plan) + " Brakuje jednak potwierdzenia — nie wchodź na ślepo.", ""]
+
+    # dlaczego jeszcze nie — po ludzku
+    reason = _humanized_wait_reason(plan)
+    if reason:
+        L.append(reason)
+
+    # gdy warunek się spełni — zwięzły plan
+    plan_bits = []
+    if plan.entry_zone_low is not None and plan.entry_zone_high is not None:
+        plan_bits.append(f"kupno {_usd(plan.entry_zone_low)} – {_usd(plan.entry_zone_high)}")
+    if plan.technical_stop is not None:
+        plan_bits.append(f"linia obrony {_usd(plan.technical_stop)}")
+    pts = [p for p in (plan.target_1, plan.target_2) if p is not None]
+    if pts:
+        plan_bits.append("cele " + " i ".join(_usd(p) for p in pts))
+    if plan_bits:
+        L.append("*Gdy to się stanie, plan jest taki:* " + ", ".join(plan_bits) + ".")
+    if plan.thesis_invalidation is not None:
+        L.append(f"*Odpuść,* jeśli kurs spadnie poniżej {_usd(plan.thesis_invalidation)} — wtedy cały pomysł się psuje.")
+
     L.append("")
-    miss = _humanize_fields(plan.missing_data)
-    if miss:
-        L.append(f"• *Do odświeżenia:* {', '.join(miss)}")
-    L.append(f"• *Jakość danych:* {_pct01(plan.data_quality_score)} — ponów `/wejscie {plan.ticker}` za chwilę")
-    if plan.current_price is not None:
-        cl = f"• *Cena (nieaktualna):* {price_str}"
-        if age:
-            cl += f"  ·  _{age}_"
-        L.append(cl)
+    L += _background(plan)
+    return L
 
-    work = []
+
+def _humanized_wait_reason(plan):
+    raw = plan.decision_reason or ""
+    if "R/R" in raw or "wymagane" in raw:
+        return ("*Dlaczego jeszcze nie:* przy obecnej cenie potencjalny zysk jest za mały w stosunku "
+                "do ryzyka. Lepiej poczekać na niższe, korzystniejsze wejście.")
+    if "Wydarzenie" in raw or (plan.days_to_earnings is not None and plan.days_to_earnings <= 12):
+        d = plan.days_to_earnings
+        return ("*Dlaczego jeszcze nie:* tuż przed wynikami"
+                + (f" (za {d} dni)" if d is not None else "")
+                + " lepiej nie wchodzić pełną pozycją — poczekaj, aż miną.")
+    if plan.entry_trigger is not None:
+        return (f"*Na co czekać:* aż kurs wyraźnie przebije {_usd(plan.entry_trigger)} — to będzie sygnał, "
+                "że ruch w górę faktycznie rusza.")
+    return "*Dlaczego jeszcze nie:* układ jest obiecujący, ale brak potwierdzenia wejścia."
+
+
+def _no_trade(plan):
+    L = [_why(plan)]
+    raw = plan.decision_reason or ""
+    if "limit" in raw.lower():
+        L.append("Wejście oznaczałoby zbyt duże skupienie ryzyka w jednym miejscu (przekroczone limity portfela).")
+    elif "pozycj" in raw.lower() or "budże" in raw.lower():
+        L.append("Przy bezpiecznej wielkości pozycja wychodzi praktycznie zerowa — nie ma czego grać.")
+    L.append("Lepiej poczekać na wyraźniejszą okazję.")
+    L.append("")
+    why_not = _first(plan.bear_case)
+    if why_not:
+        L.append(f"*Główny powód ostrożności:* {_clip(why_not, 220)}")
+    L += _background(plan)
+    return L
+
+
+def _incomplete(plan):
+    L = []
+    miss = _missing_words(plan.missing_data)
+    miss_txt = (": " + ", ".join(miss)) if miss else ""
+    age = _age(plan.price_delay_seconds)
+    age_txt = f" ({age})" if age else ""
+    L.append(f"Nie dam teraz konkretnego planu, bo dane są nieaktualne{age_txt}{miss_txt}.")
+    L.append(f"Odśwież za chwilę — napisz `/wejscie {plan.ticker}`, a policzę wszystko na bieżących cenach.")
+
+    # zgrubny, ostrożny kontekst
+    ctx = []
     if _val(plan.setup_type) != "NO_VALID_SETUP":
-        work.append(f"setup roboczy: {_label(_SETUP, plan.setup_type)}")
-    work.append(f"reżim: {regime}")
-    if plan.sector_rotation:
-        work.append(f"sektor: {plan.sector_rotation}")
+        ctx.append(_why(plan).rstrip("."))
+    reg = _REGIME_PHRASE.get(_val(plan.market_regime))
+    if reg:
+        ctx.append(reg)
     if plan.days_to_earnings is not None:
-        work.append(f"earnings za {plan.days_to_earnings} dni")
-    if work:
+        ctx.append(f"wyniki kwartalne za {plan.days_to_earnings} dni")
+    if ctx:
         L.append("")
-        L.append("_Kontekst roboczy (niepotwierdzony):_")
-        for w in work:
-            L.append(f"• {w}")
-
-
-def _no_trade_block(plan, L, price_str, regime):
-    L.append("")
-    L.append(f"• *Setup:* {_label(_SETUP, plan.setup_type)}")
-    if plan.current_price is not None:
-        L.append(f"• *Cena:* {price_str}")
-    reg = f"• *Reżim:* {regime}"
-    if plan.sector_rotation:
-        reg += f"  ·  *Sektor:* {plan.sector_rotation}"
-    L.append(reg)
-    why = _first(plan.bear_case)
-    if why:
-        L.append(f"• *Dlaczego nie teraz:* {why}")
+        L.append("*Tyle wiem na teraz (do potwierdzenia):* " + "; ".join(ctx) + ".")
+    return L
