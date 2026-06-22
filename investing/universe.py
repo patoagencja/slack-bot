@@ -123,3 +123,70 @@ def detect_tickers_overflow(text: str, max_tickers: int = config.MAX_TICKERS_PER
         if m.group(1) in WATCHLIST and m.group(1) not in seen:
             seen.append(m.group(1))
     return seen[max_tickers:]
+
+
+# Common company-name → ticker aliases, so `/wejscie nvidia` works like `/wejscie NVDA`.
+COMPANY_ALIASES = {
+    "nvidia": "NVDA", "microsoft": "MSFT", "meta": "META", "facebook": "META",
+    "amazon": "AMZN", "apple": "AAPL", "google": "GOOGL", "alphabet": "GOOGL",
+    "tesla": "TSLA", "microstrategy": "MSTR", "strategy": "MSTR", "palantir": "PLTR",
+    "broadcom": "AVGO", "micron": "MU", "netflix": "NFLX", "spotify": "SPOT",
+    "uber": "UBER", "snowflake": "SNOW", "crowdstrike": "CRWD", "salesforce": "CRM",
+    "servicenow": "NOW", "oracle": "ORCL", "adobe": "ADBE", "arista": "ANET",
+    "intuitive": "ISRG", "mercadolibre": "MELI", "applovin": "APP", "rocketlab": "RKLB",
+    "rocket": "RKLB", "asml": "ASML", "cameco": "CCJ", "novonordisk": "NVO",
+    "ferrari": "RACE", "chipotle": "CMG", "lululemon": "LULU", "nike": "NKE",
+    "boeing": "BA", "marathon": "MARA", "robinhood": "HOOD", "coinbase": "COIN",
+}
+
+_RISK_RE = re.compile(r"risk\s*=\s*([0-9]*\.?[0-9]+)", re.I)
+_AMOUNT_RE = re.compile(r"\b(\d{3,})\b")
+_TICKER_TOKEN = re.compile(r"^[A-Za-z]{1,5}$")
+
+
+def parse_entry_command(text: str, max_tickers: int = config.MAX_TICKERS_PER_MESSAGE) -> dict:
+    """Parse `/wejscie` text into {tickers, amount, risk, overflow, rejected}.
+
+    Rules: `risk=` and a >=3-digit number are pulled out first. Remaining tokens
+    become tickers only if they are a whole 1-5 letter symbol (``$NVDA``/``NVDA``)
+    or a known company-name alias (``nvidia`` -> ``NVDA``). 6+ letter words that
+    aren't aliases are reported in ``rejected`` (never silently turned into a
+    garbage substring ticker)."""
+    text = text or ""
+    risk = None
+    m = _RISK_RE.search(text)
+    if m:
+        risk = float(m.group(1))
+        text = (text[:m.start()] + " " + text[m.end():])
+
+    amount = None
+    am = _AMOUNT_RE.search(text)
+    if am:
+        amount = float(am.group(1))
+        text = (text[:am.start()] + " " + text[am.end():])
+
+    seen: list[str] = []
+    rejected: list[str] = []
+    for raw in text.split():
+        tok = raw.strip().lstrip("$")
+        if not tok:
+            continue
+        alias = COMPANY_ALIASES.get(tok.lower())
+        if alias:
+            sym = alias
+        elif _TICKER_TOKEN.match(tok):
+            sym = tok.upper()
+        else:
+            if tok.lower() not in (r.lower() for r in rejected):
+                rejected.append(tok)
+            continue
+        if sym not in seen:
+            seen.append(sym)
+
+    return {
+        "tickers": seen[:max_tickers],
+        "overflow": seen[max_tickers:],
+        "amount": amount,
+        "risk": risk,
+        "rejected": rejected,
+    }

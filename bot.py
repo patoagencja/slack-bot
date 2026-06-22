@@ -1543,11 +1543,10 @@ def handle_wejscie_slash(ack, respond, command):
     Acknowledges immediately, then builds a deterministic PositionPlan per ticker
     on a bounded executor (max 3 concurrent, deduped per user+ticker)."""
     ack()
-    import re as _re
 
     try:
         import investing
-        from investing import runner, config as _icfg
+        from investing import runner, universe as _univ, config as _icfg
     except Exception as e:                       # pragma: no cover
         respond(f"❌ Moduł inwestycyjny niedostępny: {e}")
         return
@@ -1555,29 +1554,17 @@ def handle_wejscie_slash(ack, respond, command):
     text = (command.get("text") or "").strip()
     user = command.get("user_id", "?")
 
-    risk = None
-    m = _re.search(r"risk\s*=\s*([0-9]*\.?[0-9]+)", text, _re.I)
-    if m:
-        risk = float(m.group(1))
-        text = (text[:m.start()] + " " + text[m.end():]).strip()
-
-    amount = None
-    am = _re.search(r"\b(\d{3,})\b", text)
-    if am:
-        amount = float(am.group(1))
-        text = (text[:am.start()] + " " + text[am.end():]).strip()
-
-    seen, tickers = set(), []
-    for tok in _re.findall(r"\$?[A-Za-z]{1,5}", text):
-        sym = tok.lstrip("$").upper()
-        if sym and sym not in seen:
-            seen.add(sym)
-            tickers.append(sym)
-    overflow = tickers[_icfg.MAX_TICKERS_PER_MESSAGE:]
-    tickers = tickers[:_icfg.MAX_TICKERS_PER_MESSAGE]
+    parsed = _univ.parse_entry_command(text)
+    tickers = parsed["tickers"]
+    overflow = parsed["overflow"]
+    amount = parsed["amount"]
+    risk = parsed["risk"]
 
     if not tickers:
-        respond("Użycie: `/wejscie TICKER [KWOTA] [risk=0.5]` — np. `/wejscie NVDA 50000 risk=0.5`")
+        hint = "Użycie: `/wejscie TICKER [KWOTA] [risk=0.5]` — np. `/wejscie NVDA 50000 risk=0.5`"
+        if parsed["rejected"]:
+            hint += f"\n⚠️ Nie rozpoznałem jako ticker: {', '.join(parsed['rejected'])} — podaj symbol (np. NVDA, nie 'nvidia')."
+        respond(hint)
         return
 
     rtxt = f"{risk}%" if risk is not None else f"{_icfg.DEFAULT_RISK_PER_TRADE_PCT}% (domyślne)"
@@ -1585,6 +1572,8 @@ def handle_wejscie_slash(ack, respond, command):
     progress = f"⏳ Buduję plan wejścia dla *{', '.join(tickers)}* | portfel {atxt} | ryzyko {rtxt}…"
     if overflow:
         progress += f"\n⚠️ Analizuję max {_icfg.MAX_TICKERS_PER_MESSAGE} tickery — pomijam: {', '.join(overflow)}"
+    if parsed["rejected"]:
+        progress += f"\nℹ️ Pominięto nierozpoznane: {', '.join(parsed['rejected'])}"
     respond(progress)
 
     def _make_worker(_t):
