@@ -19,6 +19,20 @@ from config.constants import CHANNEL_CLIENT_MAP
 
 logger = logging.getLogger(__name__)
 
+def _cur_year() -> int:
+    """Current year — queries derive dates dynamically (no hardcoded year)."""
+    import datetime as _d
+    return _d.datetime.now().year
+
+
+# ── Central Claude model config (no hardcoded model strings) ──
+try:
+    from investing.config import CLAUDE_MODEL_PRIMARY
+except Exception:  # pragma: no cover - defensive fallback
+    import os as _os
+    CLAUDE_MODEL_PRIMARY = _os.environ.get("CLAUDE_MODEL_PRIMARY", "claude-sonnet-4-6")
+
+
 # ── Channel ───────────────────────────────────────────────────────────────────
 STOCK_CHANNEL_ID = "C0B5LA4Q064"  # #inwestowanie
 
@@ -319,13 +333,13 @@ def _search(query: str) -> str:
 def fetch_capital_flow_news() -> dict[str, str]:
     """7 Tavily searches → dict of {topic: text}."""
     return {
-        "sector_rotation": _search("sector rotation capital flow ETF inflows 2026 this week"),
-        "sector_outperform": _search("which sectors are outperforming SP500 this week 2026"),
-        "institutional": _search("institutional money flow sectors this week 2026"),
-        "etf_flows": _search("ETF fund flows technology healthcare energy defense 2026"),
-        "crypto_rotation": _search("crypto sector rotation DeFi AI gaming RWA 2026"),
-        "crypto_btc_alt": _search("bitcoin ethereum altcoin capital rotation this week 2026"),
-        "global_flow": _search("emerging markets vs US equity flows bonds equities rotation 2026"),
+        "sector_rotation": _search(f"sector rotation capital flow ETF inflows {_cur_year()} this week"),
+        "sector_outperform": _search(f"which sectors are outperforming SP500 this week {_cur_year()}"),
+        "institutional": _search(f"institutional money flow sectors this week {_cur_year()}"),
+        "etf_flows": _search(f"ETF fund flows technology healthcare energy defense {_cur_year()}"),
+        "crypto_rotation": _search(f"crypto sector rotation DeFi AI gaming RWA {_cur_year()}"),
+        "crypto_btc_alt": _search(f"bitcoin ethereum altcoin capital rotation this week {_cur_year()}"),
+        "global_flow": _search(f"emerging markets vs US equity flows bonds equities rotation {_cur_year()}"),
     }
 
 
@@ -403,7 +417,7 @@ def _build_flow_snapshot(etf_perf: dict, news: dict) -> dict:
     for attempt in range(2):
         try:
             resp = _ctx.claude.messages.create(
-                model="claude-sonnet-4-20250514",
+                model=CLAUDE_MODEL_PRIMARY,
                 max_tokens=800,
                 system=_FLOW_SYSTEM,
                 messages=[{"role": "user", "content": prompt}],

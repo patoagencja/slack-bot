@@ -25,6 +25,12 @@ import _ctx
 
 logger = logging.getLogger(__name__)
 
+def _cur_year() -> int:
+    """Current year — queries derive dates dynamically (no hardcoded year)."""
+    import datetime as _d
+    return _d.datetime.now().year
+
+
 # ── Channel ───────────────────────────────────────────────────────────────────
 STOCK_CHANNEL_ID = os.environ.get("SLACK_STOCK_CHANNEL", "C0B5LA4Q064")
 
@@ -235,7 +241,7 @@ def _score_yield_curve() -> tuple[int, str]:
 
 
 def _score_ism_pmi() -> tuple[int, str]:
-    snippet = _tavily_snippet("ISM manufacturing PMI latest reading 2026", 300)
+    snippet = _tavily_snippet(f"ISM manufacturing PMI latest reading {_cur_year()}", 300)
     # Parse PMI number from snippet
     import re
     m = re.search(r'\b(3\d|4\d|5\d|6\d)\.\d\b', snippet)
@@ -269,7 +275,7 @@ def _score_cpi() -> tuple[int, str]:
 
 
 def _score_fed_policy() -> tuple[int, str]:
-    snippet = _tavily_snippet("Federal Reserve interest rate decision hike cut pause 2026", 300)
+    snippet = _tavily_snippet(f"Federal Reserve interest rate decision hike cut pause {_cur_year()}", 300)
     sl = snippet.lower()
     if any(w in sl for w in ("cut", "cuts", "obniżka", "obniżki", "pause", "hold", "pauza")):
         return 4, "🟢 Fed: cięcia/pauza (risk-on)"
@@ -283,7 +289,7 @@ def _score_fed_policy() -> tuple[int, str]:
 def _score_gdp() -> tuple[int, str]:
     vals = _fred("GDP", limit=5)
     if len(vals) < 2:
-        snippet = _tavily_snippet("US GDP growth rate quarterly 2026", 200)
+        snippet = _tavily_snippet(f"US GDP growth rate quarterly {_cur_year()}", 200)
         return 2, f"GDP: {snippet[:80] or 'brak danych'}"
     # QoQ annualised growth approximation
     qoq_ann = (vals[-1] / vals[-2] - 1) * 400
@@ -357,7 +363,7 @@ def _score_vix_structure() -> tuple[int, str]:
     # SKEW signal — graduated by level (old: flat >140 = -3; new: 6-step scale)
     skew_pts = 0
     skew_label = ""
-    skew_snippet = _tavily_snippet("CBOE SKEW index tail risk options latest 2026", 200)
+    skew_snippet = _tavily_snippet(f"CBOE SKEW index tail risk options latest {_cur_year()}", 200)
     import re as _re
     m = _re.search(r'\b(1[0-9][0-9]|[2-9][0-9])\b', skew_snippet)
     skew_val = int(m.group()) if m else None
@@ -450,7 +456,7 @@ def _score_credit_spreads() -> tuple[int, str]:
     hyg = _yf_close("HYG", period="3mo")
     tlt = _yf_close("TLT", period="3mo")
     if len(hyg) < 20 or len(tlt) < 20:
-        snippet = _tavily_snippet("HYG LQD credit spreads high yield tightening widening 2026", 200)
+        snippet = _tavily_snippet(f"HYG LQD credit spreads high yield tightening widening {_cur_year()}", 200)
         sl = snippet.lower()
         if any(w in sl for w in ("tighten", "narrow", "zawężają")):
             return 4, "🟢 Spready kredytowe zawężają się (leading — akcje opóźnione 2-4 tyg.)"
@@ -517,7 +523,7 @@ def _score_smart_money_flow() -> tuple[int, str]:
         spy_signal, spy_label = 1, "SPY: brak danych"
 
     # Institutional flow from Tavily
-    snippet = _tavily_snippet("institutional investors equity selling buying flows 2026", 200)
+    snippet = _tavily_snippet(f"institutional investors equity selling buying flows {_cur_year()}", 200)
     sl = snippet.lower()
     if any(w in sl for w in ("selling", "reducing", "distribution", "outflow")):
         inst_signal, inst_label = -2, " | Instytucje: sprzedają"
@@ -531,7 +537,7 @@ def _score_smart_money_flow() -> tuple[int, str]:
 
 
 def _score_put_call_ratio() -> tuple[int, str]:
-    snippet = _tavily_snippet("put call ratio equity options market sentiment 2026", 200)
+    snippet = _tavily_snippet(f"put call ratio equity options market sentiment {_cur_year()}", 200)
     import re
     m = re.search(r'(\d+\.\d+)', snippet)
     pcr = float(m.group(1)) if m else None
@@ -575,7 +581,7 @@ def _score_rotation() -> tuple[int, str]:
     xlu = _yf_close("XLU", period="3mo")
     gld = _yf_close("GLD", period="3mo")
     if len(qqq) < 15 or len(xlu) < 15 or len(gld) < 15:
-        snippet = _tavily_snippet("tech growth vs defensive utilities rotation stock market 2026", 200)
+        snippet = _tavily_snippet(f"tech growth vs defensive utilities rotation stock market {_cur_year()}", 200)
         sl = snippet.lower()
         if any(w in sl for w in ("defensive", "utilities", "rotation out of tech")):
             return -3, "⚠️ Rotacja do defensywnych — risk-off sygnał"
@@ -607,7 +613,7 @@ def _score_naaim() -> tuple[int, str]:
     >80%: everyone bought in, little fuel left.
     Rapid drop from >80% to <60%: institutions massively reducing = ALARM.
     """
-    snippet = _tavily_snippet("NAAIM exposure index active managers equity allocation latest 2026", 300)
+    snippet = _tavily_snippet(f"NAAIM exposure index active managers equity allocation latest {_cur_year()}", 300)
     import re as _re
     m = _re.search(r'\b(\d{2,3}(?:\.\d+)?)\b', snippet)
     naaim = float(m.group(1)) if m and float(m.group(1)) <= 200 else None
@@ -634,7 +640,7 @@ def _score_earnings_revisions() -> tuple[int, str]:
     More downgrades than upgrades 3+ weeks = fundamentals deteriorating before price reacts.
     Anticipates correction 4-8 weeks ahead.
     """
-    snippet = _tavily_snippet("S&P500 earnings revisions up down ratio analyst upgrades downgrades 2026", 300)
+    snippet = _tavily_snippet(f"S&P500 earnings revisions up down ratio analyst upgrades downgrades {_cur_year()}", 300)
     sl = snippet.lower()
     import re as _re
 
@@ -661,7 +667,7 @@ def _score_earnings_revisions() -> tuple[int, str]:
 
 
 def _score_fund_manager_survey() -> tuple[int, str]:
-    snippet = _tavily_snippet("BofA fund manager survey cash levels equity allocation 2026", 300)
+    snippet = _tavily_snippet(f"BofA fund manager survey cash levels equity allocation {_cur_year()}", 300)
     import re
     m = re.search(r'(\d+\.?\d*)\s*%\s*(?:cash|gotówk)', snippet, re.IGNORECASE)
     cash_pct = float(m.group(1)) if m else None
@@ -680,7 +686,7 @@ def _score_fund_manager_survey() -> tuple[int, str]:
 
 
 def _score_fear_greed() -> tuple[int, str]:
-    snippet = _tavily_snippet("CNN fear greed index market sentiment score 2026", 200)
+    snippet = _tavily_snippet(f"CNN fear greed index market sentiment score {_cur_year()}", 200)
     import re
     m = re.search(r'\b(\d{1,3})\b', snippet)
     score = int(m.group(1)) if m and 0 <= int(m.group(1)) <= 100 else None
@@ -707,7 +713,7 @@ def _score_fear_greed() -> tuple[int, str]:
 
 
 def _score_retail_flows() -> tuple[int, str]:
-    snippet = _tavily_snippet("retail investor flows equity buying selling sentiment 2026", 200)
+    snippet = _tavily_snippet(f"retail investor flows equity buying selling sentiment {_cur_year()}", 200)
     sl = snippet.lower()
     if any(w in sl for w in ("outflow", "selling", "odpływ", "sprzedają")):
         return 3, "🟢 Retail: odpływy (contrarian — blisko dna)"
@@ -1041,7 +1047,7 @@ def format_vix_analysis() -> str:
         ts_interp = "Nie można ocenić term structure."
 
     # SKEW
-    skew_snippet = _tavily_snippet("CBOE SKEW index tail risk options latest 2026", 200)
+    skew_snippet = _tavily_snippet(f"CBOE SKEW index tail risk options latest {_cur_year()}", 200)
     import re as _re
     m_skew = _re.search(r'\b(1[0-9][0-9])\b', skew_snippet)
     skew_val = int(m_skew.group()) if m_skew else None
@@ -1189,7 +1195,7 @@ def check_and_send_alerts(new_result: dict):
             state["last_vix"] = vix_spot
 
         # SKEW alert — only at extreme levels (>160), with historical context
-        skew_snippet = _tavily_snippet("CBOE SKEW index tail risk latest 2026", 150)
+        skew_snippet = _tavily_snippet(f"CBOE SKEW index tail risk latest {_cur_year()}", 150)
         import re as _re
         m_skew = _re.search(r'\b(1[0-9][0-9])\b', skew_snippet)
         if m_skew:

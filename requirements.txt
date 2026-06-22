@@ -21,3 +21,4 @@ yfinance
 tavily-python
 pandas
 numpy
+pydantic>=2,<3

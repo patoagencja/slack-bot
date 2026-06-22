@@ -1536,6 +1536,61 @@ def handle_digest_slash(ack, respond, command):
     _th.Thread(target=_worker, daemon=True).start()
 
 
+@app.command("/wejscie")
+def handle_wejscie_slash(ack, respond, command):
+    """Plan wejścia w pozycję: `/wejscie TICKER [KWOTA] [risk=0.5]`.
+
+    Acknowledges immediately, then builds a deterministic PositionPlan per ticker
+    on a bounded executor (max 3 concurrent, deduped per user+ticker)."""
+    ack()
+
+    try:
+        import investing
+        from investing import runner, universe as _univ, config as _icfg
+    except Exception as e:                       # pragma: no cover
+        respond(f"❌ Moduł inwestycyjny niedostępny: {e}")
+        return
+
+    text = (command.get("text") or "").strip()
+    user = command.get("user_id", "?")
+
+    parsed = _univ.parse_entry_command(text)
+    tickers = parsed["tickers"]
+    overflow = parsed["overflow"]
+    amount = parsed["amount"]
+    risk = parsed["risk"]
+
+    if not tickers:
+        hint = "Użycie: `/wejscie TICKER [KWOTA] [risk=0.5]` — np. `/wejscie NVDA 50000 risk=0.5`"
+        if parsed["rejected"]:
+            hint += f"\n⚠️ Nie rozpoznałem jako ticker: {', '.join(parsed['rejected'])} — podaj symbol (np. NVDA, nie 'nvidia')."
+        respond(hint)
+        return
+
+    rtxt = f"{risk}%" if risk is not None else f"{_icfg.DEFAULT_RISK_PER_TRADE_PCT}% (domyślne)"
+    atxt = f"${amount:,.0f}" if amount else f"${_icfg.DEFAULT_PORTFOLIO_VALUE:,.0f} (domyślne)"
+    progress = f"⏳ Buduję plan wejścia dla *{', '.join(tickers)}* | portfel {atxt} | ryzyko {rtxt}…"
+    if overflow:
+        progress += f"\n⚠️ Analizuję max {_icfg.MAX_TICKERS_PER_MESSAGE} tickery — pomijam: {', '.join(overflow)}"
+    if parsed["rejected"]:
+        progress += f"\nℹ️ Pominięto nierozpoznane: {', '.join(parsed['rejected'])}"
+    respond(progress)
+
+    def _make_worker(_t):
+        def _w():
+            try:
+                plan = investing.build_position_plan(
+                    _t, amount, risk, llm_client=getattr(_ctx, "claude", None))
+                respond({"text": investing.format_plan(plan)})
+            except Exception as e:               # noqa: BLE001
+                respond(f"❌ {_t}: nie udało się zbudować planu wejścia: {e}")
+        return _w
+
+    for _t in tickers:
+        if not runner.submit(f"{user}:{_t}", _make_worker(_t)):
+            respond(f"⏳ {_t}: analiza już trwa — czekaj na wynik.")
+
+
 # ── /cleanup slash command ────────────────────────────────────────────────────
 
 @app.command("/makro")
@@ -4666,6 +4721,24 @@ def sync_calendar_from_email():
 
 # ── scheduler ─────────────────────────────────────────────────────────────────
 
+def _send_morning_brief_xnys():
+    """Pre-open brief, fired 45 min before the *actual* XNYS open.
+
+    Scheduled in America/New_York time so it tracks US DST automatically; here we
+    additionally skip US market holidays via the XNYS calendar (the cron only
+    knows weekdays)."""
+    try:
+        import datetime as _dt
+        from investing import market_calendar as _mc
+        today = _dt.datetime.now(_dt.timezone.utc).date()
+        if not _mc.is_trading_day(today):
+            logger.info("XNYS zamknięty (%s) — pomijam brief przed sesją", today)
+            return
+    except Exception as _e:
+        logger.warning("XNYS calendar check failed, wysyłam brief mimo to: %s", _e)
+    send_morning_brief()
+
+
 scheduler = BackgroundScheduler(timezone=pytz.timezone('Europe/Warsaw'))
 scheduler.add_job(daily_summaries,           'cron', day_of_week='mon-fri', hour=16, minute=0)
 scheduler.add_job(daily_digest_dre,          'cron', day_of_week='mon-fri', hour=9, minute=0, id='daily_digest_dre')
@@ -4686,9 +4759,16 @@ scheduler.add_job(check_stale_onboardings,   'cron', hour=9, minute=30, id='stal
 # scheduler.add_job(post_standup_summary,      'cron', day_of_week='mon-fri', hour=9, minute=30, id='standup_summary')
 scheduler.add_job(weekly_industry_news,      'cron', day_of_week='mon',     hour=9, minute=0,  id='industry_news')
 scheduler.add_job(weekly_cost_report,        'cron', day_of_week='mon',     hour=9,  minute=5,  id='weekly_cost_report')
-scheduler.add_job(send_morning_brief,        'cron', day_of_week='mon-fri', hour=15, minute=0,  id='market_health_daily')  # 15:00 Warsaw ≈ 13:00 UTC (CEST)
-scheduler.add_job(send_weekly_setups,        'cron', day_of_week='fri',     hour=16, minute=0,  id='weekly_setups')
-scheduler.add_job(send_narrative_radar,      'cron', day_of_week='fri',     hour=16, minute=30, id='narrative_radar')
+# Pre-open brief: 08:45 America/New_York == XNYS open (09:30) − 45 min, DST-correct,
+# holidays skipped inside the wrapper. max_instances/coalesce/misfire_grace_time
+# give a local lock + safe behavior after restarts/misfires.
+scheduler.add_job(_send_morning_brief_xnys,  'cron', day_of_week='mon-fri', hour=8, minute=45,
+                  timezone=pytz.timezone('America/New_York'), id='market_health_daily',
+                  max_instances=1, coalesce=True, misfire_grace_time=1800)
+scheduler.add_job(send_weekly_setups,        'cron', day_of_week='fri',     hour=16, minute=0,  id='weekly_setups',
+                  max_instances=1, coalesce=True, misfire_grace_time=1800)
+scheduler.add_job(send_narrative_radar,      'cron', day_of_week='fri',     hour=16, minute=30, id='narrative_radar',
+                  max_instances=1, coalesce=True, misfire_grace_time=1800)
 # stock_digest disabled — uruchamiać ręcznie przez /digest
 scheduler.add_job(sync_calendar_from_email,  'cron', minute=0,                                id='email_calendar_sync')
 # reminders job removed — Slack chat.scheduleMessage handles delivery natively

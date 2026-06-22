@@ -4,6 +4,9 @@ data/team_requests.json
 data/memory.db
 data/wizard_state.json
 data/token_usage.db
+data/investing.db
+data/investing.db-wal
+data/investing.db-shm
 
 # Python
 __pycache__/

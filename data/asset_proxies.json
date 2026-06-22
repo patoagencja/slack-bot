@@ -1,0 +1,15 @@
+{
+  "_comment": "Dated, sourced balance-sheet registry for asset-proxy equities. Update from official filings (8-K / 10-Q) or company press releases. Every entry MUST carry an as_of date and a source so the data-quality gate can mark stale values. NO value here is a code constant.",
+  "MSTR": {
+    "underlying": "BTC-USD",
+    "units": null,
+    "units_as_of": null,
+    "units_source": "PLACEHOLDER — fill from latest MicroStrategy 8-K BTC holdings disclosure",
+    "cash": null,
+    "debt": null,
+    "convertible_debt": null,
+    "diluted_shares": null,
+    "as_of": null,
+    "source": "PLACEHOLDER — fill from latest 10-Q balance sheet"
+  }
+}
