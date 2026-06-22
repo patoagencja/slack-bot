@@ -9,6 +9,13 @@ import json
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+# ── AI / Claude model (single source of truth) ──────────────────────────────────
+# Wszystkie moduły powinny importować CLAUDE_MODEL stąd, zamiast hardkodować nazwę
+# w każdym pliku. Można nadpisać przez zmienną środowiskową bez zmiany kodu.
+CLAUDE_MODEL      = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-20250514")
+CLAUDE_MODEL_FAST = os.environ.get("CLAUDE_MODEL_FAST", CLAUDE_MODEL)
+
+
 # ── FILE PATHS ─────────────────────────────────────────────────────────────────
 AVAILABILITY_FILE     = os.path.join(_BASE_DIR, "data", "team_availability.json")
 REQUESTS_FILE         = os.path.join(_BASE_DIR, "data", "team_requests.json")
