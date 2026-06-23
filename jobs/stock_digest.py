@@ -1429,6 +1429,7 @@ def run_summary_digest(tickers: list = None) -> str:
             pct_ath = round((price - high52) / high52 * 100, 2) if high52 else None
 
             rsi = above50 = above200 = golden = death = None
+            ext_ma50 = run_low = None
             try:
                 hist   = t.history(period="200d")
                 closes = hist["Close"].tolist()
@@ -1439,6 +1440,14 @@ def run_summary_digest(tickers: list = None) -> str:
                 above200 = tech.get("above_ma200")
                 golden   = tech.get("golden_cross")
                 death    = tech.get("death_cross")
+                # over-extension signals (anti-chase): jak daleko cena odjechała
+                ma50 = tech.get("ma50")
+                if ma50:
+                    ext_ma50 = round((price / ma50 - 1) * 100, 1)
+                if closes:
+                    lo = min(closes)
+                    if lo:
+                        run_low = round((price / lo - 1) * 100, 1)
             except Exception:
                 pass
 
@@ -1456,6 +1465,18 @@ def run_summary_digest(tickers: list = None) -> str:
                 parts.append(f"odATH={pct_ath}%")
                 if pct_ath > -5:
                     near_ath.append(ticker)
+
+            # ── over-extension (anti-chase): nadmiernie rozciągnięta = nie gonić ──
+            extended = (
+                (ext_ma50 is not None and ext_ma50 > 20)
+                or (run_low is not None and run_low > 100 and (pct_ath is None or pct_ath > -8))
+            )
+            if ext_ma50 is not None and ext_ma50 > 12:
+                parts.append(f"nadMA50=+{ext_ma50}%")
+            if run_low is not None and run_low > 60:
+                parts.append(f"odDołka200d=+{run_low}%")
+            if extended:
+                parts.append("⚠️EXTENDED")
 
             # Category extras inline
             if category == "CRYPTO_PROXY" and btc_data.get("price"):
@@ -1483,6 +1504,11 @@ FILOZOFIA DNA RYNKÓW (stosuj przy każdej spółce):
 - Koszyk narracyjny: czy spółka w koszyku który rynek TERAZ nagradza?
 - Jakość biznesu: problemy przejściowe (reinwestycje) vs fundamentalne (utrata rynku)
 - Timing: RSI>75 i near ATH jednocześnie = CZEKAJ; samo RSI 60-70 z trendem wzrostowym = OK
+- ANTY-POGOŃ (najważniejsze dla "dobrego wejścia"): nie poleca się KUPNA spółki nadmiernie
+  rozciągniętej. Flaga ⚠️EXTENDED (np. >20% nad MA50 albo po pionowym rajdzie +100% od dołka i
+  jednocześnie przy ATH) = NIE "warte uwagi". Sama bliskość ATH nie dyskwalifikuje — ale zakup po
+  parabolicznym ruchu BEZ cofnięcia to pogoń. Dobre wejście = blisko logicznego wsparcia (MA/baza),
+  a nie 30% nad MA50. RSI bywa "tylko" 60 nawet na szczycie po +300% — sam RSI to za mało.
 
 Napisz JEDEN raport inwestycyjny w formacie Slack markdown. Pogrupuj wszystkie spółki w CZTERY sekcje:
 
@@ -1499,14 +1525,15 @@ Napisz JEDEN raport inwestycyjny w formacie Slack markdown. Pogrupuj wszystkie s
 • *TICKER* $cena — 1 zdanie uzasadnienia
 
 ZASADY GRUPOWANIA:
-KUP/WARTE UWAGI = fundamenty OK (3+) + timing OK (3+) + macro nie high
-                  LUB (rewizje EPS pozytywne + narracja STRONG + timing 2+)
+KUP/WARTE UWAGI = fundamenty OK (3+) + timing OK (3+) + macro nie high + NIE ⚠️EXTENDED
+                  LUB (rewizje EPS pozytywne + narracja STRONG + timing 2+ + NIE ⚠️EXTENDED)
+                  (spółka z ⚠️EXTENDED NIGDY nie trafia tu — to pogoń, nie wejście)
 OBSERWUJ = fundamenty OK + narracja się buduje + poniżej MA50/MA200 lub timing≤2 — dobra spółka ale jeszcze nie gotowa
-CZEKAJ = dobra spółka ale samo RSI>75 blisko ATH, lub makro high
+CZEKAJ = dobra spółka ale: ⚠️EXTENDED (czekać na cofnięcie do MA/strefy), lub RSI>75 blisko ATH, lub makro high
 OMIJAJ = fundamenty słabe (1-2), guidance obniżony + fundamenty się pogarszają, brak narracji i słabe technikalia
 
 KATEGORIA PER SPÓŁKA:
-- STANDARD_TECH: RSI<75 + fundamenty OK + narracja/rewizje pozytywne = WARTE UWAGI
+- STANDARD_TECH: RSI<75 + fundamenty OK + narracja/rewizje pozytywne + NIE ⚠️EXTENDED = WARTE UWAGI
 - CRYPTO_PROXY (MSTR, MARA, HOOD): BTC bullish+RSI_BTC<70=KUP. Zaznacz kurs BTC.
 - URANIUM (UEC,DNN,UUUU,CCJ): spot uranu + nuclear renaissance. NIE przez PE.
 - DEFENSE (NOC,BA,TDG): geopolityka=TAILWIND, backlog, NATO budżety.
@@ -1523,7 +1550,8 @@ Na końcu ZAWSZE:
 ⚠️ *Blisko ATH (<5%):* [lista lub "brak"]
 📊 *Watchlist:* X warte uwagi | Y obserwuj | Z czekaj | W omijaj
 
-Pisz po polsku. Krótko, konkretnie, liczby z danych."""
+Pisz po polsku. Krótko, konkretnie, liczby z danych.
+NIE wymyślaj ani nie zmieniaj cen — przepisz $cena DOKŁADNIE z danych wejściowych dla danego tickera."""
     )
 
     try:
