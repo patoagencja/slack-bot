@@ -41,6 +41,8 @@ SECTOR_OF = {
     "ISRG": "Healthcare", "UNH": "Healthcare", "TDOC": "Healthcare", "NVO": "Healthcare",
     "MCO": "Financial", "NU": "Financial", "DLO": "Financial", "PGY": "Financial",
     "NOC": "Defense", "TDG": "Defense", "AXON": "Defense",
+    "KTOS": "Defense", "LMT": "Defense", "RTX": "Defense", "GD": "Defense",
+    "AVAV": "Defense", "LHX": "Defense", "HII": "Defense",
     "RKLB": "Space/Defense", "ASTS": "Space/Defense", "LUNR": "Space/Defense",
     "PL": "Space/Defense", "RDW": "Space/Defense", "IRDM": "Space/Defense",
     "CCJ": "Nuclear/Energy", "UEC": "Nuclear/Energy", "DNN": "Nuclear/Energy",

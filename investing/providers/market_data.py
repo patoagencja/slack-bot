@@ -39,10 +39,14 @@ def get_quote(ticker: str) -> DataPoint:
 
     try:
         price = gateway.fetch("yfinance", f"quote:{ticker}", _fetch, kind="quote", rate_limit=120)
-        # yfinance quotes are ~15 min delayed; reflect that in as_of.
-        as_of = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=15)
-        return make_datapoint(f"{ticker}.price", round(price, 4), source="yfinance",
-                              kind="quote", as_of=as_of)
+        # as_of = our knowledge time (fetch time). The ~15 min market delay of the
+        # free yfinance feed is recorded as a note, NOT as staleness — otherwise a
+        # freshly fetched quote would always be flagged STALE and the gate would
+        # permanently return DATA_INCOMPLETE.
+        dp = make_datapoint(f"{ticker}.price", round(price, 4), source="yfinance",
+                            kind="quote", as_of=_dt.datetime.now(_dt.timezone.utc))
+        dp.note = "źródło ~15 min opóźnione (yfinance)"
+        return dp
     except Exception as e:
         return make_datapoint(f"{ticker}.price", None, source="yfinance", kind="quote", error=str(e))
 
@@ -69,11 +73,15 @@ def get_bars(ticker: str, period: str = "1y") -> dict:
         adv = None
         if len(closes) >= 20:
             adv = sum(closes[i] * vols[i] for i in range(-20, 0)) / 20
-        as_of = data["as_of"]
-        if as_of.tzinfo is None:
-            as_of = as_of.replace(tzinfo=_dt.timezone.utc)
+        last_ts = data["as_of"]
+        if last_ts.tzinfo is None:
+            last_ts = last_ts.replace(tzinfo=_dt.timezone.utc)
+        # as_of = fetch time (latest available bars just pulled). The last bar's
+        # date (e.g. Friday over a weekend) is expected, not "stale", so it goes
+        # into the note rather than the freshness clock.
         point = make_datapoint(f"{ticker}.bars", True, source="yfinance",
-                               kind="daily_bars", as_of=as_of)
+                               kind="daily_bars", as_of=_dt.datetime.now(_dt.timezone.utc))
+        point.note = f"ostatnia świeca: {last_ts.date().isoformat()}"
         return {"closes": closes, "highs": data["highs"], "lows": data["lows"],
                 "volumes": vols, "adv_dollars": adv, "point": point}
     except Exception as e:
