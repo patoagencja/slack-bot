@@ -28,6 +28,23 @@ def test_downtrend_yields_no_valid_setup():
     rs = {"rs63_broad": -20.0}
     setup = setups.classify(setups.build_features(c, h, l, v, rs))
     assert setup.setup_type == SetupType.NO_VALID_SETUP
+
+
+def test_breakout_rejected_when_price_far_below_pivot():
+    """NVDA-like: a base whose pivot is ~20% above the current price must NOT
+    produce a 'buy on breakout above X' plan (X far above current price)."""
+    c, h, l, v = fx.gen_breakout()
+    last = c[-3]
+    for _ in range(8):                      # drop price well below the pivot
+        last *= 0.978
+        c.append(round(last, 2)); h.append(round(last + 0.4, 2))
+        l.append(round(last - 0.4, 2)); v.append(900_000)
+    setup = setups.classify(setups.build_features(c, h, l, v, {"rs63_broad": 8.0}))
+    # not a qualifying breakout (it's far under resistance)
+    assert not (setup.setup_type == SetupType.BREAKOUT and setup.qualifies)
+    # if a trigger exists it must not be absurdly above the current price
+    if setup.qualifies and setup.entry_trigger:
+        assert setup.entry_trigger <= c[-1] * 1.12
     assert not setup.qualifies
 
 

@@ -64,6 +64,16 @@ CORRELATION_WARN: float = float(_env("INVEST_CORR_WARN", "0.80"))
 # pivot is too extended to chase (BREAKOUT). Configurable & later calibrated.
 MAX_CHASE_ATR: float = float(_env("INVEST_MAX_CHASE_ATR", "0.75"))
 
+# A BREAKOUT setup is only sensible when price is consolidating NEAR the pivot.
+# If price is more than this many ATRs (or this % ) BELOW the pivot, it is not a
+# near-term breakout — telling the user to "buy on a break above X" when X is far
+# above the current price is nonsense. Then the breakout does not qualify.
+MAX_BELOW_PIVOT_ATR: float = float(_env("INVEST_MAX_BELOW_PIVOT_ATR", "2.0"))
+MAX_BELOW_PIVOT_PCT: float = float(_env("INVEST_MAX_BELOW_PIVOT_PCT", "8")) / 100.0   # 8%
+# A breakout base must be reasonably tight; a 30%-wide range is not a base and its
+# low makes the stop (and thus R-multiple targets) absurd.
+MAX_BREAKOUT_BASE_DEPTH_PCT: float = float(_env("INVEST_MAX_BASE_DEPTH_PCT", "22"))
+
 # Liquidity cap: never take more than this share of average daily $ volume.
 MAX_ADV_PARTICIPATION: float = float(_env("INVEST_MAX_ADV_PCT", "1")) / 100.0       # 1%
 

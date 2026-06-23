@@ -61,6 +61,12 @@ def _eval_breakout(feat: dict) -> Optional[SetupClassification]:
         reasons.append(f"baza zbyt krótka ({base_len} sesji)")
     else:
         reasons.append(f"baza {base_len} sesji")
+    # base must be reasonably TIGHT — a very wide range isn't a base, and its low
+    # would make the stop (and R-multiple targets) absurd.
+    depth = base.get("base_depth_pct")
+    if depth is not None and depth > config.MAX_BREAKOUT_BASE_DEPTH_PCT:
+        qualifies = False
+        reasons.append(f"baza za szeroka ({depth}% > {config.MAX_BREAKOUT_BASE_DEPTH_PCT}%) — to nie ciasna konsolidacja")
     if base.get("volatility_contraction"):
         reasons.append("kontrakcja zmienności ✓")
     else:
@@ -75,12 +81,20 @@ def _eval_breakout(feat: dict) -> Optional[SetupClassification]:
     elif rs63 is not None:
         qualifies = False
         reasons.append(f"słaby RS63 ({rs63})")
-    # proximity to pivot. Being over-extended does NOT invalidate the breakout
-    # *setup* — it just means we don't chase (decision engine -> WAIT for pullback
-    # into the zone). 52-week-high proximity is likewise not penalized.
+    # proximity to pivot. Being over-extended ABOVE the pivot does NOT invalidate
+    # the setup — it just means we don't chase (decision engine -> WAIT). But being
+    # far BELOW the pivot DOES: it's not a near-term breakout, so we must not tell
+    # the user to "buy on a break above X" when X is far above the current price.
     dist_atr = ext.get("dist_from_pivot_atr")
     max_chase = round(pivot + config.MAX_CHASE_ATR * atr, 2)
-    if dist_atr is not None and dist_atr > config.MAX_CHASE_ATR:
+    below_atr = (pivot - price) / atr if atr else 0.0
+    below_pct = (pivot - price) / price if price else 0.0
+    if below_atr > config.MAX_BELOW_PIVOT_ATR or below_pct > config.MAX_BELOW_PIVOT_PCT:
+        qualifies = False
+        reasons.append(
+            f"cena {round(below_pct*100,1)}% pod pivotem {round(pivot,2)} — za daleko do wybicia, "
+            "to nie wejście breakout (czekaj aż zbuduje bazę bliżej oporu)")
+    elif dist_atr is not None and dist_atr > config.MAX_CHASE_ATR:
         reasons.append(f"rozciągnięta od pivotu (+{dist_atr} ATR > {config.MAX_CHASE_ATR}) — nie gonić")
     # volume confirmation (only required once price is at/over pivot)
     vr = ext.get("volume_ratio_1d")
