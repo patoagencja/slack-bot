@@ -4741,7 +4741,8 @@ def _send_morning_brief_xnys():
 
 scheduler = BackgroundScheduler(timezone=pytz.timezone('Europe/Warsaw'))
 scheduler.add_job(daily_summaries,           'cron', day_of_week='mon-fri', hour=16, minute=0)
-scheduler.add_job(daily_digest_dre,          'cron', day_of_week='mon-fri', hour=9, minute=0, id='daily_digest_dre')
+# daily_digest_dre wyłączony tymczasowo
+# scheduler.add_job(daily_digest_dre,          'cron', day_of_week='mon-fri', hour=9, minute=0, id='daily_digest_dre')
 scheduler.add_job(weekly_checkin,            'cron', day_of_week='fri', hour=14, minute=0)
 scheduler.add_job(send_checkin_reminders,    'cron', day_of_week='fri', hour=17, minute=30, id='checkin_reminders')
 scheduler.add_job(checkin_summary,           'cron', day_of_week='mon', hour=9,  minute=0)
